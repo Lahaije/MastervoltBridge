@@ -143,7 +143,7 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
 
 String buildHealthJson() {
   return JsonBuilder()
-    .addNumber("wifi_connected", WiFi.status() == WL_CONNECTED ? "true" : "false")
+    .addBool("wifi_connected", WiFi.status() == WL_CONNECTED)
     .addString("wifi_ssid", String(INVERTER_WIFI_SSID))
     .addString("wifi_ip", WiFi.localIP().toString())
     .addString("ethernet_ip", Ethernet.localIP().toString())

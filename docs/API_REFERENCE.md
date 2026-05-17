@@ -186,7 +186,7 @@ curl -X POST -H "Content-Type: application/json" \
 **Response** (400 Bad Request - invalid power):
 ```json
 {
-  "error": "power must satisfy 0 < power < 1575"
+  "error": "power must satisfy 0 <= power <= 1575"
 }
 ```
 

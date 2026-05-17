@@ -6,9 +6,6 @@
 #include "wifi_bridge.h"
 
 namespace {
-// Configuration constants
-constexpr uint32_t TELEMETRY_POLL_INTERVAL_MS = 20000;  // Poll every 20 seconds
-constexpr uint32_t TELEMETRY_HTTP_TIMEOUT_MS = 3500;    // HTTP timeout in milliseconds
 constexpr const char* HOME_ENDPOINT = "/home";
 }
 
@@ -68,7 +65,7 @@ void InverterMonitor::pollingTaskEntry(void* param) {
 
 void InverterMonitor::runPollingTask() {
   TickType_t lastWakeTime = xTaskGetTickCount();
-  const TickType_t intervalTicks = pdMS_TO_TICKS(TELEMETRY_POLL_INTERVAL_MS);
+  const TickType_t intervalTicks = pdMS_TO_TICKS(WIFI_BRIDGE_POLL_INTERVAL_MS);
 
   while (true) {
     // Ensure WiFi is connected to the inverter
@@ -157,10 +154,10 @@ unsigned long InverterMonitor::getLastUpdateMs() {
 }
 
 bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, String& errorMessage) {
-  // Safety check before inverter command: enforce strict hardware range
-  if (watts <= 0 || watts >= INVERTER_MAX_POWER_WATTS) {
+  // Safety check before inverter command: enforce hardware range
+  if (watts < 0 || watts > INVERTER_MAX_POWER_WATTS) {
     errorMessage = String("Invalid power value: ") + watts + 
-                   String("W. Must satisfy 0 < power < ") + INVERTER_MAX_POWER_WATTS + "W";
+                   String("W. Must satisfy 0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W";
     httpCode = 0;
     appLogger.log(String("[INVERTER-MONITOR] ") + errorMessage);
     return false;

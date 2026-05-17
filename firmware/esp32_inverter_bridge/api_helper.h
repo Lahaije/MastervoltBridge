@@ -59,6 +59,16 @@ public:
   }
 
   /**
+   * Add a boolean field.
+   */
+  JsonBuilder& addBool(const String& key, bool value) {
+    if (needsComma) json += ",";
+    json += "\"" + key + "\":" + (value ? "true" : "false");
+    needsComma = true;
+    return *this;
+  }
+
+  /**
    * Finalize and return the JSON object.
    */
   String build() {
