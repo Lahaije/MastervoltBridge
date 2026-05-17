@@ -11,7 +11,7 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/api/health", "Bridge connectivity state: WiFi, Ethernet, inverter host, IPs"},
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
   {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
-  {"POST", "/api/power", "Set inverter power: JSON body with power field, e.g. {\"power\":1200} (requires 0 < power < configured max)"},
+  {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"}
 };
@@ -56,11 +56,21 @@ void handleApiClient(EthernetClient& client) {
     }
   }
 
-  // Read request body if Content-Length > 0
+  // Read request body if Content-Length > 0.
+  // client.setTimeout() only covers Stream read calls (readStringUntil, readBytes, etc.),
+  // NOT this manual polling loop. Without an explicit deadline a client that sends
+  // Content-Length: N but stalls before delivering all bytes would block the single
+  // Ethernet service task indefinitely. We therefore cap total body-read time to
+  // API_CLIENT_TIMEOUT_MS so a slow or malicious client cannot monopolize the task.
   String body;
   if (contentLength > 0) {
     body.reserve(contentLength);
+    unsigned long bodyReadStart = millis();
     while ((int)body.length() < contentLength && client.connected()) {
+      if (millis() - bodyReadStart > API_CLIENT_TIMEOUT_MS) {
+        sendHttpResponse(client, 408, "application/json", buildErrorJson("request body read timeout"));
+        return;
+      }
       if (client.available()) {
         body += (char)client.read();
       } else {

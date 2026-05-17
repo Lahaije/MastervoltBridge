@@ -13,7 +13,7 @@ struct HomeData;
 struct ApiEndpointInfo {
   const char* method;
   const char* path;
-  const char* description;
+  String description;
 };
 
 // Single source of truth for all API endpoints (defined in api.h)

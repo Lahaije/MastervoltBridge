@@ -139,8 +139,10 @@ curl http://192.168.1.48:8080/api/info
 ```
 
 **Response** (502 Bad Gateway - no data yet):
-```
-WiFi not connected, or polling has not completed yet. Check /api/health.
+```json
+{
+  "error": "No inverter telemetry data available yet"
+}
 ```
 
 **Fields**:
@@ -193,8 +195,7 @@ curl -X POST -H "Content-Type: application/json" \
 **Response** (502 Bad Gateway - WiFi down):
 ```json
 {
-  "error": "WiFi not connected",
-  "wifi_status": false
+  "error": "WiFi not connected"
 }
 ```
 
@@ -237,8 +238,7 @@ H500A0103
 **Response** (502 Bad Gateway):
 ```json
 {
-  "error": "WiFi not connected",
-  "url": "/home"
+  "error": "WiFi not connected"
 }
 ```
 
@@ -271,9 +271,7 @@ curl http://192.168.1.48:8080/pulse
 **Response** (200 OK):
 ```json
 {
-  "pulse_sent": true,
-  "gpio_pin": 36,
-  "description": "WiFi recovery pulse triggered: HIGH 150ms, LOW 200ms, HIGH 150ms"
+  "status": "pulse_complete"
 }
 ```
 
@@ -324,7 +322,7 @@ response=$(curl -s http://192.168.1.48:8080/api/info)
 power=$(echo "$response" | jq '.power')  # in watts
 
 if [ -z "$power" ]; then
-  response=$(curl -s -X POST -d '/home' http://192.168.1.48:8080/api/inverter/fetch)
+  response=$(curl -s -X POST -H "Content-Type: application/json" -d '{"url":"/home"}' http://192.168.1.48:8080/api/inverter/fetch)
   echo "Fetched via generic endpoint"
 fi
 ```
