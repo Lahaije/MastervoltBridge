@@ -1,0 +1,197 @@
+#include "api_helper.h"
+
+#include <WiFi.h>
+#include "settings.h"
+#include "logger.h"
+#include "inverter_data.h"
+
+String jsonEscape(const String& input) {
+  String out;
+  out.reserve(input.length() + 8);
+  for (size_t i = 0; i < input.length(); i++) {
+    char c = input[i];
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if (c == '\n') {
+      out += "\\n";
+    } else if (c == '\r') {
+      out += "\\r";
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+void sendHttpResponse(EthernetClient& client, int code, const char* contentType, const String& body) {
+  String statusText = "OK";
+  if (code == 400) statusText = "Bad Request";
+  else if (code == 404) statusText = "Not Found";
+  else if (code == 405) statusText = "Method Not Allowed";
+  else if (code == 502) statusText = "Bad Gateway";
+  else if (code == 500) statusText = "Internal Server Error";
+
+  client.print("HTTP/1.1 ");
+  client.print(code);
+  client.print(" ");
+  client.println(statusText);
+  client.println("Connection: close");
+  client.print("Content-Type: ");
+  client.println(contentType);
+  client.print("Content-Length: ");
+  client.println(body.length());
+  client.println();
+  client.print(body);
+}
+
+bool parseStringToInt(const String& input, int& valueOut) {
+  String trimmed = input;
+  trimmed.trim();
+
+  if (trimmed.length() == 0) {
+    return false;
+  }
+
+  // Allow optional leading sign
+  size_t start = 0;
+  if (trimmed[0] == '-' || trimmed[0] == '+') {
+    start = 1;
+    if (trimmed.length() == 1) return false;  // sign with no digits
+  }
+
+  // Validate remaining characters are digits
+  for (size_t i = start; i < trimmed.length(); i++) {
+    if (!isDigit(trimmed[i])) return false;
+  }
+
+  valueOut = trimmed.toInt();
+  return true;
+}
+
+String getJsonValueByKey(const String& body, const String& key) {
+  String normalized = body;
+  normalized.trim();
+  if (normalized.length() == 0) {
+    return "";
+  }
+
+  // JSON-style payloads only: {"key":"value"} or {"key":123}
+  String quotedKey = String("\"") + key + "\"";
+  int keyIndex = normalized.indexOf(quotedKey);
+  if (keyIndex < 0) {
+    return "";
+  }
+
+  int colonIndex = normalized.indexOf(':', keyIndex + quotedKey.length());
+  if (colonIndex < 0) {
+    return "";
+  }
+
+  int i = colonIndex + 1;
+  while (i < normalized.length() && isspace((unsigned char)normalized[i])) {
+    i++;
+  }
+
+  // Quoted string value
+  if (i < normalized.length() && normalized[i] == '"') {
+    int valueEnd = normalized.indexOf('"', i + 1);
+    if (valueEnd > i + 1) {
+      String result = normalized.substring(i + 1, valueEnd);
+      result.trim();
+      return result;
+    }
+    return "";
+  }
+
+  // Unquoted numeric value
+  int valueEnd = i;
+  while (valueEnd < normalized.length() &&
+         normalized[valueEnd] != ',' &&
+         normalized[valueEnd] != '}' &&
+         !isspace((unsigned char)normalized[valueEnd])) {
+    valueEnd++;
+  }
+
+  if (valueEnd > i) {
+    String result = normalized.substring(i, valueEnd);
+    result.trim();
+    return result;
+  }
+
+  return "";
+}
+
+bool parseFetchUrlFromBody(const String& body, String& urlOut) {
+  urlOut = getJsonValueByKey(body, "url");
+  return urlOut.length() > 0;
+}
+
+String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
+  return JsonBuilder()
+    .addNumber("last_update_ms", String(lastUpdateMs))
+    .addString("operating_status", data.operatingStatus)
+    .addString("error_alarm_code", data.errorAlarmCode)
+    .addString("operating_mode", data.operatingMode)
+    .addString("inverter_model", data.inverterModel)
+    .addString("inverter_mac_address", data.inverterMacAddress)
+    .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
+    .addString("total_yield", data.lifetimeEnergy)  // Total lifetime yield (via get_Total_Yield())
+    .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
+    .build();
+}
+
+String buildHealthJson() {
+  return JsonBuilder()
+    .addBool("wifi_connected", WiFi.status() == WL_CONNECTED)
+    .addString("wifi_ssid", String(INVERTER_WIFI_SSID))
+    .addString("wifi_ip", WiFi.localIP().toString())
+    .addString("ethernet_ip", Ethernet.localIP().toString())
+    .addString("inverter_host", String(INVERTER_HOST))
+    .addNumber("last_inverter_status", String(lastInverterStatusCode))
+    .build();
+}
+
+String buildLogsJson() {
+  const int count = appLogger.getLogCount();
+
+  String json = "{\"total_entries\":";
+  json += String(count);
+  json += ",\"entries\":[";
+
+  for (int i = 0; i < count; i++) {
+    if (i > 0) json += ",";
+    const LogEntry& entry = appLogger.getLogEntry(i);
+    json += JsonBuilder()
+      .addNumber("timestamp_ms", String(entry.timestamp))
+      .addString("message", entry.message)
+      .build();
+  }
+
+  json += "]}";
+  return json;
+}
+
+String buildApiDiscoveryJson() {
+  String json = "{";
+  json += "\"service\":\"esp32-inverter-bridge\",";
+  json += "\"endpoints\":[";
+
+  constexpr size_t endpointCount = sizeof(API_ENDPOINTS) / sizeof(API_ENDPOINTS[0]);
+  for (size_t i = 0; i < endpointCount; i++) {
+    if (i > 0) {
+      json += ",";
+    }
+
+    // Use JsonBuilder for each endpoint object
+    json += JsonBuilder()
+      .addString("method", API_ENDPOINTS[i].method)
+      .addString("path", API_ENDPOINTS[i].path)
+      .addString("description", API_ENDPOINTS[i].description)
+      .build();
+  }
+
+  json += "]";
+  json += "}";
+  return json;
+}
