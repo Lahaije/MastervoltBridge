@@ -45,4 +45,11 @@ struct HomeData {
  */
 HomeData getInverterData();
 
+/**
+ * Parse the raw /home response into a HomeData struct.
+ * Expects 8 newline-delimited fields.
+ * Returns true if parsing succeeded and data is valid.
+ */
+bool parseHomeResponse(const String& rawResponse, HomeData& dataOut);
+
 #endif // INVERTER_DATA_H

@@ -81,7 +81,7 @@ inline String buildErrorJson(const String& errorMessage) {
 void sendHttpResponse(EthernetClient& client, int code, const char* contentType, const String& body);
 
 /**
- * Parse a string as a non-negative integer (digits only).
+ * Parse a string as an integer (optional leading sign, then digits only).
  * Returns true if successfully parsed, false otherwise.
  */
 bool parseStringToInt(const String& input, int& valueOut);

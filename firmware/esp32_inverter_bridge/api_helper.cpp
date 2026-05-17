@@ -53,8 +53,15 @@ bool parseStringToInt(const String& input, int& valueOut) {
     return false;
   }
 
-  // Validate all characters are digits
-  for (size_t i = 0; i < trimmed.length(); i++) {
+  // Allow optional leading sign
+  size_t start = 0;
+  if (trimmed[0] == '-' || trimmed[0] == '+') {
+    start = 1;
+    if (trimmed.length() == 1) return false;  // sign with no digits
+  }
+
+  // Validate remaining characters are digits
+  for (size_t i = start; i < trimmed.length(); i++) {
     if (!isDigit(trimmed[i])) return false;
   }
 
@@ -146,13 +153,23 @@ String buildHealthJson() {
 }
 
 String buildLogsJson() {
-  JsonBuilder builder;
   const int count = appLogger.getLogCount();
+
+  String json = "{\"total_entries\":";
+  json += String(count);
+  json += ",\"entries\":[";
+
   for (int i = 0; i < count; i++) {
+    if (i > 0) json += ",";
     const LogEntry& entry = appLogger.getLogEntry(i);
-    builder.addString(String(entry.timestamp), entry.message);
+    json += JsonBuilder()
+      .addNumber("timestamp_ms", String(entry.timestamp))
+      .addString("message", entry.message)
+      .build();
   }
-  return builder.build();
+
+  json += "]}";
+  return json;
 }
 
 String buildApiDiscoveryJson() {

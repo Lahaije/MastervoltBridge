@@ -68,9 +68,6 @@ private:
   // FreeRTOS task for polling
   static void pollingTaskEntry(void* param);
 
-  // Parse the raw /home response into HomeData
-  static bool parseHomeResponse(const String& rawResponse, HomeData& dataOut);
-
   // Polling task implementation
   void runPollingTask();
 

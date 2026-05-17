@@ -7,6 +7,7 @@
 
 
 void setup() {
+  appLogger.init();
 
   // Keep WiFi and Ethernet stack separated: WiFi for inverter, ENC28J60 for HA network.
   ethernetBridgeInit();

@@ -13,36 +13,31 @@ struct LogEntry {
 class Logger {
 private:
   LogEntry logs[MAX_LOG_ENTRIES];
-  int logCount = 0;
+  int head = 0;   // Index where next entry will be written
+  int count = 0;  // Number of entries currently stored (0..MAX_LOG_ENTRIES)
 
 public:
-  Logger() {
-    // Initialize serial during construction
+  Logger() {}
+
+  void init() {
     Serial.begin(115200);
-    delay(100);  // Give serial time to initialize
+    delay(100);
   }
 
   void log(const char* message) {
     unsigned long elapsedMs = millis();
-    
-    // Print to serial immediately
+
     Serial.print("[");
     Serial.print(elapsedMs);
     Serial.print("ms] ");
     Serial.println(message);
-    
-    // Store in log buffer if not full
-    if (logCount < MAX_LOG_ENTRIES) {
-      logs[logCount].timestamp = elapsedMs;
-      logs[logCount].message = String(message);
-      logCount++;
-    } else {
-      // Shift logs and add new one at the end (circular buffer behavior)
-      for (int i = 0; i < MAX_LOG_ENTRIES - 1; i++) {
-        logs[i] = logs[i + 1];
-      }
-      logs[MAX_LOG_ENTRIES - 1].timestamp = elapsedMs;
-      logs[MAX_LOG_ENTRIES - 1].message = String(message);
+
+    // Write at head position (overwrites oldest when full)
+    logs[head].timestamp = elapsedMs;
+    logs[head].message = String(message);
+    head = (head + 1) % MAX_LOG_ENTRIES;
+    if (count < MAX_LOG_ENTRIES) {
+      count++;
     }
   }
 
@@ -51,11 +46,17 @@ public:
   }
 
   int getLogCount() const {
-    return logCount;
+    return count;
   }
 
+  /**
+   * Get log entry by logical index (0 = oldest).
+   * Caller must ensure 0 <= index < getLogCount().
+   */
   const LogEntry& getLogEntry(int index) const {
-    return logs[index];
+    // Oldest entry starts at head when full, or at 0 when not yet full
+    int start = (count < MAX_LOG_ENTRIES) ? 0 : head;
+    return logs[(start + index) % MAX_LOG_ENTRIES];
   }
 };
 

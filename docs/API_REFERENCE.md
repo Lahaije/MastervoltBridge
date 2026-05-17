@@ -24,7 +24,7 @@ curl http://192.168.1.48:8080/
 **Response** (200 OK):
 ```json
 {
-  "api_version": "1.0",
+  "service": "esp32-inverter-bridge",
   "endpoints": [
     {"method": "GET", "path": "/", "description": "API discovery and endpoint overview"},
     {"method": "GET", "path": "/api/health", "description": "Bridge connectivity state"},
