@@ -7,6 +7,8 @@
 
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
+constexpr bool ENABLE_INVERTER_POLLING = false;
+constexpr uint32_t MONITOR_WIFI_CONNECT_TIMEOUT_MS = 5000;
 }
 
 InverterMonitor::InverterMonitor() {
@@ -25,7 +27,7 @@ void InverterMonitor::initialize() {
     dataMutex = xSemaphoreCreateMutex();
   }
 
-  if (pollingTaskHandle == nullptr) {
+  if (ENABLE_INVERTER_POLLING && pollingTaskHandle == nullptr) {
     xTaskCreatePinnedToCore(
       pollingTaskEntry,
       "inverter_monitor",
@@ -38,7 +40,11 @@ void InverterMonitor::initialize() {
   }
 
   isInitialized = true;
-  appLogger.log("[INVERTER-MONITOR] Inverter monitor initialized");
+  if (ENABLE_INVERTER_POLLING) {
+    appLogger.log("[INVERTER-MONITOR] Inverter monitor initialized");
+  } else {
+    appLogger.log("[INVERTER-MONITOR] Inverter polling disabled (measurement mode)");
+  }
 }
 
 void InverterMonitor::shutdown() {
@@ -69,8 +75,8 @@ void InverterMonitor::runPollingTask() {
 
   while (true) {
     // Ensure WiFi is connected to the inverter
-    if (!ensureWifiConnected()) {
-      appLogger.log("[INVERTER-MONITOR] WiFi not connected, retrying on next interval");
+    if (!ensureWifiConnectedWithTimeout(MONITOR_WIFI_CONNECT_TIMEOUT_MS)) {
+      appLogger.log("[INVERTER-MONITOR] WiFi not connected within 5s, skipping poll iteration");
       xTaskDelayUntil(&lastWakeTime, intervalTicks);
       continue;
     }

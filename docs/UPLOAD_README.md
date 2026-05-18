@@ -1,94 +1,54 @@
-# Upload README (Arduino IDE)
+# Upload README
 
-This guide explains how to compile and upload the ESP32 inverter bridge firmware.
+This guide covers compile/upload for the current ESP32-S3 bridge firmware.
 
-## 1) Install Arduino IDE
+## Tooling
 
-Install Arduino IDE 2.x from the official Arduino website.
+Arduino CLI executable:
 
-## 2) Add ESP32 board support
+C:\Users\AL33888\AppData\Local\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe
 
-1. Open Arduino IDE.
-2. Go to **File > Preferences**.
-3. In **Additional Boards Manager URLs**, add:
-   - `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-4. Go to **Tools > Board > Boards Manager**.
-5. Search for **esp32** and install **esp32 by Espressif Systems**.
+Board FQBN:
 
-## 3) Install required libraries
+esp32:esp32:esp32s3
 
-Go to **Sketch > Include Library > Manage Libraries** and install:
+Typical upload port:
 
-- `UIPEthernet`
+COM9
 
-`WiFi` and `HTTPClient` are provided by the ESP32 board package — no separate install needed.
+## Compile
 
-## 4) Open the sketch
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/esp32_inverter_bridge
 
-Open:
+## Upload
 
-- `firmware/esp32_inverter_bridge/esp32_inverter_bridge.ino`
+arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverter_bridge
 
-## 5) Configure constants before upload
+## Post-Upload Endpoint Verification
 
-Edit `settings.cpp`:
+Run these checks:
 
-- `INVERTER_WIFI_SSID`
-- `INVERTER_WIFI_PASSWORD`
-- Optional: `API_PORT`
-- Optional: `ETH_MAC`
-- Optional: `PIN_ETH_*` and `PIN_INVERTER_WIFI_WAKE` if your board uses different GPIO numbers
+- GET /
+- GET /api/health
+- GET /api/logs
+- POST /wifi/off
+- GET /pulse
 
-The inverter endpoint defaults are already configured:
+Nighttime note:
 
-- Host: `10.0.0.1`
-- GET `/home`
-- POST `/power` with text payload containing integer watts
+When inverter WiFi is unavailable, inverter-dependent endpoints are expected to fail with 502:
 
-## 6) Select board and port
+- /api/info
+- /api/power
+- /api/inverter/fetch
 
-1. Connect ESP32 over USB.
-2. In **Tools > Board**, select:
-   - **ESP32 Arduino > ESP32 Dev Module** — works for most ESP32 carrier boards.
-   - If your board has a dedicated entry (e.g. LOLIN D32 Mini), prefer that.
-3. In **Tools > Port**, select the correct COM port.
+## Measurement Workflow Reminder
 
-Recommended options:
+For clean connection timing tests, use:
 
-| Setting | Value |
-|---|---|
-| Upload Speed | 921600 |
-| CPU Frequency | 240 MHz |
-| Flash Mode | DIO |
-| Flash Size | 4 MB (32 Mb) |
-| Partition Scheme | Default 4MB |
+- /pulse
+- /wifi/off
+- wait 2-3s
+- repeat
 
-## 7) Put board into download mode (if needed)
-
-Some ESP32 boards auto-reset into bootloader mode via USB. If upload fails:
-
-1. Hold the **BOOT** button.
-2. Press and release **EN/RESET**.
-3. Release **BOOT**.
-4. Retry upload immediately.
-
-## 8) Verify and upload
-
-1. Click **Verify**.
-2. Click **Upload**.
-3. Open **Serial Monitor** at **115200 baud**.
-
-Expected startup messages include:
-
-- Ethernet initialization
-- DHCP address (or fallback static IP)
-- WiFi connection attempts to inverter AP
-- API server listening port
-
-## 9) After upload
-
-Use the Ethernet IP shown in Serial Monitor for Home Assistant API calls.
-
-Example:
-
-- `http://<esp32-ethernet-ip>:8080/api/health`
+Do not double-press when WiFi is already ON.

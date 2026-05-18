@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 7;
+constexpr size_t API_ENDPOINT_COUNT = 8;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**

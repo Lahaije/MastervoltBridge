@@ -14,14 +14,19 @@ namespace {
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 10000;
 constexpr uint32_t WIFI_CONNECT_POLL_MS = 250;
 constexpr uint32_t WIFI_LOCK_TIMEOUT_MS = 50;
-constexpr uint32_t RECOVERY_TIMEOUT_MS = 30000;
-constexpr uint32_t RECOVERY_SCAN_DWELL_MS = 1000;
-constexpr uint32_t RECOVERY_SCAN_SETTLE_MS = 200;
+constexpr uint32_t RECOVERY_TIMEOUT_MS = 8000;
+constexpr uint32_t RECOVERY_SCAN_DWELL_MS = 500;
+constexpr uint32_t RECOVERY_SCAN_SETTLE_MS = 100;
 constexpr uint32_t RECOVERY_BUSY_LOG_INTERVAL_MS = 5000;
 
 SemaphoreHandle_t wifiOperationMutex = nullptr;
 bool recoveryMeasurementInProgress = false;
 unsigned long lastRecoveryBusyLogMs = 0;
+
+// Discovered AP BSSID+channel from scan (used to speed up connect)
+uint8_t discoveredBssid[6] = {0};
+uint8_t discoveredChannel = 0;
+bool hasDiscoveredAp = false;
 
 class ScopedWifiOperationLock {
 public:
@@ -88,10 +93,14 @@ bool isRecoveryActiveAndLogThrottled() {
 }
 
 void startConfiguredWifiConnection() {
-  if (strlen(INVERTER_WIFI_PASSWORD) == 0) {
+  const char* pass = strlen(INVERTER_WIFI_PASSWORD) ? INVERTER_WIFI_PASSWORD : nullptr;
+  if (hasDiscoveredAp) {
+    logRecovery(String("Connecting with ch=") + discoveredChannel + String(" bssid from scan."));
+    WiFi.begin(INVERTER_WIFI_SSID, pass, discoveredChannel, discoveredBssid);
+  } else if (pass == nullptr) {
     WiFi.begin(INVERTER_WIFI_SSID);
   } else {
-    WiFi.begin(INVERTER_WIFI_SSID, INVERTER_WIFI_PASSWORD);
+    WiFi.begin(INVERTER_WIFI_SSID, pass);
   }
 }
 
@@ -136,33 +145,48 @@ void logRecoveryScanResults(int networkCount) {
     return;
   }
 
-  bool inverterSsidFound = false;
+  // Only log the inverter SSID, ignore all other networks
+  int8_t bestRssi = -127;
+  int bestIdx = -1;
   for (int i = 0; i < networkCount; i++) {
-    String ssid = WiFi.SSID(i);
-    if (ssid == INVERTER_WIFI_SSID) {
-      inverterSsidFound = true;
+    if (WiFi.SSID(i) == INVERTER_WIFI_SSID) {
+      int8_t rssi = (int8_t)WiFi.RSSI(i);
+      if (rssi > bestRssi) { bestRssi = rssi; bestIdx = i; }
     }
-    if (ssid.length() == 0) {
-      ssid = "<hidden>";
-    }
-    logRecovery(String(ssid) + String(" (RSSI=") + WiFi.RSSI(i) + String(")"));
   }
-
-  if (inverterSsidFound) {
-    logRecovery("Target inverter SSID is visible in scan.");
+  if (bestIdx >= 0) {
+    memcpy(discoveredBssid, WiFi.BSSID(bestIdx), 6);
+    discoveredChannel = (uint8_t)WiFi.channel(bestIdx);
+    hasDiscoveredAp = true;
+    logRecovery(String("Scan found ") + INVERTER_WIFI_SSID +
+                String(" ch=") + discoveredChannel +
+                String(" RSSI=") + bestRssi);
   } else {
-    logRecovery("Target inverter SSID not visible in scan results.");
+    hasDiscoveredAp = false;
+    logRecovery(String("Scan: ") + networkCount + String(" networks, inverter not visible."));
   }
 }
 
 void runRecoveryScanPass() {
-  WiFi.disconnect(true, true);
   vTaskDelay(pdMS_TO_TICKS(RECOVERY_SCAN_SETTLE_MS));
-
-  logRecovery("Scanning visible networks...");
+  logRecovery("Scanning...");
   int networkCount = WiFi.scanNetworks(false, true, false, RECOVERY_SCAN_DWELL_MS);
   logRecoveryScanResults(networkCount);
   WiFi.scanDelete();
+}
+
+void triggerPulseSequence() {
+  logRecovery("Triggering inverter WiFi wake pulse sequence.");
+
+  digitalWrite(PIN_INVERTER_WIFI_WAKE, LOW);
+  delay(PULSE_HIGH_MS);
+  digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
+
+  delay(PULSE_GAP_MS);
+
+  digitalWrite(PIN_INVERTER_WIFI_WAKE, LOW);
+  delay(PULSE_HIGH_MS);
+  digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
 }
 
 }  // namespace
@@ -171,6 +195,12 @@ void wifiBridgeInit() {
   if (wifiOperationMutex == nullptr) {
     wifiOperationMutex = xSemaphoreCreateMutex();
   }
+  // Clean radio state on boot
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+  delay(100);
+
   pinMode(PIN_INVERTER_WIFI_WAKE, OUTPUT);
   digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
 }
@@ -180,6 +210,10 @@ void wifiBridgeInit() {
  * If not connected, attempt to connect with a configurable timeout.
  */
 bool ensureWifiConnected() {
+  return ensureWifiConnectedWithTimeout(WIFI_CONNECT_TIMEOUT_MS);
+}
+
+bool ensureWifiConnectedWithTimeout(uint32_t timeoutMs) {
   if (isRecoveryActiveAndLogThrottled()) {
     return false;
   }
@@ -202,7 +236,7 @@ bool ensureWifiConnected() {
     startConfiguredWifiConnection();
   }
 
-  return waitForWifiConnection(WIFI_CONNECT_TIMEOUT_MS, true);
+  return waitForWifiConnection(timeoutMs, true);
 }
 
 /**
@@ -281,21 +315,28 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   return true;
 }
 
-/**
- * Trigger the inverter WiFi wake pulse sequence for recovery.
- */
-void wifiBridgeTriggerPulseSequence() {
-  logRecovery("Triggering inverter WiFi wake pulse sequence.");
+bool triggerWifiOffIfConnected() {
+  ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_MS);
+  if (!lock.acquired()) {
+    logRecovery("WiFi operation busy. Cannot send WiFi-off press.");
+    return false;
+  }
 
+  if (recoveryMeasurementInProgress) {
+    logRecovery("Measurement in progress. Skipping WiFi-off press.");
+    return false;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    logRecovery("WiFi already OFF (not connected). No press sent.");
+    return false;
+  }
+
+  logRecovery("Sending single press to turn inverter WiFi OFF.");
   digitalWrite(PIN_INVERTER_WIFI_WAKE, LOW);
   delay(PULSE_HIGH_MS);
   digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
-
-  delay(PULSE_GAP_MS);
-
-  digitalWrite(PIN_INVERTER_WIFI_WAKE, LOW);
-  delay(PULSE_HIGH_MS);
-  digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
+  return true;
 }
 
 void measureConnectionTime() {
@@ -311,27 +352,55 @@ void measureConnectionTime() {
   }
 
   RecoveryMeasurementGuard guard;
-  wifiBridgeTriggerPulseSequence();
+  triggerPulseSequence();
   unsigned long startMs = millis();
 
   logRecovery("Measuring connection time after pulse...");
+
+  // Full radio reset for clean state before scan+connect
+  WiFi.mode(WIFI_OFF);
+  vTaskDelay(pdMS_TO_TICKS(100));
   WiFi.mode(WIFI_STA);
+  hasDiscoveredAp = false;
 
+  // Scan to find inverter BSSID+channel — avoids full scan inside WiFi.begin()
+  runRecoveryScanPass();
+
+  // Connect using channel+BSSID if found, else auto-scan
+  startConfiguredWifiConnection();
+
+  // Poll with per-iteration logging
+  uint32_t iteration = 0;
   while (millis() - startMs < RECOVERY_TIMEOUT_MS) {
-    runRecoveryScanPass();
-    startConfiguredWifiConnection();
-
+    iteration++;
+    wl_status_t status = WiFi.status();
     unsigned long elapsedMs = millis() - startMs;
-    if (elapsedMs >= RECOVERY_TIMEOUT_MS) {
-      break;
-    }
-    uint32_t remainingMs = RECOVERY_TIMEOUT_MS - elapsedMs;
-    if (waitForWifiConnection(remainingMs, false)) {
-      unsigned long elapsed = millis() - startMs;
-      logRecovery(String("Connected in ") + elapsed + "ms. IP=" + WiFi.localIP().toString());
+    logRecovery(String("Iteration ") + iteration +
+                String(" t=") + elapsedMs +
+                String("ms status=") + String((int)status) +
+                String(" (") + wifiStatusToString(status) + String(")"));
+
+    if (status == WL_CONNECTED) {
+      uint8_t ch = WiFi.channel();
+      uint8_t* bssid = WiFi.BSSID();
+      char bssidStr[18];
+      snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+               bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+      logRecovery(String("Connected in ") + elapsedMs + "ms. IP=" + WiFi.localIP().toString() +
+                  " channel=" + ch + " bssid=" + bssidStr);
       return;
     }
+
+    if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL || status == WL_CONNECTION_LOST) {
+      logRecovery(String("Retrying after status=") + wifiStatusToString(status));
+      hasDiscoveredAp = false;
+      startConfiguredWifiConnection();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(WIFI_CONNECT_POLL_MS));
   }
 
-  logRecovery("Failed to connect within 30s.");
+  wl_status_t finalStatus = WiFi.status();
+  logRecovery(String("Timeout after ") + RECOVERY_TIMEOUT_MS + "ms. Final status=" +
+              String((int)finalStatus) + " (" + wifiStatusToString(finalStatus) + ")");
 }

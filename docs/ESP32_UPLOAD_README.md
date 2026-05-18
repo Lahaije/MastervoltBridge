@@ -1,95 +1,47 @@
-# Upload README (Arduino IDE) — ESP32-Mini-1
+# ESP32 Upload README
 
-This guide explains how to compile and upload the ESP32 firmware.
+Current upload workflow for firmware/esp32_inverter_bridge.
 
-## 1) Install Arduino IDE
+## Required Values
 
-Install Arduino IDE 2.x from the official Arduino website.
+- CLI: C:\Users\AL33888\AppData\Local\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe
+- FQBN: esp32:esp32:esp32s3
+- Port: COM9 (verify on your machine)
 
-## 2) Add ESP32 board support
+## Compile
 
-1. Open Arduino IDE.
-2. Go to **File > Preferences**.
-3. In **Additional Boards Manager URLs**, add:
-   - `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-4. Go to **Tools > Board > Boards Manager**.
-5. Search for **esp32** and install **esp32 by Espressif Systems**.
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/esp32_inverter_bridge
 
-## 3) Install required libraries
+## Upload
 
-Go to **Sketch > Include Library > Manage Libraries** and install:
+arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverter_bridge
 
-- `UIPEthernet`
+## Verify Firmware Is Current
 
-`WiFi` and `HTTPClient` are provided by the ESP32 board package — no separate install needed.
+1. GET / returns discovery including /wifi/off.
+2. POST /wifi/off returns JSON with pressed true/false (not 404).
+3. GET /pulse returns status pulse_complete.
 
-## 4) Open the sketch
+## Inverter Availability Caveat
 
-Open:
+When inverter WiFi is unavailable, these endpoints should return 502:
 
-- `firmware/esp32_inverter_bridge/esp32_inverter_bridge.ino`
+- /api/info
+- /api/power
+- /api/inverter/fetch
 
-## 5) Configure constants before upload
+This is expected and does not indicate upload failure.
 
-Edit in sketch:
+## Next-Day Measurement Continuation
 
-- `INVERTER_WIFI_SSID`
-- `INVERTER_WIFI_PASSWORD`
-- Optional: `API_PORT`
-- Optional: `ETH_MAC`
-- Optional: fallback static IP constants
-- Optional: `PIN_ETH_*` and `PIN_INVERTER_WIFI_WAKE` if your board uses different GPIO numbers
+Use clean cycle for timing work:
 
-The inverter endpoint defaults are already configured:
+- /pulse
+- /wifi/off
+- wait 2-3s
+- repeat
 
-- Host: `10.0.0.1`
-- GET `/home`
-- POST `/power` with text payload containing integer watts
+Then run:
 
-## 6) Select board and port
-
-1. Connect ESP32-Mini-1 over USB.
-2. In **Tools > Board**, select:
-   - **ESP32 Arduino > ESP32 Dev Module** — works for most ESP32-Mini-1 carrier boards.
-   - If your board has a dedicated entry (e.g. LOLIN D32 Mini), prefer that.
-3. In **Tools > Port**, select the correct COM port.
-
-Recommended options:
-
-| Setting | Value |
-|---|---|
-| Upload Speed | 921600 |
-| CPU Frequency | 240 MHz |
-| Flash Mode | DIO |
-| Flash Size | 4 MB (32 Mb) |
-| Partition Scheme | Default 4MB |
-
-## 7) Put board into download mode (if needed)
-
-Some ESP32-Mini-1 boards auto-reset into bootloader mode via USB. If upload fails:
-
-1. Hold the **BOOT** button.
-2. Press and release **EN/RESET**.
-3. Release **BOOT**.
-4. Retry upload immediately.
-
-## 8) Verify and upload
-
-1. Click **Verify**.
-2. Click **Upload**.
-3. Open **Serial Monitor** at **115200 baud**.
-
-Expected startup messages include:
-
-- Ethernet initialization
-- DHCP address (or fallback static IP)
-- WiFi connection attempts to inverter AP
-- API server listening port
-
-## 9) After upload
-
-Use the Ethernet IP shown in Serial Monitor for Home Assistant API calls.
-
-Example:
-
-- `http://<esp32-ethernet-ip>:8080/api/health`
+- python run_clean_tests.py 10
+- python analyze_logs.py

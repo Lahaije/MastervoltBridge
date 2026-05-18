@@ -1,120 +1,112 @@
 # ESP32 Inverter WiFi-to-Ethernet Bridge
 
-Professional bridge firmware for connecting WiFi-only inverters (Mastervolt SOLADIN series) to Home Assistant via Ethernet. Uses ESP32 + ENC28J60 to bridge inverter WiFi network to home LAN.
+Professional bridge firmware for connecting WiFi-only inverters (Mastervolt SOLADIN series) to Home Assistant over Ethernet.
+
+## Current Snapshot (May 18, 2026)
+
+- Hardware: ESP32-S3 + ENC28J60
+- Ethernet API: port 8080
+- Inverter SSID: mastervolt-soladin-0103
+- Inverter IP: 10.0.0.1
+- WiFi wake pin: GPIO 36
+- Pulse timing: HIGH 150 ms, gap 200 ms, HIGH 150 ms
 
 ## Architecture
 
-**Hardware**: ESP32 with ENC28J60 Ethernet adapter
-- **WiFi Interface**: Station mode, connects to inverter WiFi (10.0.0.x)
-- **Ethernet Interface**: DHCP client, connects to home LAN (192.168.1.x)
-- **API Server**: HTTP REST endpoint on Ethernet (port 8080)
+- WiFi layer: firmware/esp32_inverter_bridge/wifi_bridge.cpp
+- Polling/caching: firmware/esp32_inverter_bridge/inverter_monitor.cpp
+- API router: firmware/esp32_inverter_bridge/api.cpp
+- API helpers/JSON: firmware/esp32_inverter_bridge/api_helper.cpp
+- Config: firmware/esp32_inverter_bridge/settings.cpp
 
-**Firmware Design**:
-- **Modular architecture**: Separated concerns (WiFi connectivity, inverter telemetry, HTTP API, Ethernet)
-- **FreeRTOS-based**: Polling task runs every 20s with mutex-protected cached data
-- **Generic HTTP layer**: `fetchInverterData()` in wifi_bridge module handles all inverter requests with automatic WiFi management
-- **Rich logging**: 1000-entry circular buffer with millisecond timestamps
-
-## Features
-
-- ✅ **Automatic WiFi management**: Every inverter request checks and reconnects if needed
-- ✅ **Cached telemetry**: 20-second polling interval minimizes network traffic
-- ✅ **Hardware limits**: Power setting validation (0-1575W max for SOLADIN 1500)
-- ✅ **Comprehensive API**: 7 REST endpoints + generic fetch passthrough
-- ✅ **Diagnostics**: Real-time logs, health checks, poll statistics
-- ✅ **Recovery mechanism**: GPIO pulse sequence to wake inverter WiFi if needed
-
-## API Endpoints
+## API Endpoints (Current)
 
 | Method | Path | Purpose |
-|--------|------|----------|
-| GET | `/` | API discovery and endpoint list |
-| GET | `/api/health` | Bridge connectivity status (WiFi, Ethernet, IPs) |
-| GET | `/api/logs` | Up to 1000 cached log entries (ms timestamps) |
-| GET | `/api/info` | Latest inverter telemetry from `/home` endpoint |
-| POST | `/api/power` | Set inverter power: JSON body `{"power":1200}` |
-| POST | `/api/inverter/fetch` | Generic inverter endpoint fetch: POST body `{'url':'/path'}` |
-| GET | `/pulse` | Trigger WiFi module recovery pulse sequence |
+|---|---|---|
+| GET | / | API discovery |
+| GET | /api/health | Bridge WiFi/Ethernet status |
+| GET | /api/logs | Circular log buffer |
+| GET | /api/info | Latest cached inverter telemetry |
+| POST | /api/power | Set inverter power (0-1575 W) |
+| POST | /api/inverter/fetch | Fetch arbitrary inverter path |
+| POST | /wifi/off | Single press if bridge WiFi is connected |
+| GET | /pulse | Double-press recovery + connection timing measurement |
 
-## Response Format
+## WiFi Measurement Findings
 
-**`GET /api/info`** returns structured telemetry:
-```json
-{
-  "last_update_ms": 103850,
-  "operating_status": "1",
-  "error_alarm_code": "0",
-  "operating_mode": "1",
-  "inverter_model": "H500A0103",
-  "inverter_mac_address": "00:06:66:9d:e0:36",
-  "power": "674.547",
-  "total_yield": "08566.628",
-  "daily_yield": "12.811"
-}
-```
+### Valid inverter state machine
 
-## Folder Structure
+- OFF -> double press (/pulse) -> ON
+- ON -> single press (/wifi/off) -> OFF
+- ON -> double press -> undefined state (avoid)
 
-```
-firmware/esp32_inverter_bridge/
-├── esp32_inverter_bridge.ino          # Main sketch entry point
-├── wifi_bridge.{h,cpp}                # WiFi connectivity + generic HTTP fetcher
-├── inverter_data.{h,cpp}              # Data model (HomeData struct + typed accessors)
-├── inverter_monitor.{h,cpp}           # Inverter telemetry polling (FreeRTOS task)
-├── ethernet_bridge.{h,cpp}            # ENC28J60 Ethernet stack manager
-├── api.h                              # HTTP API endpoint routing
-├── api_helper.{h,cpp}                 # JSON/HTTP parsing and response utilities
-├── settings.{h,cpp}                   # Global configuration (pins, SSIDs, timeouts)
-├── logger.h                           # Circular log buffer (1000 entries)
-└── [legacy] esp8266_inverter_bridge/  # Original ESP8266 firmware (deprecated)
+### Required clean test flow
 
-docs/
-├── WIRING_README.md                   # Hardware pin assignments
-├── UPLOAD_README.md                   # Arduino IDE setup steps
-├── TEST_README.md                     # Verification procedures
-└── [ESP32 variants]                   # ESP32-specific documentation
+- pulse (measure)
+- wifi/off
+- wait 2-3 seconds
+- repeat
 
-test_bridge.py                         # Python test script for API validation
-Mastervolt.js / content.js / executor.js  # Inverter web UI JavaScript (for reference)
-```
+### Measured baseline before latest optimization
 
-## Build & Deploy
+- Success rate: 100% when using the clean flow
+- Connection time range: about 3752-4752 ms
+- Average connection time: about 4252 ms
+- Inverter channels observed: 1, 6, 11
 
-1. **Hardware Setup**: Follow [ESP32_WIRING_README.md](docs/ESP32_WIRING_README.md)
-2. **Configure**: Edit `settings.cpp` for inverter SSID/password
-3. **Upload**: Follow [ESP32_UPLOAD_README.md](docs/ESP32_UPLOAD_README.md)
-4. **Test**: Run [ESP32_TEST_README.md](docs/ESP32_TEST_README.md) or `python test_bridge.py`
+### Firmware changes applied for speed/reliability
 
-## Documentation
+- Recovery timeout reduced to 8000 ms
+- Scan dwell reduced to 500 ms and settle to 100 ms
+- WiFi radio reset before each measurement (WIFI_OFF -> WIFI_STA)
+- Scan-before-connect with discovered channel + BSSID passed into WiFi.begin
+- Recovery scan logging reduced to inverter-focused lines
+- /wifi/off endpoint restored
 
-- **[API_REFERENCE.md](docs/API_REFERENCE.md)** — Complete REST API specification with examples
-- **[AGENTS.md](AGENTS.md)** — Project structure and module guide for AI agents and future developers
-- **[ESP32_WIRING_README.md](docs/ESP32_WIRING_README.md)** — Hardware pin assignments and connections
-- **[ESP32_UPLOAD_README.md](docs/ESP32_UPLOAD_README.md)** — Arduino IDE setup and firmware upload steps
-- **[ESP32_TEST_README.md](docs/ESP32_TEST_README.md)** — API validation and troubleshooting commands
+## Important Test Constraint
 
-## Known Issues & Troubleshooting
+If inverter WiFi is unavailable (for example after sunset), endpoints that need inverter WiFi are expected to fail with 502:
 
-- **WiFi drops after 30-50s**: Inverter WiFi module stability issue. Test by connecting a laptop directly to inverter WiFi.
-- **502 Bad Gateway on API calls**: WiFi not connected. Check `/api/health` endpoint.
-- **Timeouts on `/api/info`**: Inverter `/home` endpoint slow to respond. Increase `TELEMETRY_HTTP_TIMEOUT_MS` in settings.cpp.
+- /api/info
+- /api/power
+- /api/inverter/fetch
 
-## Module Responsibility Matrix
+The following should still work:
 
-| Module | Role | Exports | Depends On |
-|--------|------|---------|------------|
-| wifi_bridge | WiFi connection + generic HTTP | `ensureWifiConnected()`, `fetchInverterData()` | WiFi.h, HTTPClient.h, settings |
-| inverter_data | Data model | `HomeData` struct, `getInverterData()` | inverter_monitor |
-| inverter_monitor | Telemetry polling + caching | `InverterMonitor` singleton | wifi_bridge, inverter_data, FreeRTOS |
-| ethernet_bridge | ENC28J60 + API server startup | `ethernetBridgeInit()` | UIPEthernet, api.h |
-| api_helper | JSON/HTTP parsing + response building | `jsonEscape()`, `sendHttpResponse()`, `parseStringToInt()`, `parseFetchUrlFromBody()`, `buildHealthJson()`, `buildLogsJson()`, `buildApiDiscoveryJson()` | Arduino, WiFi.h |
-| api.h | HTTP endpoint routing + handlers | `handleApiClient()` | api_helper, inverter_data, inverter_monitor, logger |
-| settings | Configuration constants | All global config + pins | (none) |
-| logger | Log buffer | `Logger` singleton, `appLogger` global | (none) |
+- /
+- /api/health
+- /api/logs
+- /wifi/off (typically returns pressed false when WiFi already off)
+- /pulse (returns pulse_complete, but connection may timeout)
 
-## Development Notes
+## Tomorrow Handoff For Firmware Auto-Optimization
 
-- **WiFi Stability**: Every inverter request goes through `fetchInverterData()` which ensures WiFi is connected first. This provides automatic reconnection without explicit error handling at call sites.
-- **Thread Safety**: Telemetry data protected by FreeRTOS mutex. All reads/writes use 5s timeout.
-- **HTTP Timeout**: Currently 3.5s for inverter requests. Adjust in settings.cpp if inverter is slow.
-- **Polling Interval**: 20s by default. Balance between freshness and network load.
+1. Start with inverter WiFi available (daylight).
+2. Run clean measurements with run_clean_tests.py using pulse -> wifi/off -> wait loop.
+3. Parse results with analyze_logs.py and compare against ~4252 ms baseline.
+4. Confirm logs show channel/BSSID-assisted connect path.
+5. If needed, iterate on:
+- scan dwell/settle values
+- retry strategy after WL_NO_SSID_AVAIL or WL_CONNECTION_LOST
+- BSSID/channel fallback policy
+
+## Build and Upload
+
+Arduino CLI path used in this repo:
+
+C:\Users\AL33888\AppData\Local\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe
+
+Typical commands:
+
+- compile: arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/esp32_inverter_bridge
+- upload: arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverter_bridge
+
+## Documentation Index
+
+- docs/API_REFERENCE.md
+- docs/TEST_README.md
+- docs/WIRING_README.md
+- docs/UPLOAD_README.md
+- docs/ESP32_WIRING_README.md
+- docs/ESP32_UPLOAD_README.md
+- AGENTS.md

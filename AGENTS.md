@@ -46,7 +46,11 @@ api_helper.cpp/h (HTTP/JSON utilities)
   └── Arduino, WiFi.h, settings
 
 api.h (request routing)
-  ├── handles: 7 REST endpoints
+  ├── declares: handleApiClient() interface
+  └── implemented in: api.cpp (8 REST endpoints)
+  
+api.cpp (request routing implementation)
+  ├── handles: 8 REST endpoints
   ├── uses: api_helper for HTTP/JSON utilities
   ├── uses: InverterMonitor::getInstance()
   └── uses: getInverterData() for telemetry access
@@ -87,17 +91,18 @@ bool fetchInverterData(const String& method, const String& path, const String& b
 
 **Key benefit**: Automatic WiFi management means every operation recovers from WiFi drops transparently.
 
-## API Endpoints (7 total)
+## API Endpoints (8 total)
 
 | Method | Path | Handler | Purpose |
 |--------|------|---------|---------|
-| GET | `/` | api.h:298 | API discovery (endpoint list) |
-| GET | `/api/health` | api.h:303 | Bridge status (WiFi, Ethernet, IPs) |
-| GET | `/api/logs` | api.h:308 | Log buffer (1000 entries) |
-| GET | `/api/info` | api.h:320 | Latest inverter telemetry (from HomeData cache) |
-| POST | `/api/power` | api.h:343 | Set inverter power (0-1575W max) |
-| POST | `/api/inverter/fetch` | api.h:370 | Generic inverter endpoint fetch |
-| GET | `/pulse` | api.h:313 | Trigger WiFi recovery pulse |
+| GET | `/` | api.cpp | API discovery (endpoint list) |
+| GET | `/api/health` | api.cpp | Bridge status (WiFi, Ethernet, IPs) |
+| GET | `/api/logs` | api.cpp | Log buffer (1000 entries) |
+| GET | `/api/info` | api.cpp | Latest inverter telemetry (from HomeData cache) |
+| POST | `/api/power` | api.cpp | Set inverter power (0-1575W max) |
+| POST | `/api/inverter/fetch` | api.cpp | Generic inverter endpoint fetch |
+| POST | `/wifi/off` | api.cpp | Single press to turn inverter WiFi off if connected |
+| GET | `/pulse` | api.cpp | Trigger WiFi recovery pulse and timing measurement |
 
 ## Data Structures
 
@@ -177,11 +182,33 @@ private:
 
 **Upload**: Board = "ESP32S3 Dev Module" (or appropriate variant)
 
+**Agent policy**: Agents are allowed to compile and upload firmware to the ESP32 during discovery and validation when needed (typically FQBN `esp32:esp32:esp32s3`, port `COM9`), unless the user explicitly asks not to upload.
+
 ## Common Tasks
+
+### Measurement Mode (temporary)
+
+For performance measurements, inverter polling is currently disabled on purpose.
+
+- Toggle location: `firmware/esp32_inverter_bridge/inverter_monitor.cpp`
+- Flag: `ENABLE_INVERTER_POLLING`
+- Current value: `false`
+
+Re-enable after measurement phase:
+
+1. Set `ENABLE_INVERTER_POLLING` to `true`.
+2. Keep monitor WiFi-on timeout behavior (`MONITOR_WIFI_CONNECT_TIMEOUT_MS = 5000`) so each poll iteration caps connect attempt time and skips when inverter WiFi is unavailable.
+3. Remove measurement-only flow once no longer needed (`/pulse` timing path and related measurement helpers in `wifi_bridge.cpp`) and keep regular monitor-driven operation.
+
+Monitor behavior when enabled:
+
+- The monitor attempts to turn WiFi on via `ensureWifiConnectedWithTimeout(5000)`.
+- If WiFi is not available within 5s, it skips that poll iteration.
+- Next interval retries automatically.
 
 ### Add a New API Endpoint
 
-1. Add handler in `api.h` `handleApiClient()` function
+1. Add handler in `api.cpp` `handleApiClient()` function
 2. Register in `API_ENDPOINTS[]` struct array
 3. Use `InverterMonitor::getInstance()` or `fetchInverterData()` for inverter communication
 4. Send response via `sendHttpResponse(client, code, contentType, body)`
@@ -220,6 +247,7 @@ Check `/api/info` response:
 curl http://192.168.1.48:8080/api/health  # Check connectivity
 curl http://192.168.1.48:8080/api/info    # Check telemetry
 curl http://192.168.1.48:8080/api/logs    # Check logs
+curl -X POST http://192.168.1.48:8080/wifi/off  # Ensure endpoint exists
 ```
 
 **Python test script**:
@@ -235,7 +263,8 @@ python test_bridge.py
 - `inverter_data.{h,cpp}` — Data model (HomeData struct with raw fields)
 - `inverter_monitor.{h,cpp}` — Polling + caching (business logic)
 - `ethernet_bridge.{h,cpp}` — ENC28J60 + API server startup
-- `api.h` — REST endpoint routing and handlers
+- `api.cpp` — REST endpoint routing and handlers
+- `api.h` — API router interface
 - `api_helper.{h,cpp}` — HTTP/JSON parsing and response building utilities
 - `settings.{h,cpp}` — Global configuration
 - `logger.h` — Log buffer
@@ -243,7 +272,7 @@ python test_bridge.py
 **Documentation** (`docs/`):
 - `ESP32_WIRING_README.md` — Hardware pin assignments
 - `ESP32_UPLOAD_README.md` — Arduino setup
-- `ESP32_TEST_README.md` — API validation commands
+- `TEST_README.md` — API validation commands and measurement workflow
 
 **Resources**:
 - `README.md` — Project overview
@@ -272,3 +301,4 @@ python test_bridge.py
 - **502 errors on first call?** → Polling hasn't completed yet (20-30s). Wait and retry.
 - **New inverter model?** → Edit `settings.cpp` (SSID, host), then rebuild and upload.
 - **Different hardware?** → Update GPIO pins in `settings.cpp`. ENC28J60 SPI pins may differ.
+- **Why is `/api/info` empty during benchmark runs?** → Polling is intentionally disabled (`ENABLE_INVERTER_POLLING=false`) for measurement mode.

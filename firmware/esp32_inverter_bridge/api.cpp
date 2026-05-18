@@ -13,6 +13,7 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
   {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
+  {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"}
 };
 
@@ -99,6 +100,13 @@ void handleApiClient(EthernetClient& client) {
     // Need to be edited in the final firmware, 
     measureConnectionTime();
     sendHttpResponse(client, 200, "application/json", "{\"status\":\"pulse_complete\"}");
+    return;
+  }
+
+  if (method == "POST" && path == "/wifi/off") {
+    bool pressed = triggerWifiOffIfConnected();
+    String response = JsonBuilder().addBool("pressed", pressed).build();
+    sendHttpResponse(client, 200, "application/json", response);
     return;
   }
   

@@ -1,147 +1,84 @@
 # Test README
 
-This guide validates hardware, networking, API behavior, and inverter WiFi wake pulse behavior for the ESP32 bridge.
+This document describes validation of the current ESP32 bridge firmware, including WiFi recovery timing measurements.
 
-## Prerequisites
+## Preconditions
 
-- Firmware uploaded successfully.
-- ENC28J60 connected to router.
-- ESP32 connected to inverter WiFi (credentials configured in `settings.cpp`).
-- Serial Monitor open at 115200 baud.
+- Firmware flashed successfully.
+- Ethernet link active.
+- Bridge reachable on port 8080.
+- Inverter WiFi availability is known (daytime vs nighttime).
 
-## A) Basic boot checks
+## Quick API Sanity
 
-1. Reset ESP32.
-2. Confirm serial output shows:
-   - Ethernet startup.
-   - DHCP-assigned Ethernet IP (or fallback static IP).
-   - WiFi connection attempts/status.
-   - API server listening on port 8080.
+- GET / should return endpoint discovery.
+- GET /api/health should always respond when bridge is alive.
+- GET /api/logs should return log entries.
 
-If DHCP fails repeatedly:
+## Inverter-Dependent Endpoints
 
-- Check Ethernet cable and router port.
-- Check ENC28J60 SPI wiring and power stability.
+These require inverter WiFi to be available:
 
-## B) Health check
+- GET /api/info
+- POST /api/power
+- POST /api/inverter/fetch
 
-```bash
-curl -s http://192.168.1.48:8080/api/health | jq .
-```
+If inverter is off/unavailable, 502 responses are expected.
 
-Expected response:
-```json
-{
-  "wifi_connected": true,
-  "wifi_ssid": "mastervolt-soladin-0103",
-  "wifi_ip": "10.0.0.42",
-  "ethernet_ip": "192.168.1.48",
-  "inverter_host": "10.0.0.1",
-  "last_inverter_status": 200
-}
-```
+## Recovery Measurement Workflow (Critical)
 
-## C) Inverter telemetry check
+Use this exact cycle:
 
-```bash
-curl -s http://192.168.1.48:8080/api/info | jq .
-```
+1. GET /pulse
+2. POST /wifi/off
+3. wait 2-3 seconds
+4. repeat
 
-Should return 8 fields from inverter:
-- `operating_status`: 1=normal, 2=error, etc.
-- `error_alarm_code`: 0=no error
-- `operating_mode`: 1=production, 2=standby, etc.
-- `inverter_model`: H500A0103, etc.
-- `inverter_mac_address`: 00:06:66:...
-- `power`: Current power output in watts (e.g., 674.547)
-- `total_yield`: Total cumulative production in kWh (e.g., 8566.628)
-- `daily_yield`: Daily/session production in kWh (e.g., 12.811)
+Reason:
 
-If you receive 502: polling hasn't completed yet (wait 20-30s) or WiFi is not connected.
+- OFF -> double press -> ON
+- ON -> single press -> OFF
+- ON -> double press leads to undefined inverter state and invalid measurements
 
-## D) Power limit check
+## Python Scripts
 
-Send power command via JSON POST body:
+### Clean run
 
-```bash
-curl -X POST http://192.168.1.48:8080/api/power \
-  -H "Content-Type: application/json" \
-  -d '{"power":1200}'
-```
+python run_clean_tests.py 10
 
-Expected response:
-```json
-{
-  "requested_power_watts": 1200,
-  "inverter_http_status": 200,
-  "inverter_response": "OK"
-}
-```
+### Analyze logs
 
-## E) Generic inverter endpoint fetch
+python analyze_logs.py
 
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"url":"/home"}' \
-  http://192.168.1.48:8080/api/inverter/fetch
-```
+## Baseline Reference (before latest optimization)
 
-## F) View logs
+- Success rate: 100% (with correct cycle)
+- Time range: ~3752-4752 ms
+- Average: ~4252 ms
+- Channels observed: 1, 6, 11
 
-```bash
-curl -s http://192.168.1.48:8080/api/logs | jq .
-```
+## What Changed In Firmware
 
-Displays up to 1000 log entries with millisecond timestamps. Look for:
-- `[WIFI-BRIDGE]` — WiFi connection events
-- `[INVERTER-MONITOR]` — Polling results
-- `[ETH]` — Ethernet initialization
-- `[RECOVERY]` — GPIO pulse sequences
+- Recovery timeout now 8000 ms
+- Scan dwell 500 ms, settle 100 ms
+- WiFi radio reset before each measurement
+- Scan-before-connect uses discovered channel + BSSID
+- Recovery scan logs reduced to inverter-focused entries
+- /wifi/off endpoint restored
 
-## G) Recovery pulse test
+## Tomorrow Continuation Checklist
 
-Trigger WiFi recovery pulse manually:
-
-```bash
-curl http://192.168.1.48:8080/pulse
-```
-
-### Test method with LED (quick)
-
-1. Connect LED + resistor from recovery pin (GPIO 36) to GND.
-2. Force outage by turning inverter WiFi off, or changing credentials temporarily.
-3. Trigger pulse via `/pulse` endpoint.
-4. Observe double blink corresponding to pulse sequence (HIGH 150ms, LOW 200ms, HIGH 150ms).
-
-### Test method with oscilloscope (precise)
-
-Measure GPIO 36 waveform after `/pulse` trigger and verify durations are approximately 150ms HIGH, 200ms LOW, 150ms HIGH.
-
-## H) Home Assistant integration sanity check
-
-Use ESP32 Ethernet API as source in HA sensors/automation:
-
-- Read data from `/api/info`.
-- Write power limit using `/api/power` with JSON body.
-
-## I) Python test script
-
-Run comprehensive validation:
-
-```bash
-python test_bridge.py
-```
+1. Wait until inverter WiFi is available.
+2. Run 10 clean measurements.
+3. Analyze logs and compare against ~4252 ms baseline.
+4. Verify logs show channel/BSSID-assisted connection path.
+5. Tune retry policy and scan timings if needed.
 
 ## Troubleshooting
 
-| Symptom | Check | Fix |
-|---------|-------|-----|
-| `Connection refused` | Is bridge powered and booted? | Check serial output and `/api/logs` |
-| `wifi_connected: false` | WiFi SSID/password correct? | Edit `settings.cpp`, reupload |
-| `last_inverter_status: 0` | Bridge WiFi connected but inverter unreachable | Check inverter WiFi network |
-| `502 Bad Gateway` on `/api/info` | Polling hasn't completed yet | Wait 20-30s for first poll |
-| No Ethernet IP | SPI wiring issue | Check CS, SCK, MISO, MOSI pins |
-| Ethernet IP is 0.0.0.0 | ENC28J60 not responding | Check CS and SCK pins |
-| Logs show "read Timeout" | HTTP timeout too short | Increase `WIFI_BRIDGE_HTTP_TIMEOUT_MS` in settings |
-| Logs show "Connect timeout" | WiFi signal weak | Move ESP32 closer to inverter |
-| Upload fails | Board not in download mode | Hold BOOT, press EN, release BOOT |
+| Symptom | Likely cause | Action |
+|---|---|---|
+| /wifi/off returns 404 | Old firmware image running | Re-upload latest firmware |
+| /api/logs JSON decode errors | oversized/truncated response from excessive logs | verify reduced recovery logging is active |
+| /pulse timeouts at night | inverter WiFi unavailable | rerun daytime |
+| /api/info returns 502 after boot | first poll not done yet | wait 20-30s |
