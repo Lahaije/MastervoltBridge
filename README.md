@@ -1,8 +1,8 @@
 # ESP32 Inverter WiFi-to-Ethernet Bridge
 
-Many solar inverters expose only a WiFi access point for monitoring — making them invisible on a wired home network and incompatible with always-on integrations like Home Assistant. This project bridges that gap.
+The Mastervolt SOLADIN 1500 inverter has a built-in web interface, accessible over its own WiFi access point, that provides real-time production data and installer-level settings. This firmware bridges that interface to a wired home network.
 
-The firmware runs on an **ESP32-S3** paired with an **ENC28J60** Ethernet module. It connects to the inverter's WiFi access point, polls live production data every 20 seconds, and exposes it through a REST API over Ethernet. A GPIO wake-pulse circuit keeps the inverter's WiFi radio alive between polls. The result is a reliable, low-latency bridge that integrates cleanly into any home automation setup without relying on cloud services.
+Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to the inverter's WiFi access point, reads the web interface every 20 seconds, and makes the data available through a REST API over Ethernet. A wake-pulse circuit keeps the inverter's WiFi radio alive between polls. The installer menu is also accessible via the API, so power output can be adjusted or stopped without needing direct WiFi access to the inverter.
 
 ![Inverter power output over time](docs/powerplot.png)
 *Live power output chart — generated from the onboard log buffer by the built-in analysis tooling.*
@@ -12,6 +12,8 @@ The firmware runs on an **ESP32-S3** paired with an **ENC28J60** Ethernet module
 - **WiFi → Ethernet bridge** for inverters with a local WiFi AP only
 - **REST API on port 8080** served over DHCP-assigned Ethernet IP
 - **20-second live telemetry polling** with cached data for instant API responses
+- **Installer menu access** — read and control inverter settings not normally exposed
+- **Power output control** — limit or stop production in real time via `POST /api/power` (0–1575 W)
 - **GPIO wake-pulse** to keep the inverter WiFi radio alive between polls
 - **Circular log buffer** (1000 entries) with millisecond timestamps
 - **Home Assistant compatible** — poll `/api/info` for power, yield, and status
