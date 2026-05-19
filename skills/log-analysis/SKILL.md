@@ -92,7 +92,7 @@ Filter entries since a specific millisecond offset (e.g., events after 5 minutes
 ```
 
 ### 4. Plot Power Output
-Generate a PNG chart of power (W) vs elapsed time, with disconnection episodes shown as shaded bands:
+Generate a PNG chart of power (W) vs elapsed time, with disconnection episodes shown as shaded bands and explicit backoff transition markers:
 ```powershell
 .venv\Scripts\python skills/log-analysis/plot_power.py
 ```
@@ -115,6 +115,11 @@ Filter to last N entries or a time window:
 
 Output is saved to `output/powerplot.png` by default and overwritten each run. The `output/` folder is git-ignored.
 
+Plot behavior notes:
+- Backoff transitions (`retry interval -> 60s` / `600s`) are drawn as dashed vertical markers.
+- In backoff mode, episode labels are simplified (no retry counts) to reduce clutter.
+- Post-backoff episode labels are thinned for readability in dense retry regions.
+
 **Requires**: `matplotlib` — install once with `uv pip install matplotlib`.
 
 ## What The Scripts Report
@@ -132,6 +137,7 @@ Output is saved to `output/powerplot.png` by default and overwritten each run. T
 - Poll counts: successful, skipped (WiFi down), total
 - Power readings: min/avg/max/last + trend arrow (↑ ↓ →) with start-vs-end comparison
 - Disconnection episode count, average recovery time, average retries per episode
+- Backoff transition events (explicit `retry interval -> Ns` logs) with latest and recent switch points
 
 **Connection Analysis**:
 - Total attempts, overall success/failure rate and timing (min/avg/max/median)
@@ -153,6 +159,8 @@ Use these as a fast-reference lookup when manually scanning `--print-all` output
 | `[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW` | inverter_monitor.cpp | Successful inverter poll. Status=1 is normal. Power in watts. |
 | `[INVERTER-MONITOR] No WiFi connection; skipping poll iteration` | inverter_monitor.cpp | Poll skipped — WiFi was down; counts as a lost sample |
 | `[INVERTER-MONITOR] Inverter recovered; resuming normal poll interval` | inverter_monitor.cpp | First successful poll after a disconnection episode |
+| `[INVERTER-MONITOR] Backoff: retry interval -> 60s` | inverter_monitor.cpp | Retry cadence switched to 60-second interval |
+| `[INVERTER-MONITOR] Backoff: retry interval -> 600s` | inverter_monitor.cpp | Retry cadence switched to 10-minute interval |
 | `[INVERTER-MONITOR] Failed to fetch /home` | inverter_monitor.cpp | WiFi was up but HTTP request to inverter failed |
 | `[ETH] ENC28J60 hardware initialized. Waiting for cable...` | ethernet_bridge.cpp | Boot — Ethernet chip ready |
 | `[ETH] Cable detected. Attempting DHCP...` | ethernet_bridge.cpp | Physical Ethernet link came up |
@@ -186,6 +194,9 @@ WiFi up but inverter HTTP unreachable. Check if the inverter IP changed or if it
 **"No WiFi connection; skipping poll iteration"**  
 Counted as `skipped` in Session Summary. High skipped counts indicate prolonged disconnection; divide by ~3 to estimate lost minutes of data.
 
+**"Backoff: retry interval -> 600s"**  
+Backoff escalation is active and reconnect attempts are now 10 minutes apart. This is explicitly logged (not inferred) and usually indicates sustained unreachability.
+
 ## Expected Log Signals
 The scripts look for these log markers produced by `wifi_bridge.cpp`:
 ```
@@ -200,6 +211,8 @@ Poll entries parsed for power stats:
 ```
 [INVERTER-MONITOR] Poll #N: Status=1 Power=674.547W
 [INVERTER-MONITOR] No WiFi connection; skipping poll iteration
+[INVERTER-MONITOR] Backoff: retry interval -> 60s
+[INVERTER-MONITOR] Backoff: retry interval -> 600s
 ```
 
 ## Timestamp Format

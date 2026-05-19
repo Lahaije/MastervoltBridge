@@ -20,6 +20,7 @@ from analyze_bridge_logs import (  # noqa: E402
     fetch_logs,
     group_into_episodes,
     parse_attempts,
+    parse_backoff_events,
     parse_polls,
     print_session_summary,
     summarize,
@@ -60,9 +61,10 @@ def main() -> int:
 
     attempts = parse_attempts(entries)
     polls, skipped = parse_polls(entries)
+    backoff_events = parse_backoff_events(entries)
     episodes = group_into_episodes(attempts)
 
-    print_session_summary(entries, polls, skipped, episodes)
+    print_session_summary(entries, polls, skipped, episodes, backoff_events)
     summarize(attempts, episodes)
 
     if not polls:
@@ -70,7 +72,7 @@ def main() -> int:
         return 1
 
     out_path = Path(args.out)
-    build_plot(polls, episodes, out_path, show=args.show)
+    build_plot(polls, episodes, out_path, backoff_events=backoff_events, show=args.show)
     return 0
 
 

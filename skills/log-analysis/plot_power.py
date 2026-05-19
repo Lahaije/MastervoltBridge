@@ -32,6 +32,7 @@ from analyze_bridge_logs import (  # noqa: E402
     format_ms,
     group_into_episodes,
     parse_attempts,
+    parse_backoff_events,
     parse_polls,
 )
 
@@ -39,12 +40,14 @@ import matplotlib
 matplotlib.use("Agg")  # headless by default; overridden by --show
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 
 
 def build_plot(
     polls,
     episodes,
     out_path: Path,
+    backoff_events=None,
     show: bool = False,
 ) -> None:
     if not polls:
@@ -60,32 +63,72 @@ def build_plot(
     fig.patch.set_facecolor("#1a1a2e")
     ax.set_facecolor("#16213e")
 
+    first_backoff_ts = None
+    if backoff_events:
+        first_backoff_ts = min(ev.timestamp_ms for ev in backoff_events)
+
     # --- Disconnection episode bands ---
+    post_backoff_labels_seen = 0
+    last_backoff_label_x = None
     for ep in episodes:
         if not ep.attempts:
             continue
         band_start = ep.attempts[0].timestamp_ms / 60_000
         last = ep.attempts[-1]
+        ep_end_ts = last.timestamp_ms + (last.result_time_ms or 8000)
         band_end = (last.timestamp_ms + (last.result_time_ms or 8000)) / 60_000
         ax.axvspan(band_start, band_end, color="#ff6b6b", alpha=0.15, zorder=1)
         label_y = max(powers_w) * 0.92
         retries = ep.retries_before_success
         rec_s = ep.recovery_duration_ms
-        ep_label = f"Ep{ep.number}\n{retries} retr."
-        if rec_s is not None:
-            ep_label += f"\n{rec_s/1000:.0f}s"
-        ax.text(
-            (band_start + band_end) / 2,
-            label_y,
-            ep_label,
-            ha="center", va="top",
-            fontsize=6.5, color="#ff9999",
-            zorder=4,
-        )
+        in_backoff_mode = first_backoff_ts is not None and ep_end_ts >= (first_backoff_ts - 20_000)
+        if in_backoff_mode:
+            # In backoff mode, do not show retry counts and thin dense labels.
+            post_backoff_labels_seen += 1
+            label_x = (band_start + band_end) / 2
+            too_close = last_backoff_label_x is not None and (label_x - last_backoff_label_x) < 12.0
+            if post_backoff_labels_seen % 3 != 1 or too_close:
+                ep_label = None
+            else:
+                ep_label = f"Ep{ep.number}"
+                last_backoff_label_x = label_x
+        else:
+            ep_label = f"Ep{ep.number}\n{retries} retr."
+            if rec_s is not None:
+                ep_label += f"\n{rec_s/1000:.0f}s"
+        if ep_label:
+            ax.text(
+                (band_start + band_end) / 2,
+                label_y,
+                ep_label,
+                ha="center", va="top",
+                fontsize=6.5, color="#ff9999",
+                zorder=4,
+            )
 
     # --- Power line ---
     ax.plot(times_min, powers_w, color="#4fc3f7", linewidth=1.2, zorder=3, label="Power (W)")
     ax.fill_between(times_min, powers_w, alpha=0.12, color="#4fc3f7", zorder=2)
+
+    # --- Backoff transition markers ---
+    if backoff_events:
+        y_top = max(powers_w) * 0.82
+        y_alt = max(powers_w) * 0.74
+        for idx, ev in enumerate(backoff_events):
+            x_min = ev.timestamp_ms / 60_000
+            ax.axvline(x_min, color="#ffd54f", linestyle="--", linewidth=0.8, alpha=0.8, zorder=4)
+            label_y = y_top if idx % 2 == 0 else y_alt
+            ax.text(
+                x_min,
+                label_y,
+                f"backoff {ev.interval_seconds}s",
+                rotation=90,
+                va="top",
+                ha="right",
+                fontsize=6,
+                color="#ffe082",
+                zorder=5,
+            )
 
     # --- Peak annotation ---
     peak_w = max(powers_w)
@@ -125,8 +168,9 @@ def build_plot(
 
     # --- Legend ---
     ep_patch = mpatches.Patch(color="#ff6b6b", alpha=0.4, label="Disconnection episode")
+    backoff_line = Line2D([0], [0], color="#ffd54f", linestyle="--", linewidth=1.0, label="Backoff transition")
     ax.legend(
-        handles=[ax.lines[0], ep_patch],
+        handles=[ax.lines[0], ep_patch, backoff_line],
         facecolor="#0f3460", edgecolor="#37474f",
         labelcolor="#eceff1", fontsize=8,
         loc="upper right",
@@ -172,6 +216,7 @@ def main() -> int:
 
     polls, skipped = parse_polls(entries)
     attempts = parse_attempts(entries)
+    backoff_events = parse_backoff_events(entries)
     episodes = group_into_episodes(attempts)
 
     print(f"Fetched {len(entries)} entries — {len(polls)} polls, {skipped} skipped, {len(episodes)} episodes")
@@ -182,7 +227,7 @@ def main() -> int:
 
     out_path = Path(args.out) if args.out else Path("output") / "powerplot.png"
 
-    build_plot(polls, episodes, out_path, show=args.show)
+    build_plot(polls, episodes, out_path, backoff_events=backoff_events, show=args.show)
     return 0
 
 

@@ -64,6 +64,12 @@ class PollEntry:
 
 
 @dataclass
+class BackoffEvent:
+    timestamp_ms: int
+    interval_seconds: int
+
+
+@dataclass
 class Episode:
     """A disconnection episode: consecutive reconnect attempts with no normal poll between them."""
     number: int
@@ -169,6 +175,7 @@ def parse_attempts(entries: List[Dict]) -> List[Attempt]:
 
 # Poll regex: "[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW"
 _POLL_RE = re.compile(r"\[INVERTER-MONITOR\] Poll #(\d+): Status=(\S+) Power=([\d.]+)W")
+_BACKOFF_RE = re.compile(r"\[INVERTER-MONITOR\] Backoff: retry interval -> (\d+)s")
 
 
 def parse_polls(entries: List[Dict]) -> Tuple[List[PollEntry], int]:
@@ -189,6 +196,18 @@ def parse_polls(entries: List[Dict]) -> Tuple[List[PollEntry], int]:
         elif "No WiFi connection; skipping poll iteration" in msg:
             skipped += 1
     return polls, skipped
+
+
+def parse_backoff_events(entries: List[Dict]) -> List[BackoffEvent]:
+    """Parse explicit backoff interval transition events."""
+    events: List[BackoffEvent] = []
+    for e in entries:
+        msg = str(e.get("message", ""))
+        ts = int(e.get("timestamp_ms", 0))
+        m = _BACKOFF_RE.search(msg)
+        if m:
+            events.append(BackoffEvent(timestamp_ms=ts, interval_seconds=int(m.group(1))))
+    return events
 
 
 def group_into_episodes(attempts: List[Attempt]) -> List[Episode]:
@@ -236,7 +255,13 @@ def _path_stats(label: str, subset: List[Attempt]) -> None:
         print(f"    channels: {ch_line}")
 
 
-def print_session_summary(entries: List[Dict], polls: List[PollEntry], skipped: int, episodes: List[Episode]) -> None:
+def print_session_summary(
+    entries: List[Dict],
+    polls: List[PollEntry],
+    skipped: int,
+    episodes: List[Episode],
+    backoff_events: Optional[List[BackoffEvent]] = None,
+) -> None:
     """Print a high-level session overview before the connection analysis."""
     if not entries:
         return
@@ -279,6 +304,15 @@ def print_session_summary(entries: List[Dict], polls: List[PollEntry], skipped: 
         if retry_counts:
             avg_retries = statistics.mean(retry_counts)
             print(f"Retries/episode: avg={avg_retries:.1f}  max={max(retry_counts)}")
+
+    if backoff_events:
+        latest = backoff_events[-1]
+        transitions = " ".join(f"{ev.interval_seconds}s@{format_ms(ev.timestamp_ms)}" for ev in backoff_events[-3:])
+        print(
+            f"Backoff events : {len(backoff_events)} total  "
+            f"(latest={latest.interval_seconds}s at {format_ms(latest.timestamp_ms)})"
+        )
+        print(f"Backoff recent : {transitions}")
 
 
 def summarize(attempts: List[Attempt], episodes: List[Episode]) -> None:
@@ -375,9 +409,10 @@ def main() -> int:
 
     attempts = parse_attempts(entries)
     polls, skipped = parse_polls(entries)
+    backoff_events = parse_backoff_events(entries)
     episodes = group_into_episodes(attempts)
 
-    print_session_summary(entries, polls, skipped, episodes)
+    print_session_summary(entries, polls, skipped, episodes, backoff_events)
     summarize(attempts, episodes)
     return 0
 
