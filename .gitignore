@@ -28,6 +28,7 @@ dist/
 build/
 
 # Temporary files
+output/
 *.log
 *.tmp
 logs_salvaged.json

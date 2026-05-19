@@ -38,6 +38,18 @@ def main():
         default=60,
         help="HTTP timeout in seconds (default: 60)",
     )
+    parser.add_argument(
+        "--since-ms",
+        type=int,
+        default=None,
+        help="Only show entries at/after timestamp_ms",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only show last N entries",
+    )
     args = parser.parse_args()
 
     try:
@@ -51,6 +63,14 @@ def main():
     entries = data.get("entries", [])
     if not entries:
         print("No entries in log buffer")
+        return 0
+
+    if args.since_ms is not None:
+        entries = [e for e in entries if int(e.get("timestamp_ms", 0)) >= args.since_ms]
+    if args.limit is not None and args.limit > 0:
+        entries = entries[-args.limit:]
+    if not entries:
+        print("No entries matched filters")
         return 0
 
     print(f"Total entries: {len(entries)}\n")

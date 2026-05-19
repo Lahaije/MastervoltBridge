@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""
+Plot inverter power output over time from bridge logs.
+
+Fetches log data from /api/logs, extracts Poll power readings, and saves a
+PNG chart to the output/ folder at the repository root (git-ignored).
+
+The chart shows:
+  - Power (W) vs elapsed time (minutes)
+  - Shaded bands for disconnection episodes (WiFi down, no data)
+  - Episode labels with retry count and recovery time
+  - Annotation of peak power and last reading
+
+Usage (from repository root):
+    .venv\\Scripts\\python skills/log-analysis/plot_power.py
+    .venv\\Scripts\\python skills/log-analysis/plot_power.py --base-url http://192.168.1.48:8080
+    .venv\\Scripts\\python skills/log-analysis/plot_power.py --out output/my_plot.png
+    .venv\\Scripts\\python skills/log-analysis/plot_power.py --show
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+# Reuse fetch + parse helpers from sibling script
+_SKILL_DIR = Path(__file__).parent
+sys.path.insert(0, str(_SKILL_DIR))
+from analyze_bridge_logs import (  # noqa: E402
+    fetch_logs,
+    format_ms,
+    group_into_episodes,
+    parse_attempts,
+    parse_polls,
+)
+
+import matplotlib
+matplotlib.use("Agg")  # headless by default; overridden by --show
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+
+def build_plot(
+    polls,
+    episodes,
+    out_path: Path,
+    show: bool = False,
+) -> None:
+    if not polls:
+        print("No poll data to plot.")
+        return
+
+    # X in minutes, Y in watts
+    times_min = [p.timestamp_ms / 60_000 for p in polls]
+    powers_w = [p.power_w for p in polls]
+
+    # Keep image dimensions moderate so chat/image viewers do not clip wide renders.
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    fig.patch.set_facecolor("#1a1a2e")
+    ax.set_facecolor("#16213e")
+
+    # --- Disconnection episode bands ---
+    for ep in episodes:
+        if not ep.attempts:
+            continue
+        band_start = ep.attempts[0].timestamp_ms / 60_000
+        last = ep.attempts[-1]
+        band_end = (last.timestamp_ms + (last.result_time_ms or 8000)) / 60_000
+        ax.axvspan(band_start, band_end, color="#ff6b6b", alpha=0.15, zorder=1)
+        label_y = max(powers_w) * 0.92
+        retries = ep.retries_before_success
+        rec_s = ep.recovery_duration_ms
+        ep_label = f"Ep{ep.number}\n{retries} retr."
+        if rec_s is not None:
+            ep_label += f"\n{rec_s/1000:.0f}s"
+        ax.text(
+            (band_start + band_end) / 2,
+            label_y,
+            ep_label,
+            ha="center", va="top",
+            fontsize=6.5, color="#ff9999",
+            zorder=4,
+        )
+
+    # --- Power line ---
+    ax.plot(times_min, powers_w, color="#4fc3f7", linewidth=1.2, zorder=3, label="Power (W)")
+    ax.fill_between(times_min, powers_w, alpha=0.12, color="#4fc3f7", zorder=2)
+
+    # --- Peak annotation ---
+    peak_w = max(powers_w)
+    peak_idx = powers_w.index(peak_w)
+    ax.annotate(
+        f"Peak {peak_w:.0f} W",
+        xy=(times_min[peak_idx], peak_w),
+        xytext=(times_min[peak_idx] + 0.5, peak_w * 1.04),
+        fontsize=7.5, color="#ffe082",
+        arrowprops=dict(arrowstyle="->", color="#ffe082", lw=0.8),
+    )
+
+    # --- Last reading annotation ---
+    ax.annotate(
+        f"Last {powers_w[-1]:.1f} W",
+        xy=(times_min[-1], powers_w[-1]),
+        xytext=(times_min[-1] - 3, powers_w[-1] + peak_w * 0.06),
+        fontsize=7.5, color="#a5d6a7",
+        arrowprops=dict(arrowstyle="->", color="#a5d6a7", lw=0.8),
+    )
+
+    # --- Axes styling ---
+    ax.set_xlabel("Elapsed time (minutes)", color="#cfd8dc", labelpad=6)
+    ax.set_ylabel("Power (W)", color="#cfd8dc", labelpad=6)
+    total_min = times_min[-1]
+    uptime_str = format_ms(polls[-1].timestamp_ms)
+    ax.set_title(
+        f"Inverter power output  —  {len(polls)} polls over {total_min:.1f} min (uptime {uptime_str})",
+        color="#eceff1", fontsize=10, pad=10,
+    )
+    ax.tick_params(colors="#90a4ae")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#37474f")
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
+    ax.grid(True, color="#263238", linewidth=0.6, zorder=0)
+
+    # --- Legend ---
+    ep_patch = mpatches.Patch(color="#ff6b6b", alpha=0.4, label="Disconnection episode")
+    ax.legend(
+        handles=[ax.lines[0], ep_patch],
+        facecolor="#0f3460", edgecolor="#37474f",
+        labelcolor="#eceff1", fontsize=8,
+        loc="upper right",
+    )
+
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=130, bbox_inches="tight")
+    print(f"Saved plot → {out_path}")
+
+    if show:
+        matplotlib.use("TkAgg")  # switch to interactive backend
+        plt.show()
+
+    plt.close(fig)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Plot inverter power from bridge logs")
+    parser.add_argument("--base-url", default="http://192.168.1.48:8080", help="Bridge base URL")
+    parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output PNG path (default: output/powerplot.png; overwritten each run)",
+    )
+    parser.add_argument("--show", action="store_true", help="Open the plot in a window after saving")
+    parser.add_argument("--since-ms", type=int, default=None, help="Only include entries at/after timestamp_ms")
+    parser.add_argument("--limit", type=int, default=None, help="Only include last N entries")
+    args = parser.parse_args()
+
+    try:
+        payload = fetch_logs(args.base_url, args.timeout)
+    except Exception as ex:
+        print(f"Failed to fetch logs: {ex}")
+        return 1
+
+    entries = payload.get("entries", []) if isinstance(payload, dict) else []
+    if args.since_ms is not None:
+        entries = [e for e in entries if int(e.get("timestamp_ms", 0)) >= args.since_ms]
+    if args.limit is not None and args.limit > 0:
+        entries = entries[-args.limit:]
+
+    polls, skipped = parse_polls(entries)
+    attempts = parse_attempts(entries)
+    episodes = group_into_episodes(attempts)
+
+    print(f"Fetched {len(entries)} entries — {len(polls)} polls, {skipped} skipped, {len(episodes)} episodes")
+
+    if not polls:
+        print("No Poll entries found; nothing to plot.")
+        return 1
+
+    out_path = Path(args.out) if args.out else Path("output") / "powerplot.png"
+
+    build_plot(polls, episodes, out_path, show=args.show)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

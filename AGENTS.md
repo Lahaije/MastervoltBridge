@@ -66,7 +66,8 @@ private:
 - `connectWifiAuto()` — 500 ms scan dwell, pure auto-discovery. ~6.5 s typical.
 
 Both emit `[WIFI-CONNECT] start/complete path=... duration_ms=... result=...` log entries.  
-Analyze with: `.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py`
+Analyze with: `.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py`  
+Plot power vs time: `.venv\Scripts\python skills/log-analysis/plot_power.py` (saves PNG to `output/`, git-ignored)
 
 ## API Endpoints
 
@@ -157,7 +158,13 @@ Edit `WIFI_BRIDGE_POLL_INTERVAL_MS` in `settings.cpp` (normal rate, stage 0).
 To adjust the overnight backoff schedule, edit `BACKOFF_STAGES[]` in `inverter_monitor.cpp`.
 
 ### Debug WiFi Issues
-Check `GET /api/logs`. Key patterns:
+Run the log analysis skill for a full breakdown (session summary, episode grouping, path A/B stats):
+```powershell
+.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+.venv\Scripts\python skills/log-analysis/plot_power.py   # saves power chart to output/
+```
+
+Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.md`):
 - `[API] GET /pulse` → external caller triggered a reconnect
 - `[API] POST /api/power` → power set request received
 - `[API] debug mode enabled` → debug mode activated via `/api/debug`
@@ -165,6 +172,9 @@ Check `GET /api/logs`. Key patterns:
 - `[WIFI-CONNECT] complete path=dwell duration_ms=5413 result=success` → connected OK
 - `[WIFI-CONNECT] complete path=auto duration_ms=8064 result=timeout` → unreachable
 - `[WIFI-BRIDGE] Triggering inverter WiFi wake pulse sequence.` → pulse sent
+- `[INVERTER-MONITOR] Poll #N: Status=1 Power=Y.ZW` → successful inverter poll
+- `[INVERTER-MONITOR] No WiFi connection; skipping poll iteration` → lost sample (WiFi was down)
+- `[INVERTER-MONITOR] Inverter recovered; resuming normal poll interval` → first poll after dropout
 - `[INVERTER-MONITOR] Failed to fetch /home` → HTTP failed after WiFi up
 
 ### Validate API vs Documentation

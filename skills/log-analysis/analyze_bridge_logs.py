@@ -4,11 +4,15 @@ Fetch and analyze ESP bridge logs from /api/logs.
 
 This script is read-only: it does not trigger /pulse or /wifi/off.
 It extracts [WIFI-CONNECT] start/complete pairs and prints per-path
-(dwell vs auto) reliability and timing summaries.
+(dwell vs auto) reliability and timing summaries, and a session summary
+including power readings and disconnection episode breakdown.
 
 Log format expected (produced by wifi_bridge.cpp):
   [WIFI-CONNECT] start path=<dwell|auto> scan_dwell_ms=<N> hint_fallback=<0|1>
   [WIFI-CONNECT] complete path=<dwell|auto> duration_ms=<N> result=<success|timeout> ...
+  [INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW
+  [INVERTER-MONITOR] No WiFi connection; skipping poll iteration
+  [INVERTER-MONITOR] Inverter recovered; resuming normal poll interval
 
 Timestamp format used throughout: Xm SS.sss  (e.g. 4m 05.123)
 This matches the format produced by format_ms() and is the preferred way
@@ -25,7 +29,7 @@ import sys
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 def format_ms(ms: int) -> str:
@@ -49,6 +53,41 @@ class Attempt:
     result_time_ms: Optional[int]
     channel: Optional[int]
     bssid: Optional[str]
+
+
+@dataclass
+class PollEntry:
+    timestamp_ms: int
+    poll_number: int
+    status: str
+    power_w: float
+
+
+@dataclass
+class Episode:
+    """A disconnection episode: consecutive reconnect attempts with no normal poll between them."""
+    number: int
+    attempts: List[Attempt] = field(default_factory=list)
+
+    @property
+    def resolved(self) -> bool:
+        return any(a.result == "SUCCESS" for a in self.attempts)
+
+    @property
+    def retries_before_success(self) -> int:
+        """Number of failed attempts before the successful one (0 = first try succeeded)."""
+        for i, a in enumerate(self.attempts):
+            if a.result == "SUCCESS":
+                return i
+        return len(self.attempts)
+
+    @property
+    def recovery_duration_ms(self) -> Optional[int]:
+        """Elapsed ms from start of first attempt to completion of the successful one."""
+        success = next((a for a in self.attempts if a.result == "SUCCESS"), None)
+        if success and success.result_time_ms is not None:
+            return (success.timestamp_ms - self.attempts[0].timestamp_ms) + success.result_time_ms
+        return None
 
 
 def fetch_logs(base_url: str, timeout: float) -> Dict:
@@ -128,6 +167,53 @@ def parse_attempts(entries: List[Dict]) -> List[Attempt]:
     return attempts
 
 
+# Poll regex: "[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW"
+_POLL_RE = re.compile(r"\[INVERTER-MONITOR\] Poll #(\d+): Status=(\S+) Power=([\d.]+)W")
+
+
+def parse_polls(entries: List[Dict]) -> Tuple[List[PollEntry], int]:
+    """Return (poll_entries, skipped_count) from log entries."""
+    polls: List[PollEntry] = []
+    skipped = 0
+    for e in entries:
+        msg = str(e.get("message", ""))
+        ts = int(e.get("timestamp_ms", 0))
+        m = _POLL_RE.search(msg)
+        if m:
+            polls.append(PollEntry(
+                timestamp_ms=ts,
+                poll_number=int(m.group(1)),
+                status=m.group(2),
+                power_w=float(m.group(3)),
+            ))
+        elif "No WiFi connection; skipping poll iteration" in msg:
+            skipped += 1
+    return polls, skipped
+
+
+def group_into_episodes(attempts: List[Attempt]) -> List[Episode]:
+    """Group consecutive attempts into disconnection episodes.
+
+    Two attempts belong to the same episode when they are adjacent in the
+    attempt list AND the gap between end-of-first and start-of-second is
+    <= 25 s (i.e., no normal 20-second poll cycle completed between them).
+    """
+    if not attempts:
+        return []
+    episodes: List[Episode] = []
+    current = Episode(number=1, attempts=[attempts[0]])
+    for prev, curr in zip(attempts, attempts[1:]):
+        prev_end = prev.timestamp_ms + (prev.result_time_ms or 8000)
+        gap_ms = curr.timestamp_ms - prev_end
+        if gap_ms <= 25_000:
+            current.attempts.append(curr)
+        else:
+            episodes.append(current)
+            current = Episode(number=len(episodes) + 1, attempts=[curr])
+    episodes.append(current)
+    return episodes
+
+
 def _path_stats(label: str, subset: List[Attempt]) -> None:
     """Print timing and channel stats for a named subset of attempts."""
     if not subset:
@@ -150,7 +236,52 @@ def _path_stats(label: str, subset: List[Attempt]) -> None:
         print(f"    channels: {ch_line}")
 
 
-def summarize(attempts: List[Attempt]) -> None:
+def print_session_summary(entries: List[Dict], polls: List[PollEntry], skipped: int, episodes: List[Episode]) -> None:
+    """Print a high-level session overview before the connection analysis."""
+    if not entries:
+        return
+
+    first_ts = int(entries[0].get("timestamp_ms", 0))
+    last_ts = int(entries[-1].get("timestamp_ms", 0))
+    uptime_ms = last_ts - first_ts
+
+    print("\nSession Summary")
+    print("---------------")
+    uptime_s = uptime_ms / 1000
+    print(f"Uptime         : {uptime_s/60:.1f} min ({uptime_s:.0f}s)  [{format_ms(first_ts)} → {format_ms(last_ts)}]")
+    print(f"Log entries    : {len(entries)}")
+
+    # Poll stats
+    total_polls = len(polls) + skipped
+    print(f"Polls          : {len(polls)} successful, {skipped} skipped (WiFi down), {total_polls} total")
+
+    if polls:
+        powers = [p.power_w for p in polls]
+        print(f"Power (W)      : min={min(powers):.1f}  avg={statistics.mean(powers):.1f}  max={max(powers):.1f}  last={powers[-1]:.1f}")
+
+        # Simple trend: compare first quarter avg vs last quarter avg
+        q = max(1, len(powers) // 4)
+        trend_start = statistics.mean(powers[:q])
+        trend_end = statistics.mean(powers[-q:])
+        delta = trend_end - trend_start
+        trend_arrow = "↑" if delta > 2 else ("↓" if delta < -2 else "→")
+        print(f"Power trend    : {trend_arrow}  ({trend_start:.1f}W → {trend_end:.1f}W, Δ{delta:+.1f}W)")
+
+    # Disconnection episode summary
+    if episodes:
+        unresolved = [ep for ep in episodes if not ep.resolved]
+        resolved = [ep for ep in episodes if ep.resolved]
+        print(f"Disconnections : {len(episodes)} episodes  ({len(resolved)} resolved, {len(unresolved)} unresolved)")
+        recovery_times = [ep.recovery_duration_ms for ep in resolved if ep.recovery_duration_ms is not None]
+        if recovery_times:
+            print(f"Recovery time  : avg={statistics.mean(recovery_times)/1000:.1f}s  max={max(recovery_times)/1000:.1f}s")
+        retry_counts = [ep.retries_before_success for ep in resolved]
+        if retry_counts:
+            avg_retries = statistics.mean(retry_counts)
+            print(f"Retries/episode: avg={avg_retries:.1f}  max={max(retry_counts)}")
+
+
+def summarize(attempts: List[Attempt], episodes: List[Episode]) -> None:
     if not attempts:
         print("No [WIFI-CONNECT] attempts found in selected log entries.")
         return
@@ -178,13 +309,26 @@ def summarize(attempts: List[Attempt]) -> None:
         for p in paths:
             _path_stats(p, [a for a in attempts if a.path == p])
 
+    # Per-episode attempt detail
     print("\nPer-attempt detail")
+    attempt_to_episode: Dict[int, int] = {}
+    for ep in episodes:
+        for a in ep.attempts:
+            attempt_to_episode[a.index] = ep.number
+
+    last_ep = None
     for a in attempts:
+        ep_num = attempt_to_episode.get(a.index)
+        if ep_num != last_ep:
+            last_ep = ep_num
+            ep = next((e for e in episodes if e.number == ep_num), None)
+            status = "UNRESOLVED" if ep and not ep.resolved else ""
+            print(f"\n  Episode {ep_num}  [{format_ms(a.timestamp_ms)}]  {status}".rstrip())
         path_tag = f"[{a.path or '?':5s}]"
         ch = f"ch={a.channel}" if a.channel is not None else "ch=?"
         tm = f"{a.result_time_ms}ms" if a.result_time_ms is not None else "?ms"
         ts = format_ms(a.timestamp_ms)
-        print(f"  #{a.index:02d} {path_tag} {ts}  {a.result:7s}  {tm:>6s}  {ch}")
+        print(f"    #{a.index:02d} {path_tag} {ts}  {a.result:7s}  {tm:>6s}  {ch}")
 
 
 def main() -> int:
@@ -230,7 +374,11 @@ def main() -> int:
         print(f"Saved raw logs to: {out_path}")
 
     attempts = parse_attempts(entries)
-    summarize(attempts)
+    polls, skipped = parse_polls(entries)
+    episodes = group_into_episodes(attempts)
+
+    print_session_summary(entries, polls, skipped, episodes)
+    summarize(attempts, episodes)
     return 0
 
 
