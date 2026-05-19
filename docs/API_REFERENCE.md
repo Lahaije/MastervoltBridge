@@ -20,6 +20,7 @@ http://192.168.1.48:8080
 | POST | /api/inverter/fetch | Fetch inverter endpoint |
 | POST | /wifi/off | Single button press if WiFi is connected |
 | GET | /pulse | Recovery pulse + connection-time measurement |
+| POST | /api/debug | Enable or disable verbose HTTP 200 success logging |
 
 ## GET /
 
@@ -35,6 +36,7 @@ Returns bridge state, including:
 - ethernet_ip
 - inverter_host
 - last_inverter_status
+- debug_mode
 
 When inverter is unavailable, this endpoint still works.
 
@@ -45,11 +47,28 @@ Returns diagnostic logs.
 Notes:
 
 - Log buffer size is 1000 entries.
-- Excessive logging can make responses very large; current firmware reduces recovery scan log noise.
+- The response is streamed entry-by-entry, so it does not include a
+  `Content-Length` header. Body framing uses `Connection: close` — clients
+  must read until EOF. Standard HTTP libraries (`requests`, `urllib`,
+  `curl`) handle this transparently.
 
 ## GET /api/info
 
 Returns cached parsed inverter telemetry from /home.
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `last_update_ms` | number | Bridge uptime ms of last successful poll |
+| `operating_status` | string | "1" = normal |
+| `error_alarm_code` | string | "0" = no error |
+| `operating_mode` | string | "1" = production |
+| `inverter_model` | string | e.g. "H500A0103" |
+| `inverter_mac_address` | string | Inverter MAC |
+| `power` | string | Current output power in watts, e.g. "674.547" |
+| `total_yield` | string | Lifetime energy in kWh, e.g. "08566.628" |
+| `daily_yield` | string | Daily energy in kWh, e.g. "12.811" |
 
 Typical failure when inverter is unavailable:
 
@@ -100,27 +119,44 @@ pressed false is expected when WiFi is already disconnected.
 
 Purpose:
 
-- Triggers the double-press recovery sequence and runs measurement logic.
+- Sends the GPIO double-press wake pulse to the inverter WiFi module, then forces a fresh WiFi reconnect using the next alternating connect strategy (dwell or auto).
 
 Response:
 
-{"status":"pulse_complete"}
+{"reconnected":true}
+
+or
+
+{"reconnected":false}
+
+`reconnected: false` is expected when inverter WiFi is unavailable (e.g. nighttime).
 
 Important behavior:
 
-- This endpoint is used for WiFi timing experiments.
-- During measurement, normal WiFi connect/fetch paths are blocked by design.
+- Each call advances the internal dwell/auto alternation counter.
+- Avoid calling `/pulse` while bridge WiFi is already connected — it will disconnect and reconnect.
 
-## Measurement-Specific Operational Notes
+## POST /api/debug
 
-Use this safe cycle:
+Purpose:
 
-1. GET /pulse
-2. POST /wifi/off
-3. wait 2-3 seconds
-4. repeat
+- Enable or disable debug mode at runtime.
+- When debug mode is **on**, `[WIFI-BRIDGE] METHOD /path success (HTTP 200)` entries are written to the log buffer on every successful inverter poll.
+- When debug mode is **off** (the default after boot), HTTP 200 successes are silent to keep the log buffer focused on errors and connectivity events.
 
-Do not send double-press while inverter WiFi is already ON.
+Body:
+
+{"debug":true}
+
+or
+
+{"debug":false}
+
+Response:
+
+{"debug":true}
+
+Debug mode starts as `true` at boot and is automatically set to `false` at the end of `setup()`. Use this endpoint to re-enable it temporarily during live debugging.
 
 ## Known Expected Errors (Night / Inverter Off)
 

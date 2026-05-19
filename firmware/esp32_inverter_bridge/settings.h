@@ -12,6 +12,13 @@ extern const char* INVERTER_WIFI_PASSWORD;
 extern const char* INVERTER_HOST;
 extern const uint16_t API_PORT;
 
+// Optional AP hint to speed up WiFi association.
+// When enabled, the bridge attempts directed association to this channel+BSSID
+// before falling back to normal SSID scanning behavior.
+extern const bool INVERTER_WIFI_AP_HINT_ENABLED;
+extern const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL;
+extern const uint8_t INVERTER_WIFI_AP_HINT_BSSID[6];
+
 // ENC28J60 SPI pin mapping
 extern const uint8_t PIN_ETH_SCK;
 extern const uint8_t PIN_ETH_MISO;
@@ -50,5 +57,10 @@ extern byte ETH_MAC[6];
 extern EthernetServer apiServer;
 extern Logger appLogger;
 extern int lastInverterStatusCode;
+
+// Debug mode: when true, HTTP 200 success responses from the inverter are
+// written to the log buffer. Starts true at boot and is cleared at the end
+// of setup() to suppress routine poll noise during normal operation.
+extern bool debugMode;
 
 #endif // SETTINGS_H

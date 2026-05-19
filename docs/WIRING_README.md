@@ -25,7 +25,7 @@ Signal behavior:
 - PULSE_HIGH_MS = 150
 - PULSE_GAP_MS = 200
 
-## Practical Notes For WiFi Measurement Work
+## Practical Notes
 
 - Keep wiring short and stable; pulse integrity matters for deterministic inverter button behavior.
 - Ensure common ground between ESP32 and inverter control interface.

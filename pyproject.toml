@@ -1,0 +1,9 @@
+[project]
+name = "mastervolt-bridge"
+version = "0.1.0-alpha1"
+description = "ESP32 inverter WiFi-to-Ethernet bridge — Python tooling"
+requires-python = ">=3.11"
+
+dependencies = [
+    "requests>=2.32",
+]

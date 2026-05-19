@@ -1,84 +1,49 @@
 # Test README
 
-This document describes validation of the current ESP32 bridge firmware, including WiFi recovery timing measurements.
+Validation guide for the ESP32 inverter bridge firmware.
 
 ## Preconditions
 
 - Firmware flashed successfully.
 - Ethernet link active.
 - Bridge reachable on port 8080.
-- Inverter WiFi availability is known (daytime vs nighttime).
+- Inverter WiFi availability known (daytime vs nighttime).
 
 ## Quick API Sanity
 
-- GET / should return endpoint discovery.
-- GET /api/health should always respond when bridge is alive.
-- GET /api/logs should return log entries.
+| Check | Expected |
+|---|---|
+| GET / | Endpoint discovery JSON |
+| GET /api/health | `{"wifi": ..., "ethernet": ...}` |
+| GET /api/logs | Array of log entries |
+| GET /api/info | Inverter telemetry (or 502 if inverter WiFi is off) |
 
 ## Inverter-Dependent Endpoints
 
-These require inverter WiFi to be available:
+These require inverter WiFi to be reachable:
 
 - GET /api/info
 - POST /api/power
 - POST /api/inverter/fetch
 
-If inverter is off/unavailable, 502 responses are expected.
+If inverter is off or unavailable (e.g. after sunset), 502 responses are expected and do not indicate a firmware problem.
 
-## Recovery Measurement Workflow (Critical)
+## Endpoint Verification After Flash
 
-Use this exact cycle:
-
-1. GET /pulse
-2. POST /wifi/off
-3. wait 2-3 seconds
-4. repeat
-
-Reason:
-
-- OFF -> double press -> ON
-- ON -> single press -> OFF
-- ON -> double press leads to undefined inverter state and invalid measurements
-
-## Python Scripts
-
-### Clean run
-
-python run_clean_tests.py 10
-
-### Analyze logs
-
-python analyze_logs.py
-
-## Baseline Reference (before latest optimization)
-
-- Success rate: 100% (with correct cycle)
-- Time range: ~3752-4752 ms
-- Average: ~4252 ms
-- Channels observed: 1, 6, 11
-
-## What Changed In Firmware
-
-- Recovery timeout now 8000 ms
-- Scan dwell 500 ms, settle 100 ms
-- WiFi radio reset before each measurement
-- Scan-before-connect uses discovered channel + BSSID
-- Recovery scan logs reduced to inverter-focused entries
-- /wifi/off endpoint restored
-
-## Tomorrow Continuation Checklist
-
-1. Wait until inverter WiFi is available.
-2. Run 10 clean measurements.
-3. Analyze logs and compare against ~4252 ms baseline.
-4. Verify logs show channel/BSSID-assisted connection path.
-5. Tune retry policy and scan timings if needed.
+```
+curl http://192.168.1.48:8080/
+curl http://192.168.1.48:8080/api/health
+curl http://192.168.1.48:8080/api/logs
+curl -X POST http://192.168.1.48:8080/wifi/off
+curl http://192.168.1.48:8080/pulse
+```
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| /wifi/off returns 404 | Old firmware image running | Re-upload latest firmware |
-| /api/logs JSON decode errors | oversized/truncated response from excessive logs | verify reduced recovery logging is active |
-| /pulse timeouts at night | inverter WiFi unavailable | rerun daytime |
-| /api/info returns 502 after boot | first poll not done yet | wait 20-30s |
+| /wifi/off returns 404 | Old firmware image | Re-upload latest firmware |
+| /api/logs JSON decode errors | Truncated response | Verify logging is not excessive |
+| /pulse returns `reconnected: false` at night | Inverter WiFi unavailable | Rerun daytime |
+| /api/info returns 502 after boot | First poll not yet complete | Wait 20-30 s and retry |
+| Connection timeouts in logs | Inverter WiFi module asleep | Bridge will auto-pulse on next attempt |

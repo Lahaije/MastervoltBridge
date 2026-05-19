@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 8;
+constexpr size_t API_ENDPOINT_COUNT = 9;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**
@@ -124,10 +124,13 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs);
 String buildHealthJson();
 
 /**
- * Build JSON response for /api/logs endpoint.
- * Contains up to 1000 log entries from the circular buffer.
+ * Stream the /api/logs response directly to the client.
+ * Avoids building the (potentially >60 KB) body as a single Arduino String,
+ * which would silently fail mid-build under heap fragmentation and produce
+ * malformed JSON. Writes headers (no Content-Length, framed by
+ * Connection: close) and the JSON body one entry at a time.
  */
-String buildLogsJson();
+void sendLogsResponse(EthernetClient& client);
 
 /**
  * Build JSON response for / (API discovery) endpoint.

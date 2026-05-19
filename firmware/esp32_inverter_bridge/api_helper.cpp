@@ -149,27 +149,41 @@ String buildHealthJson() {
     .addString("ethernet_ip", Ethernet.localIP().toString())
     .addString("inverter_host", String(INVERTER_HOST))
     .addNumber("last_inverter_status", String(lastInverterStatusCode))
+    .addBool("debug_mode", debugMode)
     .build();
 }
 
-String buildLogsJson() {
+void sendLogsResponse(EthernetClient& client) {
+  // Snapshot count up-front; the buffer is appended to from another task and
+  // could grow between the loop's iterations.
   const int count = appLogger.getLogCount();
 
-  String json = "{\"total_entries\":";
-  json += String(count);
-  json += ",\"entries\":[";
+  // Headers: omit Content-Length and use Connection: close framing so we can
+  // stream entries without precomputing the body size.
+  client.print(F("HTTP/1.1 200 OK\r\n"));
+  client.print(F("Connection: close\r\n"));
+  client.print(F("Content-Type: application/json\r\n"));
+  client.print(F("\r\n"));
+
+  client.print(F("{\"total_entries\":"));
+  client.print(count);
+  client.print(F(",\"entries\":["));
 
   for (int i = 0; i < count; i++) {
-    if (i > 0) json += ",";
+    if (i > 0) {
+      client.print(',');
+    }
     const LogEntry& entry = appLogger.getLogEntry(i);
-    json += JsonBuilder()
+    // Build a single entry object as a (small) String, then write it out.
+    // Each entry is at most a few hundred bytes, well within heap headroom.
+    String obj = JsonBuilder()
       .addNumber("timestamp_ms", String(entry.timestamp))
       .addString("message", entry.message)
       .build();
+    client.print(obj);
   }
 
-  json += "]}";
-  return json;
+  client.print(F("]}"));
 }
 
 String buildApiDiscoveryJson() {

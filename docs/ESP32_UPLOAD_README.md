@@ -4,7 +4,7 @@ Current upload workflow for firmware/esp32_inverter_bridge.
 
 ## Required Values
 
-- CLI: C:\Users\AL33888\AppData\Local\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe
+- CLI: detected automatically by `skills/firmware-upload/upload_firmware.py` (checks PATH then `%LOCALAPPDATA%\Programs\Arduino IDE\...`)
 - FQBN: esp32:esp32:esp32s3
 - Port: COM9 (verify on your machine)
 
@@ -20,7 +20,7 @@ arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverte
 
 1. GET / returns discovery including /wifi/off.
 2. POST /wifi/off returns JSON with pressed true/false (not 404).
-3. GET /pulse returns status pulse_complete.
+3. GET /pulse returns `{"reconnected": true/false}`.
 
 ## Inverter Availability Caveat
 
@@ -32,16 +32,12 @@ When inverter WiFi is unavailable, these endpoints should return 502:
 
 This is expected and does not indicate upload failure.
 
-## Next-Day Measurement Continuation
+## Log Analysis
 
-Use clean cycle for timing work:
+To analyze real-world connect performance accumulated during normal operation:
 
-- /pulse
-- /wifi/off
-- wait 2-3s
-- repeat
+```powershell
+.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+```
 
-Then run:
-
-- python run_clean_tests.py 10
-- python analyze_logs.py
+This reports per-path (dwell/auto) success rate, min/avg/max connect time, and timeout count.

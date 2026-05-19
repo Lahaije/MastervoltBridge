@@ -1,25 +1,15 @@
 # ESP32 Inverter WiFi-to-Ethernet Bridge
 
-Professional bridge firmware for connecting WiFi-only inverters (Mastervolt SOLADIN series) to Home Assistant over Ethernet.
+Bridge firmware connecting WiFi-only inverters (Mastervolt SOLADIN series) to Home Assistant over Ethernet. Runs on ESP32-S3 + ENC28J60, exposes a REST API on port 8080.
 
-## Current Snapshot (May 18, 2026)
+## Hardware
 
-- Hardware: ESP32-S3 + ENC28J60
-- Ethernet API: port 8080
-- Inverter SSID: mastervolt-soladin-0103
-- Inverter IP: 10.0.0.1
+- ESP32-S3 + ENC28J60 Ethernet module
+- Inverter SSID: `mastervolt-soladin-0103` / IP `10.0.0.1`
+- Ethernet API: `192.168.1.48:8080`
 - WiFi wake pin: GPIO 36
-- Pulse timing: HIGH 150 ms, gap 200 ms, HIGH 150 ms
 
-## Architecture
-
-- WiFi layer: firmware/esp32_inverter_bridge/wifi_bridge.cpp
-- Polling/caching: firmware/esp32_inverter_bridge/inverter_monitor.cpp
-- API router: firmware/esp32_inverter_bridge/api.cpp
-- API helpers/JSON: firmware/esp32_inverter_bridge/api_helper.cpp
-- Config: firmware/esp32_inverter_bridge/settings.cpp
-
-## API Endpoints (Current)
+## API Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -27,86 +17,43 @@ Professional bridge firmware for connecting WiFi-only inverters (Mastervolt SOLA
 | GET | /api/health | Bridge WiFi/Ethernet status |
 | GET | /api/logs | Circular log buffer |
 | GET | /api/info | Latest cached inverter telemetry |
-| POST | /api/power | Set inverter power (0-1575 W) |
+| POST | /api/power | Set inverter power (0–1575 W) |
 | POST | /api/inverter/fetch | Fetch arbitrary inverter path |
-| POST | /wifi/off | Single press if bridge WiFi is connected |
-| GET | /pulse | Double-press recovery + connection timing measurement |
+| POST | /wifi/off | Single press to turn inverter WiFi off |
+| GET | /pulse | GPIO double-press wake + forced reconnect; returns `{"reconnected": bool}` |
+| POST | /api/debug | Enable or disable verbose HTTP 200 success logging |
 
-## WiFi Measurement Findings
+Full request/response schemas: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
 
-### Valid inverter state machine
+## WiFi Connection Architecture
 
-- OFF -> double press (/pulse) -> ON
-- ON -> single press (/wifi/off) -> OFF
-- ON -> double press -> undefined state (avoid)
+The bridge uses a `WifiConnectionManager` singleton that pulses the inverter's WiFi module before every reconnect and alternates between two named connect strategies (**dwell** ~5 s / **auto** ~6.5 s). Both strategies log structured entries for passive A/B performance analysis. See [`AGENTS.md`](AGENTS.md) for full design details.
 
-### Required clean test flow
-
-- pulse (measure)
-- wifi/off
-- wait 2-3 seconds
-- repeat
-
-### Measured baseline before latest optimization
-
-- Success rate: 100% when using the clean flow
-- Connection time range: about 3752-4752 ms
-- Average connection time: about 4252 ms
-- Inverter channels observed: 1, 6, 11
-
-### Firmware changes applied for speed/reliability
-
-- Recovery timeout reduced to 8000 ms
-- Scan dwell reduced to 500 ms and settle to 100 ms
-- WiFi radio reset before each measurement (WIFI_OFF -> WIFI_STA)
-- Scan-before-connect with discovered channel + BSSID passed into WiFi.begin
-- Recovery scan logging reduced to inverter-focused lines
-- /wifi/off endpoint restored
-
-## Important Test Constraint
-
-If inverter WiFi is unavailable (for example after sunset), endpoints that need inverter WiFi are expected to fail with 502:
-
-- /api/info
-- /api/power
-- /api/inverter/fetch
-
-The following should still work:
-
-- /
-- /api/health
-- /api/logs
-- /wifi/off (typically returns pressed false when WiFi already off)
-- /pulse (returns pulse_complete, but connection may timeout)
-
-## Tomorrow Handoff For Firmware Auto-Optimization
-
-1. Start with inverter WiFi available (daylight).
-2. Run clean measurements with run_clean_tests.py using pulse -> wifi/off -> wait loop.
-3. Parse results with analyze_logs.py and compare against ~4252 ms baseline.
-4. Confirm logs show channel/BSSID-assisted connect path.
-5. If needed, iterate on:
-- scan dwell/settle values
-- retry strategy after WL_NO_SSID_AVAIL or WL_CONNECTION_LOST
-- BSSID/channel fallback policy
+```powershell
+.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+```
 
 ## Build and Upload
 
-Arduino CLI path used in this repo:
+```powershell
+# Recommended (auto COM-port detection):
+.venv\Scripts\python skills/firmware-upload/upload_firmware.py
 
-C:\Users\AL33888\AppData\Local\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe
+# Or direct arduino-cli:
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/esp32_inverter_bridge
+arduino-cli upload  --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverter_bridge
+```
 
-Typical commands:
-
-- compile: arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/esp32_inverter_bridge
-- upload: arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverter_bridge
+Full setup and IDE instructions: [`docs/SETUP_README.md`](docs/SETUP_README.md).
 
 ## Documentation Index
 
-- docs/API_REFERENCE.md
-- docs/TEST_README.md
-- docs/WIRING_README.md
-- docs/UPLOAD_README.md
-- docs/ESP32_WIRING_README.md
-- docs/ESP32_UPLOAD_README.md
-- AGENTS.md
+- [`docs/SETUP_README.md`](docs/SETUP_README.md) — Hardware assembly, wiring, prerequisites, flash instructions
+- [`docs/WIRING_README.md`](docs/WIRING_README.md) — Pin table and electrical notes
+- [`docs/ESP32_UPLOAD_README.md`](docs/ESP32_UPLOAD_README.md) — Upload procedure and post-flash verification
+- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — Full endpoint reference
+- [`docs/TEST_README.md`](docs/TEST_README.md) — Validation checklist and troubleshooting
+- [`AGENTS.md`](AGENTS.md) — Architecture reference for agents and developers
+- [`TECHNICAL_DEBT.md`](TECHNICAL_DEBT.md) — Known limitations, TODOs, and future enhancements
+- [`RELEASE_INVENTORY.md`](RELEASE_INVENTORY.md) — Release file audit and packaging guide
+

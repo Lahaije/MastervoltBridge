@@ -15,6 +15,10 @@ void setup() {
   
   // Initialize inverter monitor for inverter telemetry and requests
   InverterMonitor::getInstance().initialize();
+
+  // All hardware and tasks are initialized; disable debug-level logging for
+  // routine HTTP 200 success events to keep the log buffer clean.
+  debugMode = false;
 }
 
 void loop() {
