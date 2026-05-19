@@ -22,8 +22,8 @@ const uint8_t PIN_ETH_CS = 8;
 
 const uint8_t PIN_INVERTER_WIFI_WAKE = 36;
 
-const uint16_t PULSE_HIGH_MS = 150;
-const uint16_t PULSE_GAP_MS = 200;
+const uint16_t PULSE_HIGH_MS = 50;
+const uint16_t PULSE_GAP_MS = 50;
 
 const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS = 20000;
 const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS = 3500;

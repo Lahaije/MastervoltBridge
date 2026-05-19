@@ -14,7 +14,7 @@ Validation guide for the ESP32 inverter bridge firmware.
 | Check | Expected |
 |---|---|
 | GET / | Endpoint discovery JSON |
-| GET /api/health | `{"wifi": ..., "ethernet": ...}` |
+| GET /api/health | JSON with keys: `wifi_connected`, `wifi_ssid`, `wifi_ip`, `ethernet_ip`, `inverter_host`, `last_inverter_status`, `debug_mode` |
 | GET /api/logs | Array of log entries |
 | GET /api/info | Inverter telemetry (or 502 if inverter WiFi is off) |
 

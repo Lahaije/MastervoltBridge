@@ -34,11 +34,11 @@ ethernet_bridge.cpp/h (network layer)
   └── ENC28J60 init + HTTP API server on port 8080
 
 api.cpp / api.h (request routing)
-  ├── handleApiClient() — 8 REST endpoints
+  ├── handleApiClient() — 9 REST endpoints
   └── deps: api_helper, InverterMonitor, inverter_data
 
 api_helper.cpp/h (HTTP/JSON utilities)
-  └── sendHttpResponse(), buildHealthJson(), buildLogsJson(), buildInfoJson(), etc.
+  └── sendHttpResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
 
 esp32_inverter_bridge.ino (main entry)
   └── starts ethernetBridgeStartTask() + InverterMonitor::initialize()
@@ -123,8 +123,8 @@ bool fetchPath(const String& path, String& responseBody, int& httpCode, String& 
 | `INVERTER_HOST` | `"10.0.0.1"` | Inverter IP |
 | `API_PORT` | `8080` | Ethernet API port |
 | `PIN_INVERTER_WIFI_WAKE` | `36` | GPIO for wake pulse |
-| `PULSE_HIGH_MS` | `150` | Pulse HIGH duration |
-| `PULSE_GAP_MS` | `200` | Gap between pulses |
+| `PULSE_HIGH_MS` | `50` | Pulse HIGH duration |
+| `PULSE_GAP_MS` | `50` | Gap between pulses |
 | `WIFI_BRIDGE_POLL_INTERVAL_MS` | `20000` | Poll interval |
 | `WIFI_BRIDGE_HTTP_TIMEOUT_MS` | `3500` | HTTP request timeout |
 | `INVERTER_MAX_POWER_WATTS` | `1575` | Power set limit |
