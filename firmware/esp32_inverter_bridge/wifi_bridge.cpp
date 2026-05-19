@@ -11,17 +11,30 @@
 
 namespace {
 
-constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 10000;
 constexpr uint32_t WIFI_CONNECT_POLL_MS = 250;
 constexpr uint32_t WIFI_LOCK_TIMEOUT_MS = 50;
-constexpr uint32_t RECOVERY_TIMEOUT_MS = 30000;
-constexpr uint32_t RECOVERY_SCAN_DWELL_MS = 1000;
-constexpr uint32_t RECOVERY_SCAN_SETTLE_MS = 200;
-constexpr uint32_t RECOVERY_BUSY_LOG_INTERVAL_MS = 5000;
+constexpr uint32_t CONNECT_TIMEOUT_MS = 8000;
+constexpr uint32_t SCAN_SETTLE_MS = 100;
+
+// Dwell path: short scan dwell, hint fallback enabled.
+constexpr uint32_t DWELL_SCAN_DWELL_MS = 200;
+constexpr bool DWELL_USE_HINT_FALLBACK = true;
+
+// Auto path: longer scan dwell, no hint fallback (auto-discovery only).
+constexpr uint32_t AUTO_SCAN_DWELL_MS = 500;
+constexpr bool AUTO_USE_HINT_FALLBACK = false;
 
 SemaphoreHandle_t wifiOperationMutex = nullptr;
-bool recoveryMeasurementInProgress = false;
-unsigned long lastRecoveryBusyLogMs = 0;
+
+// Discovered AP BSSID+channel from scan during the current connect attempt.
+uint8_t discoveredBssid[6] = {0};
+uint8_t discoveredChannel = 0;
+bool hasDiscoveredAp = false;
+
+// Optional configured AP hint from settings (expected inverter channel+BSSID).
+uint8_t configuredHintBssid[6] = {0};
+uint8_t configuredHintChannel = 0;
+bool hasConfiguredHint = false;
 
 class ScopedWifiOperationLock {
 public:
@@ -41,24 +54,71 @@ private:
   bool acquired_;
 };
 
-class RecoveryMeasurementGuard {
-public:
-  RecoveryMeasurementGuard() {
-    recoveryMeasurementInProgress = true;
-    lastRecoveryBusyLogMs = millis();
-  }
-
-  ~RecoveryMeasurementGuard() {
-    recoveryMeasurementInProgress = false;
-  }
-};
-
 void logWifiBridge(const String& message) {
   appLogger.log(String("[WIFI-BRIDGE] ") + message);
 }
 
-void logRecovery(const String& message) {
-  appLogger.log(String("[RECOVERY] ") + message);
+void logConnect(const String& message) {
+  appLogger.log(String("[WIFI-CONNECT] ") + message);
+}
+
+void powerDownWifiRadio() {
+  WiFi.mode(WIFI_OFF);
+  hasDiscoveredAp = false;
+}
+
+void powerUpWifiRadioForConnect() {
+  WiFi.mode(WIFI_STA);
+  hasDiscoveredAp = false;
+}
+
+void pressInverterWifiButtonOnce() {
+  digitalWrite(PIN_INVERTER_WIFI_WAKE, LOW);
+  delay(PULSE_HIGH_MS);
+  digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
+}
+
+bool isWifiConnected() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+bool ensureWifiConnectedOrPowerDown() {
+  if (isWifiConnected()) {
+    return true;
+  }
+  powerDownWifiRadio();
+  logWifiBridge("WiFi not connected; radio powered down.");
+  return false;
+}
+
+bool acquireWifiLock(ScopedWifiOperationLock& lock) {
+  if (!lock.acquired()) {
+    logWifiBridge("WiFi operation busy; lock not acquired.");
+    return false;
+  }
+
+  return true;
+}
+
+bool acquireConnectedWifi(ScopedWifiOperationLock& lock) {
+  if (!acquireWifiLock(lock)) {
+    return false;
+  }
+
+  return ensureWifiConnectedOrPowerDown();
+}
+
+void initializeConfiguredHint() {
+  hasConfiguredHint = INVERTER_WIFI_AP_HINT_ENABLED &&
+                      INVERTER_WIFI_AP_HINT_CHANNEL > 0 &&
+                      INVERTER_WIFI_AP_HINT_CHANNEL <= 14;
+  if (!hasConfiguredHint) {
+    configuredHintChannel = 0;
+    memset(configuredHintBssid, 0, sizeof(configuredHintBssid));
+    return;
+  }
+  configuredHintChannel = INVERTER_WIFI_AP_HINT_CHANNEL;
+  memcpy(configuredHintBssid, INVERTER_WIFI_AP_HINT_BSSID, sizeof(configuredHintBssid));
 }
 
 const char* wifiStatusToString(wl_status_t status) {
@@ -74,168 +134,193 @@ const char* wifiStatusToString(wl_status_t status) {
   }
 }
 
-bool isRecoveryActiveAndLogThrottled() {
-  if (!recoveryMeasurementInProgress) {
-    return false;
-  }
-
-  unsigned long nowMs = millis();
-  if (nowMs - lastRecoveryBusyLogMs > RECOVERY_BUSY_LOG_INTERVAL_MS) {
-    logWifiBridge("Recovery measurement active; skipping regular connect attempt.");
-    lastRecoveryBusyLogMs = nowMs;
-  }
-  return true;
-}
-
-void startConfiguredWifiConnection() {
-  if (strlen(INVERTER_WIFI_PASSWORD) == 0) {
-    WiFi.begin(INVERTER_WIFI_SSID);
-  } else {
-    WiFi.begin(INVERTER_WIFI_SSID, INVERTER_WIFI_PASSWORD);
-  }
-}
-
-bool waitForWifiConnection(uint32_t timeoutMs, bool abortOnRecoveryStart) {
-  unsigned long startedAt = millis();
-  while (millis() - startedAt < timeoutMs) {
-    if (abortOnRecoveryStart && recoveryMeasurementInProgress) {
-      logWifiBridge("Recovery measurement active; aborting connect attempt.");
-      return false;
+void runScanPass(uint32_t dwellMs) {
+  vTaskDelay(pdMS_TO_TICKS(SCAN_SETTLE_MS));
+  int networkCount = WiFi.scanNetworks(false, true, false, dwellMs);
+  hasDiscoveredAp = false;
+  if (networkCount > 0) {
+    int8_t bestRssi = -127;
+    int bestIdx = -1;
+    for (int i = 0; i < networkCount; i++) {
+      if (WiFi.SSID(i) == INVERTER_WIFI_SSID) {
+        int8_t rssi = (int8_t)WiFi.RSSI(i);
+        if (rssi > bestRssi) {
+          bestRssi = rssi;
+          bestIdx = i;
+        }
+      }
     }
-
-    wl_status_t status = WiFi.status();
-    if (status == WL_CONNECTED) {
-      logWifiBridge(String("Connected. IP=") + WiFi.localIP().toString());
-      return true;
+    if (bestIdx >= 0) {
+      memcpy(discoveredBssid, WiFi.BSSID(bestIdx), 6);
+      discoveredChannel = (uint8_t)WiFi.channel(bestIdx);
+      hasDiscoveredAp = true;
     }
-
-    if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL || status == WL_CONNECTION_LOST) {
-      logWifiBridge(String("Connect aborted early. status=") + String((int)status) +
-                    String(" (") + wifiStatusToString(status) + String(")"));
-      return false;
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(WIFI_CONNECT_POLL_MS));
   }
-
-  wl_status_t status = WiFi.status();
-  logWifiBridge(String("Connect timeout after ") + timeoutMs +
-                String("ms. status=") + String((int)status) +
-                String(" (") + wifiStatusToString(status) + String(")"));
-  return status == WL_CONNECTED;
-}
-
-void logRecoveryScanResults(int networkCount) {
-  if (networkCount < 0) {
-    logRecovery(String("WiFi scan failed. code=") + networkCount);
-    return;
-  }
-
-  if (networkCount == 0) {
-    logRecovery("No broadcast SSIDs detected (0 networks).");
-    return;
-  }
-
-  bool inverterSsidFound = false;
-  for (int i = 0; i < networkCount; i++) {
-    String ssid = WiFi.SSID(i);
-    if (ssid == INVERTER_WIFI_SSID) {
-      inverterSsidFound = true;
-    }
-    if (ssid.length() == 0) {
-      ssid = "<hidden>";
-    }
-    logRecovery(String(ssid) + String(" (RSSI=") + WiFi.RSSI(i) + String(")"));
-  }
-
-  if (inverterSsidFound) {
-    logRecovery("Target inverter SSID is visible in scan.");
-  } else {
-    logRecovery("Target inverter SSID not visible in scan results.");
-  }
-}
-
-void runRecoveryScanPass() {
-  WiFi.disconnect(true, true);
-  vTaskDelay(pdMS_TO_TICKS(RECOVERY_SCAN_SETTLE_MS));
-
-  logRecovery("Scanning visible networks...");
-  int networkCount = WiFi.scanNetworks(false, true, false, RECOVERY_SCAN_DWELL_MS);
-  logRecoveryScanResults(networkCount);
   WiFi.scanDelete();
 }
 
+void startWifiBegin(bool useHintFallback) {
+  const char* pass = strlen(INVERTER_WIFI_PASSWORD) ? INVERTER_WIFI_PASSWORD : nullptr;
+  if (hasDiscoveredAp) {
+    WiFi.begin(INVERTER_WIFI_SSID, pass, discoveredChannel, discoveredBssid);
+  } else if (useHintFallback && hasConfiguredHint) {
+    WiFi.begin(INVERTER_WIFI_SSID, pass, configuredHintChannel, configuredHintBssid);
+  } else if (pass == nullptr) {
+    WiFi.begin(INVERTER_WIFI_SSID);
+  } else {
+    WiFi.begin(INVERTER_WIFI_SSID, pass);
+  }
+}
+
+// Core connect routine. Logs path name and total duration for later analysis.
+// Brings the radio to STA mode, scans for the inverter SSID, then attempts
+// to connect using the discovered channel/BSSID (with optional configured-hint
+// fallback). Returns true on success, false on timeout.
+bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFallback) {
+  unsigned long startMs = millis();
+  logConnect(String("start path=") + pathName +
+             " scan_dwell_ms=" + scanDwellMs +
+             " hint_fallback=" + (useHintFallback ? "1" : "0"));
+
+  // Ensure radio is up for scan/connect. We power it down explicitly on
+  // failures and disconnected states elsewhere.
+  powerUpWifiRadioForConnect();
+  runScanPass(scanDwellMs);
+  startWifiBegin(useHintFallback);
+
+  while (millis() - startMs < CONNECT_TIMEOUT_MS) {
+    wl_status_t status = WiFi.status();
+    if (status == WL_CONNECTED) {
+      unsigned long elapsedMs = millis() - startMs;
+      uint8_t ch = WiFi.channel();
+      uint8_t* bssid = WiFi.BSSID();
+      char bssidStr[18] = {0};
+      if (bssid != nullptr) {
+        snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+      }
+      logConnect(String("complete path=") + pathName +
+                 " duration_ms=" + elapsedMs +
+                 " result=success channel=" + ch +
+                 " bssid=" + bssidStr +
+                 " ip=" + WiFi.localIP().toString());
+      return true;
+    }
+    if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL || status == WL_CONNECTION_LOST) {
+      hasDiscoveredAp = false;
+      startWifiBegin(useHintFallback);
+    }
+    vTaskDelay(pdMS_TO_TICKS(WIFI_CONNECT_POLL_MS));
+  }
+
+  unsigned long elapsedMs = millis() - startMs;
+  wl_status_t finalStatus = WiFi.status();
+  logConnect(String("complete path=") + pathName +
+             " duration_ms=" + elapsedMs +
+             " result=timeout final_status=" + wifiStatusToString(finalStatus));
+  powerDownWifiRadio();
+  return false;
+}
+
+void triggerPulseSequence() {
+  logWifiBridge("Triggering inverter WiFi wake pulse sequence.");
+  pressInverterWifiButtonOnce();
+  delay(PULSE_GAP_MS);
+  pressInverterWifiButtonOnce();
+}
+
+// ---------------------------------------------------------------------------
+// Connect strategy functions (named so they appear in logs for A/B analysis).
+// File-local; the manager below is the only caller.
+// ---------------------------------------------------------------------------
+
+bool connectWifiDwell() {
+  return runConnectPath("dwell", DWELL_SCAN_DWELL_MS, DWELL_USE_HINT_FALLBACK);
+}
+
+bool connectWifiAuto() {
+  return runConnectPath("auto", AUTO_SCAN_DWELL_MS, AUTO_USE_HINT_FALLBACK);
+}
+
+bool connectWifi(bool useDwellPath) {
+  return useDwellPath ? connectWifiDwell() : connectWifiAuto();
+}
+
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// WifiConnectionManager: owns alternating connect-path state and exposes a
+// single "give me a working WiFi connection" entry point used by callers.
+// ---------------------------------------------------------------------------
+
+WifiConnectionManager& WifiConnectionManager::getInstance() {
+  static WifiConnectionManager instance;
+  return instance;
+}
+
+bool WifiConnectionManager::ensureConnected() {
+  ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_MS);
+  if (!acquireWifiLock(lock)) {
+    return false;
+  }
+  if (isWifiConnected()) {
+    return true;
+  }
+  // Inverter WiFi is typically asleep; wake it with a button-press pulse
+  // before the scan/connect attempt. Total cost is ~500ms which leaves the
+  // full 8s connect window inside runConnectPath untouched.
+  triggerPulseSequence();
+  return connectUsingNextPath();
+}
+
+bool WifiConnectionManager::forceReconnect() {
+  ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_MS);
+  if (!acquireWifiLock(lock)) {
+    return false;
+  }
+  triggerPulseSequence();
+  return connectUsingNextPath();
+}
+
+bool WifiConnectionManager::connectUsingNextPath() {
+  bool useDwell = nextUseDwell_;
+  nextUseDwell_ = !nextUseDwell_;
+  return connectWifi(useDwell);
+}
+
+// ---------------------------------------------------------------------------
+// Public WiFi bridge API.
+// ---------------------------------------------------------------------------
 
 void wifiBridgeInit() {
   if (wifiOperationMutex == nullptr) {
     wifiOperationMutex = xSemaphoreCreateMutex();
   }
+  initializeConfiguredHint();
+
+  // Boot with the radio off; the first connect attempt powers it up.
+  WiFi.mode(WIFI_OFF);
+
   pinMode(PIN_INVERTER_WIFI_WAKE, OUTPUT);
   digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
 }
 
-/**
- * Ensure WiFi is connected to the inverter's network.
- * If not connected, attempt to connect with a configurable timeout.
- */
-bool ensureWifiConnected() {
-  if (isRecoveryActiveAndLogThrottled()) {
-    return false;
-  }
-
-  ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) {
-    logWifiBridge("WiFi operation busy; skipping regular connect attempt.");
-    return false;
-  }
-
-  wl_status_t status = WiFi.status();
-  if (status == WL_CONNECTED) {
-    return true;
-  }
-
-  // If the station is already in-flight, do not reset config with another begin().
-  if (status == WL_IDLE_STATUS) {
-    logWifiBridge("Connect already in progress; waiting for result.");
-  } else {
-    startConfiguredWifiConnection();
-  }
-
-  return waitForWifiConnection(WIFI_CONNECT_TIMEOUT_MS, true);
-}
-
-/**
- * Generic method to fetch data from inverter (GET or POST).
- * Automatically ensures WiFi is connected before making the request.
- */
 bool fetchInverterData(const String& method, const String& path, const String& body,
                        String& responseBody, int& httpCode, String& errorMessage) {
-  if (isRecoveryActiveAndLogThrottled()) {
-    errorMessage = "Recovery measurement is active";
+  // Make sure WiFi is up before we try to talk to the inverter. The manager
+  // releases the WiFi-operation lock once the (re)connect attempt completes,
+  // so we can re-acquire it below for the HTTP exchange.
+  if (!WifiConnectionManager::getInstance().ensureConnected()) {
+    errorMessage = "ESP32 failed to connect to inverter WiFi";
     httpCode = 0;
     return false;
   }
 
   ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) {
-    errorMessage = "WiFi operation busy";
-    httpCode = 0;
-    return false;
-  }
-
-  wl_status_t status = WiFi.status();
-  if (status != WL_CONNECTED) {
-    if (status == WL_IDLE_STATUS) {
-      logWifiBridge("Connect already in progress; waiting for result.");
-    } else {
-      startConfiguredWifiConnection();
-    }
-  }
-
-  // Ensure WiFi is connected before attempting to fetch from inverter
-  if (!waitForWifiConnection(WIFI_CONNECT_TIMEOUT_MS, true)) {
-    errorMessage = "ESP32 failed to connect to inverter WiFi";
+  if (!acquireConnectedWifi(lock)) {
+    errorMessage = lock.acquired()
+      ? "WiFi dropped before HTTP request"
+      : "WiFi operation busy";
     httpCode = 0;
     return false;
   }
@@ -269,69 +354,28 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   lastInverterStatusCode = code;
 
   if (code <= 0) {
-    errorMessage = String(method) + String(" ") + path + String(" failed: ") + http.errorToString(code);
+    errorMessage = method + ' ' + path + " failed: " + http.errorToString(code);
     http.end();
+    powerDownWifiRadio();
     return false;
   }
 
   responseBody = http.getString();
   http.end();
 
-  logWifiBridge(String(method) + String(" ") + path + String(" success (HTTP ") + code + String(")"));
+  if (debugMode) {
+    logWifiBridge(method + ' ' + path + " success (HTTP " + code + ')');
+  }
   return true;
 }
 
-/**
- * Trigger the inverter WiFi wake pulse sequence for recovery.
- */
-void wifiBridgeTriggerPulseSequence() {
-  logRecovery("Triggering inverter WiFi wake pulse sequence.");
-
-  digitalWrite(PIN_INVERTER_WIFI_WAKE, LOW);
-  delay(PULSE_HIGH_MS);
-  digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
-
-  delay(PULSE_GAP_MS);
-
-  digitalWrite(PIN_INVERTER_WIFI_WAKE, LOW);
-  delay(PULSE_HIGH_MS);
-  digitalWrite(PIN_INVERTER_WIFI_WAKE, HIGH);
-}
-
-void measureConnectionTime() {
+bool triggerWifiOffIfConnected() {
   ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) {
-    logRecovery("WiFi operation busy. Ignoring measurement request.");
-    return;
+  if (!acquireConnectedWifi(lock)) {
+    return false;
   }
 
-  if (recoveryMeasurementInProgress) {
-    logRecovery("Measurement already in progress. Ignoring new request.");
-    return;
-  }
-
-  RecoveryMeasurementGuard guard;
-  wifiBridgeTriggerPulseSequence();
-  unsigned long startMs = millis();
-
-  logRecovery("Measuring connection time after pulse...");
-  WiFi.mode(WIFI_STA);
-
-  while (millis() - startMs < RECOVERY_TIMEOUT_MS) {
-    runRecoveryScanPass();
-    startConfiguredWifiConnection();
-
-    unsigned long elapsedMs = millis() - startMs;
-    if (elapsedMs >= RECOVERY_TIMEOUT_MS) {
-      break;
-    }
-    uint32_t remainingMs = RECOVERY_TIMEOUT_MS - elapsedMs;
-    if (waitForWifiConnection(remainingMs, false)) {
-      unsigned long elapsed = millis() - startMs;
-      logRecovery(String("Connected in ") + elapsed + "ms. IP=" + WiFi.localIP().toString());
-      return;
-    }
-  }
-
-  logRecovery("Failed to connect within 30s.");
+  logWifiBridge("Sending single press to turn inverter WiFi OFF.");
+  pressInverterWifiButtonOnce();
+  return true;
 }

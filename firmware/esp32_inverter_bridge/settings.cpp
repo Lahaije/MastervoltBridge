@@ -1,8 +1,15 @@
 #include "settings.h"
 #include "logger.h"
 
+// TODO: Support dynamic IP discovery via mDNS hostname instead of hardcoded static IPs.
+// See TECHNICAL_DEBT.md for details. Scripts should discover bridge at mastervolt-bridge.local
+// or scan network for mDNS service instead of using hardcoded 192.168.1.48 / 10.0.0.1.
+
 const char* INVERTER_WIFI_SSID = "mastervolt-soladin-0103";
 const char* INVERTER_WIFI_PASSWORD = "";
+const bool INVERTER_WIFI_AP_HINT_ENABLED = true;
+const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL = 1;
+const uint8_t INVERTER_WIFI_AP_HINT_BSSID[6] = {0x00, 0x06, 0x66, 0x9D, 0xE0, 0x36};
 
 const char* INVERTER_HOST = "10.0.0.1";
 
@@ -15,8 +22,8 @@ const uint8_t PIN_ETH_CS = 8;
 
 const uint8_t PIN_INVERTER_WIFI_WAKE = 36;
 
-const uint16_t PULSE_HIGH_MS = 150;
-const uint16_t PULSE_GAP_MS = 200;
+const uint16_t PULSE_HIGH_MS = 50;
+const uint16_t PULSE_GAP_MS = 50;
 
 const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS = 20000;
 const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS = 3500;
@@ -31,3 +38,4 @@ byte ETH_MAC[6] = {0x02, 0xA1, 0x82, 0x32, 0x10, 0x42};
 EthernetServer apiServer(API_PORT);
 Logger appLogger;
 int lastInverterStatusCode = -1;
+bool debugMode = true;

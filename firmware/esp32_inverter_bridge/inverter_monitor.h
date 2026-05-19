@@ -71,6 +71,10 @@ private:
   // Polling task implementation
   void runPollingTask();
 
+  // Increment a counter (e.g. successfulPolls / failedPolls) under dataMutex.
+  // Returns false if the mutex could not be acquired within 5 s.
+  bool incrementCounterLocked(uint32_t& counter);
+
   // Private state
   TaskHandle_t pollingTaskHandle = nullptr;
   SemaphoreHandle_t dataMutex = nullptr;

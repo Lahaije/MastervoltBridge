@@ -17,32 +17,26 @@ r = requests.get(f"http://{IP}:8080/api/info", timeout=15)
 print(r.text)
 """
 
+timer = ''
 try:
-    # r = requests.get(f"http://{IP}:8080/pulse", timeout=35)
-    print(r.text)
-except requests.exceptions.ReadTimeout:
-    print("PULSE timeout")
-
-
-r = requests.get(f"http://{IP}:8080/api/logs", timeout=5)
-a = r.json()['entries']
-
-
-
-try:
+    r = requests.get(f"http://{IP}:8080/api/logs", timeout=5)
     for entry in r.json()['entries']:
-        print(f"{entry['timestamp_ms']}: {entry['message']}")
+        timer = int(entry['timestamp_ms'])
+        minutes = timer // 60000  # 1 minute = 60,000 ms
+        seconds = (timer % 60000)/1000
+        print(f"{minutes}m {seconds:06.3f}: {entry['message']}")
 except Exception as e:
     print(f"EXCEPTION: {e}")
     print(r.text)
 
 
-print(f"Duration = {int(duration)} ms")
+print(f"{timer} Duration = {int(duration)} ms")
 
 r = requests.get(f"http://{IP}:8080/api/info", timeout=15)
 for key, value in r.json().items():
     print(f"{key}: {value}")
 
-
-r = requests.post(f"http://{IP}:8080/api/inverter/fetch", data={'url': '/home'}, timeout=15)
+"""
+r = requests.post(f"http://{IP}:8080/api/inverter/fetch", json={'url': '/Mastervolt.js'}, timeout=15)
 print(r.text)
+"""

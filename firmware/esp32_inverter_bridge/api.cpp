@@ -1,6 +1,7 @@
 #include "api.h"
 
 #include "settings.h"
+#include "logger.h"
 #include "wifi_bridge.h"
 #include "inverter_monitor.h"
 #include "inverter_data.h"
@@ -13,7 +14,9 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
   {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
-  {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"}
+  {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
+  {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
+  {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"}
 };
 
 void handleApiClient(EthernetClient& client) {
@@ -37,6 +40,8 @@ void handleApiClient(EthernetClient& client) {
 
   String method = requestLine.substring(0, firstSpace);
   String path = requestLine.substring(firstSpace + 1, secondSpace);
+
+  appLogger.log("[API] " + method + " " + path);
 
   // Parse HTTP headers to extract Content-Length
   int contentLength = 0;
@@ -90,15 +95,38 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/api/logs") {
-    sendHttpResponse(client, 200, "application/json", buildLogsJson());
+    sendLogsResponse(client);
     return;
   }
 
   if (method == "GET" && path == "/pulse") {
-    // Temporary test to see what the exact wifi behaviour of the inverter after a pulse is send.
-    // Need to be edited in the final firmware, 
-    measureConnectionTime();
-    sendHttpResponse(client, 200, "application/json", "{\"status\":\"pulse_complete\"}");
+    // forceReconnect() pulses the wake GPIO and then runs a fresh connect
+    // attempt using the next alternating path, so the resulting
+    // [WIFI-CONNECT] log line captures real-world performance.
+    bool ok = WifiConnectionManager::getInstance().forceReconnect();
+    String response = JsonBuilder().addBool("reconnected", ok).build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "POST" && path == "/wifi/off") {
+    bool pressed = triggerWifiOffIfConnected();
+    String response = JsonBuilder().addBool("pressed", pressed).build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "POST" && path == "/api/debug") {
+    String value = getJsonValueByKey(body, "debug");
+    if (value != "true" && value != "false") {
+      sendHttpResponse(client, 400, "application/json",
+                       buildErrorJson("body must contain debug field: {\"debug\":true} or {\"debug\":false}"));
+      return;
+    }
+    debugMode = (value == "true");
+    appLogger.log(String("[API] debug mode ") + (debugMode ? "enabled" : "disabled"));
+    String response = JsonBuilder().addBool("debug", debugMode).build();
+    sendHttpResponse(client, 200, "application/json", response);
     return;
   }
   

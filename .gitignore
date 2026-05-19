@@ -1,0 +1,43 @@
+# Version control
+.git/
+.gitattributes
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*$py.class
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+
+# Temporary files
+*.log
+*.tmp
+logs_salvaged.json
+check_release.py
+audit_release_files.py
+test_bridge.py
+run_clean_tests.py
+analyze_logs.py
+
+# Arduino build artifacts
+build/
+*.elf
+*.bin
