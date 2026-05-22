@@ -19,22 +19,29 @@ and cross-checks the firmware's own discovery response against the documented en
 
 ## Primary Command
 
-Run from the repository root:
+Run from the repository root. **The venv MUST be activated first in every terminal session:**
 
 ```powershell
-.venv\Scripts\python skills/api-validation/validate_api.py
+# Activate venv (required once per terminal session — always do this first)
+& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+```
+
+After activation, use plain `python` for all commands below.
+
+```powershell
+python skills/api-validation/validate_api.py
 ```
 
 With verbose output (shows response keys and full endpoint list):
 
 ```powershell
-.venv\Scripts\python skills/api-validation/validate_api.py --verbose
+python skills/api-validation/validate_api.py --verbose
 ```
 
 Custom bridge URL:
 
 ```powershell
-.venv\Scripts\python skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
+python skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
 ```
 
 Exit code `0` = all checks passed. Exit code `1` = one or more failures.
@@ -87,7 +94,7 @@ For each GET endpoint, checks:
 2. Add the entry to `API_ENDPOINTS[]` in `api.cpp`.
 3. Upload firmware:
    ```powershell
-   .venv\Scripts\python skills/firmware-upload/upload_firmware.py
+   python skills/firmware-upload/upload_firmware.py
    ```
 4. Re-run this skill to confirm.
 

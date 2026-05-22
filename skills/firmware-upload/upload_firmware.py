@@ -35,7 +35,7 @@ def _find_arduino_cli() -> str:
     return candidate
 
 ARDUINO_CLI = _find_arduino_cli()
-FQBN = "esp32:esp32:esp32s3"
+FQBN = "esp32:esp32:esp32s3:CDCOnBoot=cdc"
 DEFAULT_PORT = "COM9"
 SKETCH = "firmware/esp32_inverter_bridge"
 

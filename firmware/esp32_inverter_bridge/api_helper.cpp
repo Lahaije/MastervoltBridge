@@ -165,25 +165,75 @@ void sendLogsResponse(EthernetClient& client) {
   client.print(F("Content-Type: application/json\r\n"));
   client.print(F("\r\n"));
 
-  client.print(F("{\"total_entries\":"));
-  client.print(count);
-  client.print(F(",\"entries\":["));
+  // Use a stack buffer to batch entries per TCP write, reducing the number
+  // of small packets sent over the ENC28J60 (major throughput bottleneck).
+  // Buffer must be small enough to fit in the ENC28J60's 8KB packet memory
+  // alongside receive buffers. After each flush we yield to let the UIP
+  // TCP/IP stack process incoming ACKs, preventing write-stalls.
+  static const size_t BUF_SIZE = 1024;
+  char buf[BUF_SIZE];
+  size_t pos = 0;
+  bool aborted = false;
 
-  for (int i = 0; i < count; i++) {
+  // Helper lambda: flush buffer to client when full or at end.
+  // Checks client connectivity first to avoid writing to a dead connection
+  // (which crashes the ENC28J60/UIP stack).
+  auto flush = [&]() {
+    if (pos > 0) {
+      if (!client.connected()) {
+        aborted = true;
+        pos = 0;
+        return;
+      }
+      client.write((const uint8_t*)buf, pos);
+      pos = 0;
+      // Yield to allow UIP stack to process ACKs from receiver.
+      delay(1);
+    }
+  };
+
+  // Helper lambda: append data to buffer, flushing as needed.
+  auto append = [&](const char* data, size_t len) {
+    while (len > 0 && !aborted) {
+      size_t space = BUF_SIZE - pos;
+      size_t chunk = (len < space) ? len : space;
+      memcpy(buf + pos, data, chunk);
+      pos += chunk;
+      data += chunk;
+      len -= chunk;
+      if (pos >= BUF_SIZE) {
+        flush();
+      }
+    }
+  };
+
+  auto appendStr = [&](const String& s) {
+    append(s.c_str(), s.length());
+  };
+
+  const char* header = "{\"total_entries\":";
+  append(header, strlen(header));
+  String countStr = String(count);
+  appendStr(countStr);
+  const char* entriesOpen = ",\"entries\":[";
+  append(entriesOpen, strlen(entriesOpen));
+
+  for (int i = 0; i < count && !aborted; i++) {
     if (i > 0) {
-      client.print(',');
+      append(",", 1);
     }
     const LogEntry& entry = appLogger.getLogEntry(i);
-    // Build a single entry object as a (small) String, then write it out.
-    // Each entry is at most a few hundred bytes, well within heap headroom.
     String obj = JsonBuilder()
       .addNumber("timestamp_ms", String(entry.timestamp))
       .addString("message", entry.message)
       .build();
-    client.print(obj);
+    appendStr(obj);
   }
 
-  client.print(F("]}"));
+  if (!aborted) {
+    append("]}", 2);
+    flush();
+  }
 }
 
 String buildApiDiscoveryJson() {
