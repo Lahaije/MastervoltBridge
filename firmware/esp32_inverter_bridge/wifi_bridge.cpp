@@ -25,7 +25,9 @@ constexpr uint32_t WIFI_LOCK_TIMEOUT_CONNECTED_MS = 4500;
 // expected to respond well under 2s; anything longer is considered a stall.
 constexpr uint32_t HTTP_POST_BUDGET_MS = 3000;
 constexpr uint32_t HTTP_TCP_CONNECT_TIMEOUT_MS = 1500;
-constexpr uint32_t HTTP_FIRST_BYTE_TIMEOUT_MS = 2000;
+// Diagnostic: temporarily wait up to 10s to find out whether the inverter
+// EVER responds to POST /power. If not, request format is wrong.
+constexpr uint32_t HTTP_FIRST_BYTE_TIMEOUT_MS = 10000;
 
 // Retry settings for connection worker: pulse once, then try connecting up to
 // MAX_CONNECT_RETRIES times (alternating dwell/auto) before signaling failure.
