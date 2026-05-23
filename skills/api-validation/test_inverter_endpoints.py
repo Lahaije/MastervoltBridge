@@ -176,18 +176,23 @@ def inspect_recent_bridge_logs(base_url: str, timeout: float) -> None:
         return
 
     print(f"  total_entries={len(entries)}")
-    recent = entries[-120:]
+    recent = entries[-400:]
     interesting_markers = (
         "[API] POST /api/polling",
         "[API] POST /api/power",
+        "[API] POST /api/debug",
         "[API] GET /api/info",
         "[API] GET /api/logs",
-        "Poll interval updated to 1s",
-        "Poll interval updated to 20s",
+        "Poll interval updated",
         "Power command queued",
-        "Retry power command failed",
+        "Power set to",
+        "Queued power command",
+        "Retry power command",
         "Failed to fetch /home",
-        "WIFI-CONNECT",
+        "[WIFI-CONNECT]",
+        "[WIFI-DEBUG]",
+        "[WIFI-BRIDGE]",
+        "[INVERTER-MONITOR] Poll #",
     )
 
     print("  recent relevant entries:")
@@ -219,8 +224,8 @@ def inspect_recent_bridge_logs(base_url: str, timeout: float) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Exercise inverter polling and power endpoints with restore on exit")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"Bridge base URL (default: {DEFAULT_BASE_URL})")
-    parser.add_argument("--wait-seconds", type=float, default=2.0, help="Minimum seconds to wait after applying the 80%% power limit (default: 2.0)")
-    parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds (default: 10)")
+    parser.add_argument("--wait-seconds", type=float, default=30.0, help="Minimum seconds to wait after applying the 80%% power limit (default: 30)")
+    parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds (default: 30)")
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")

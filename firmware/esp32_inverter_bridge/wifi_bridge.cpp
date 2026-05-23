@@ -18,8 +18,13 @@ constexpr uint32_t CONNECT_TIMEOUT_MS = 7000;
 constexpr uint32_t SCAN_SETTLE_MS = 100;
 
 // Lock timeout when WiFi is connected: wait for current HTTP request to finish.
-// Must exceed WIFI_BRIDGE_HTTP_TIMEOUT_MS to allow the active request to complete.
-constexpr uint32_t WIFI_LOCK_TIMEOUT_CONNECTED_MS = 4500;
+// Must exceed the longest HTTP timeout used below (POST is the slowest).
+constexpr uint32_t WIFI_LOCK_TIMEOUT_CONNECTED_MS = 16000;
+
+// POST /power on the inverter can take ~10s to respond because the inverter
+// has to actually change its output before answering. GET /home returns in
+// ~100ms. Use a longer timeout for POST so commands actually land.
+constexpr uint32_t HTTP_POST_TIMEOUT_MS = 15000;
 
 // Retry settings for connection worker: pulse once, then try connecting up to
 // MAX_CONNECT_RETRIES times (alternating dwell/auto) before signaling failure.
@@ -491,6 +496,7 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   if (method == "GET") {
     code = http.GET();
   } else if (method == "POST") {
+    http.setTimeout(HTTP_POST_TIMEOUT_MS);
     http.addHeader("Content-Type", "text/plain");
     code = http.POST(body);
   } else {
