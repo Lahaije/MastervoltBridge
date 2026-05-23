@@ -92,15 +92,26 @@ void logConnect(const String& message) {
   appLogger.log(String("[WIFI-CONNECT] ") + message);
 }
 
+// Forward declaration (definition below).
+const char* wifiStatusToString(wl_status_t status);
+
 // ---------------------------------------------------------------------------
 // Low-level WiFi operations.
 // ---------------------------------------------------------------------------
 void powerDownWifiRadio() {
+  if (debugMode) {
+    appLogger.log(String("[WIFI-DEBUG] powerDownWifiRadio() called; WiFi.status()=") +
+                  wifiStatusToString(WiFi.status()));
+  }
   WiFi.mode(WIFI_OFF);
   hasDiscoveredAp = false;
 }
 
 void powerUpWifiRadioForConnect() {
+  if (debugMode) {
+    appLogger.log(String("[WIFI-DEBUG] powerUpWifiRadioForConnect(); previous status=") +
+                  wifiStatusToString(WiFi.status()));
+  }
   WiFi.mode(WIFI_STA);
   hasDiscoveredAp = false;
 }
@@ -141,13 +152,17 @@ const char* wifiStatusToString(wl_status_t status) {
 
 void runScanPass(uint32_t dwellMs) {
   vTaskDelay(pdMS_TO_TICKS(SCAN_SETTLE_MS));
+  unsigned long scanStartMs = millis();
   int networkCount = WiFi.scanNetworks(false, true, false, dwellMs);
+  unsigned long scanMs = millis() - scanStartMs;
   hasDiscoveredAp = false;
+  int matchCount = 0;
+  int8_t bestRssi = -127;
+  int bestIdx = -1;
   if (networkCount > 0) {
-    int8_t bestRssi = -127;
-    int bestIdx = -1;
     for (int i = 0; i < networkCount; i++) {
       if (WiFi.SSID(i) == INVERTER_WIFI_SSID) {
+        matchCount++;
         int8_t rssi = (int8_t)WiFi.RSSI(i);
         if (rssi > bestRssi) {
           bestRssi = rssi;
@@ -160,6 +175,14 @@ void runScanPass(uint32_t dwellMs) {
       discoveredChannel = (uint8_t)WiFi.channel(bestIdx);
       hasDiscoveredAp = true;
     }
+  }
+  if (debugMode) {
+    appLogger.log(String("[WIFI-DEBUG] scan dwell_ms=") + dwellMs +
+                  " duration_ms=" + scanMs +
+                  " networks=" + networkCount +
+                  " matches=" + matchCount +
+                  " best_rssi=" + (bestIdx >= 0 ? String(bestRssi) : String("n/a")) +
+                  " best_channel=" + (bestIdx >= 0 ? String(discoveredChannel) : String("n/a")));
   }
   WiFi.scanDelete();
 }
@@ -190,8 +213,20 @@ bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFall
   runScanPass(scanDwellMs);
   startWifiBegin(useHintFallback);
 
+  wl_status_t lastStatus = WiFi.status();
+  if (debugMode) {
+    appLogger.log(String("[WIFI-DEBUG] connect loop start status=") +
+                  wifiStatusToString(lastStatus));
+  }
   while (millis() - startMs < CONNECT_TIMEOUT_MS) {
     wl_status_t status = WiFi.status();
+    if (debugMode && status != lastStatus) {
+      appLogger.log(String("[WIFI-DEBUG] status change path=") + pathName +
+                    " " + wifiStatusToString(lastStatus) +
+                    " -> " + wifiStatusToString(status) +
+                    " at_ms=" + (millis() - startMs));
+      lastStatus = status;
+    }
     if (status == WL_CONNECTED) {
       unsigned long elapsedMs = millis() - startMs;
       uint8_t ch = WiFi.channel();
@@ -403,11 +438,23 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   // --- WiFi is connected. Acquire operation lock. ---
   // Use a generous timeout: the current lock holder is doing an HTTP request
   // (max ~3.5s). We queue behind it rather than failing.
+  unsigned long lockWaitStartMs = millis();
   ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_CONNECTED_MS);
   if (!lock.acquired()) {
     errorMessage = "WiFi operation busy; lock timeout";
     httpCode = 0;
+    if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] op lock timeout path=") + path +
+                    " waited_ms=" + (millis() - lockWaitStartMs));
+    }
     return false;
+  }
+  if (debugMode) {
+    unsigned long lockWaitMs = millis() - lockWaitStartMs;
+    if (lockWaitMs > 10) {
+      appLogger.log(String("[WIFI-DEBUG] op lock acquired path=") + path +
+                    " waited_ms=" + lockWaitMs);
+    }
   }
 
   // Verify WiFi is still connected after acquiring the lock.
@@ -419,6 +466,10 @@ bool fetchInverterData(const String& method, const String& path, const String& b
       errorMessage = "WiFi dropped before HTTP request";
     }
     httpCode = 0;
+    if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] WiFi dropped before HTTP path=") + path +
+                    " status=" + wifiStatusToString(WiFi.status()));
+    }
     return false;
   }
 
@@ -455,7 +506,25 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   if (code <= 0) {
     errorMessage = method + ' ' + path + " failed: " + http.errorToString(code);
     http.end();
-    powerDownWifiRadio();
+    // IMPORTANT: do NOT power down the radio here. HTTP-layer failures
+    // (read timeout, connection refused, etc.) do not mean WiFi itself
+    // is broken. If we shut the radio down on every HTTP error, the next
+    // request must run a full scan+associate cycle (5-50s), which causes
+    // queued retries to time out and feed back into more radio shutdowns.
+    // Only powerDownWifiRadio() when WiFi itself disconnects.
+    wl_status_t status = WiFi.status();
+    if (status != WL_CONNECTED) {
+      if (debugMode) {
+        appLogger.log(String("[WIFI-DEBUG] HTTP failure with WiFi down path=") + path +
+                      " status=" + wifiStatusToString(status) +
+                      " err=" + errorMessage);
+      }
+      powerDownWifiRadio();
+    } else if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] HTTP failure but WiFi up path=") + path +
+                    " code=" + code +
+                    " err=" + errorMessage);
+    }
     return false;
   }
 

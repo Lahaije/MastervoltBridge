@@ -153,8 +153,8 @@ void InverterMonitor::runPollingTask() {
   while (true) {
     bool iterationOk = false;
 
-    // fetchInverterData(waitForConnection=true) handles WiFi connect/wait
-    // internally via the connection worker. No need to pre-check.
+    // fetchInverterData(waitForConnection=true) blocks until the connection
+    // worker has established WiFi, then performs the HTTP request.
     String rawResponse;
     String errorMessage;
     int httpCode = 0;
@@ -178,7 +178,9 @@ void InverterMonitor::runPollingTask() {
         }
         iterationOk = true;
 
-        // Check timer FIRST (queues MAX if expired) so apply sends it now.
+        // After a successful poll, first check whether the auto-reset timer
+        // has expired. If it has, queue a MAX request. Then deliver any
+        // pending power command in the same iteration.
         checkPowerLimitResetTimer();
         applyPendingPowerCommand();
       } else {

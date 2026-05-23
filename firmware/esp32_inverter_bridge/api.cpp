@@ -216,7 +216,7 @@ void handleApiClient(EthernetClient& client) {
         String response = JsonBuilder()
           .addNumber("requested_power_watts", String(requestedPower))
           .addString("status", "queued")
-          .addString("message", "Command queued; will be delivered when inverter is reachable")
+          .addString("message", "Inverter unreachable; command queued for retry")
           .build();
         sendHttpResponse(client, 202, "application/json", response);
       } else {

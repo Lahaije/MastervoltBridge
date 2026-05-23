@@ -34,6 +34,7 @@ This skill is self-contained in one folder:
 - SKILL.md: usage guide and expected outputs
 - analyze_and_plot.py: one-pass fetch + analyze + plot (fast path for generic requests)
 - analyze_bridge_logs.py: fetch + parse + summarize WiFi connection attempts, poll stats, power readings, and disconnection episodes
+- analyze_logs_snapshot.py: compare an archived pre-disconnect snapshot with current live logs
 - plot_power.py: fetch logs and save a power-vs-time PNG chart to `output/` (git-ignored)
 - show_all.py: convenience script to dump all entries in chronological order
 
@@ -128,6 +129,20 @@ Plot behavior notes:
 - Post-backoff episode labels are thinned for readability in dense retry regions.
 
 **Requires**: `matplotlib` — install once with `uv pip install matplotlib`.
+
+### 5. Compare an Archived Snapshot with Live Logs
+Use the newest archived `output/logs_before_disconnect_*.json` snapshot to compare a pre-disconnect log capture against the current live `/api/logs` buffer:
+```powershell
+python skills/log-analysis/analyze_logs_snapshot.py
+```
+
+Custom bridge URL or snapshot location:
+```powershell
+python skills/log-analysis/analyze_logs_snapshot.py --base-url http://192.168.1.48:8080
+python skills/log-analysis/analyze_logs_snapshot.py --snapshot-dir output --snapshot-glob logs_before_disconnect_*.json
+```
+
+This is the best choice when you already have an archived snapshot and want to know whether the live buffer shows a reboot, gap, or crash-like reset pattern.
 
 ## What The Scripts Report
 

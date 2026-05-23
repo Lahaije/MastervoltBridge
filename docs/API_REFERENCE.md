@@ -85,7 +85,7 @@ Response fields:
 | `power_limit.desired` | number | Latest requested power limit (W) |
 | `power_limit.confirmed` | number | Last power limit confirmed by inverter (W) |
 | `power_limit.queued` | bool | true when a power command is waiting for delivery |
-| `power_limit.reset_timer_minutes` | number | Whole minutes until auto-reset to max (0 = inactive/elapsed) |
+| `power_limit.reset_timer_minutes` | number | Whole minutes until auto-reset to max, derived from `POWER_LIMIT_RESET_MINUTES` (0 = inactive/elapsed) |
 
 Typical failure when inverter is unavailable:
 
@@ -105,7 +105,7 @@ Validation:
 Responses:
 
 - 200 when command is delivered immediately
-- 202 when command is queued because inverter WiFi is currently unavailable
+- 202 when command is queued because inverter WiFi is currently unavailable (the bridge keeps retrying for up to 5 minutes)
 - 400 on invalid input
 - 502 on immediate inverter communication failure when command could not be queued
 
@@ -115,7 +115,7 @@ Successful immediate response example:
 
 Queued response example:
 
-{"requested_power_watts":1200,"status":"queued","message":"Command queued; will be delivered when inverter is reachable"}
+{"requested_power_watts":1200,"status":"queued","message":"Inverter unreachable; command queued for retry"}
 
 ## POST /api/polling
 

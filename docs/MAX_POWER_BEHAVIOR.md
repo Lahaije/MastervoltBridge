@@ -9,6 +9,7 @@ This document describes the exact implemented behavior for power-limit commands 
 - Confirmed power: last power value confirmed by inverter (`confirmedPowerLimit`)
 - Queued command: pending command waiting for inverter reachability (`powerCommandQueued`)
 - Reset timer: absolute deadline for auto-reset (`powerLimitResetAtMs`)
+- Reset delay setting: `POWER_LIMIT_RESET_MINUTES` (minutes)
 
 ## User Command Flow (`POST /api/power`)
 
@@ -18,8 +19,7 @@ Input validation:
 
 If valid, `setPower()`:
 1. Updates desired state.
-2. If request is sub-max (`power < max`), arms or extends timer:
-   - `powerLimitResetAtMs = now + POWER_LIMIT_RESET_MINUTES`
+2. If request is sub-max (`power < max`), arms or extends timer using `POWER_LIMIT_RESET_MINUTES`.
 3. If request is max (`power == max`), does not modify timer.
 4. Attempts immediate inverter POST.
 

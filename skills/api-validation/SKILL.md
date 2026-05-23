@@ -46,6 +46,22 @@ python skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
 
 Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 
+### Stateful inverter round-trip test
+
+Use this when you want a step-by-step live exercise of the polling and power-control path. It prints every action to the terminal, captures the original polling frequency and power limit, reads the current inverter power, applies an 80% limit based on that measured power, probes the read-only endpoints while the setting settles, then verifies the delivered limit and restores the original settings.
+
+```powershell
+python skills/api-validation/test_inverter_endpoints.py
+```
+
+Custom bridge URL or longer wait:
+
+```powershell
+python skills/api-validation/test_inverter_endpoints.py --base-url http://192.168.1.48:8080 --wait-seconds 3
+```
+
+This script is stateful and should be used when you explicitly want to mutate the inverter power limit during testing.
+
 ---
 
 ## What the Script Checks

@@ -23,6 +23,10 @@ Purpose:
   - `/pulse` forced reconnect
   - `/wifi/off` single-press operation
 
+Behavior:
+- `fetchInverterData(..., waitForConnection=true)` blocks until the connection worker has established WiFi, then waits for the operation lock.
+- `fetchInverterData(..., waitForConnection=false)` triggers the connection worker in the background and returns immediately if WiFi is down.
+
 Guard helper:
 - `ScopedWifiOperationLock`
 
