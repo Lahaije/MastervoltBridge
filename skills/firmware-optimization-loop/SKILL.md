@@ -39,12 +39,17 @@ No manual trigger is needed to collect data. Simply let the bridge run for sever
 
 ## Loop Phases
 
+**Important**: The venv MUST be activated first in every terminal session before running any Python command:
+```powershell
+& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+```
+
 ### Phase 1: Baseline
 1. Confirm device and API reachability.
 2. Let the bridge run for at least 5-10 polling intervals (100-200 seconds).
 3. Collect baseline metrics:
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+python skills/log-analysis/analyze_bridge_logs.py
 ```
 Save baseline: success rate, min/avg/max/median connect time per path, timeout count.
 
@@ -64,12 +69,12 @@ Avoid mixing multiple independent experiments in one iteration.
 ### Phase 3: Compile and Upload
 Use the firmware-upload skill:
 ```powershell
-.venv\Scripts\python skills/firmware-upload/upload_firmware.py
+python skills/firmware-upload/upload_firmware.py
 ```
 
 Or skip compilation when only re-flashing:
 ```powershell
-.venv\Scripts\python skills/firmware-upload/upload_firmware.py --skip-compile
+python skills/firmware-upload/upload_firmware.py --skip-compile
 ```
 
 The script detects the ESP32 on COM9 before uploading and exits with a clear
@@ -82,7 +87,7 @@ Hard requirement:
 1. Wait for several polling intervals after upload (each 20s).
 2. Run log analysis:
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+python skills/log-analysis/analyze_bridge_logs.py
 ```
 3. Verify behavior expectations:
    - endpoint behavior unchanged (`/api/info` returns telemetry, `/api/health` shows wifi_connected true)

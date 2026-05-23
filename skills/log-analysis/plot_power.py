@@ -54,18 +54,32 @@ def build_plot(
         print("No poll data to plot.")
         return
 
-    # X in minutes, Y in watts
-    times_min = [p.timestamp_ms / 60_000 for p in polls]
-    powers_w = [p.power_w for p in polls]
-
-    # Keep image dimensions moderate so chat/image viewers do not clip wide renders.
-    fig, ax = plt.subplots(figsize=(11, 5.5))
-    fig.patch.set_facecolor("#1a1a2e")
-    ax.set_facecolor("#16213e")
+    # X in minutes, Y in watts — inject 0W during backoff gaps
+    times_min: list[float] = []
+    powers_w: list[float] = []
 
     first_backoff_ts = None
     if backoff_events:
         first_backoff_ts = min(ev.timestamp_ms for ev in backoff_events)
+
+    for i, p in enumerate(polls):
+        if i > 0 and first_backoff_ts is not None:
+            prev = polls[i - 1]
+            gap_ms = p.timestamp_ms - prev.timestamp_ms
+            # If gap > 60s and falls after first backoff event, insert 0W boundaries
+            if gap_ms > 60_000 and prev.timestamp_ms >= first_backoff_ts:
+                times_min.append((prev.timestamp_ms + 1000) / 60_000)
+                powers_w.append(0.0)
+                times_min.append((p.timestamp_ms - 1000) / 60_000)
+                powers_w.append(0.0)
+        times_min.append(p.timestamp_ms / 60_000)
+        powers_w.append(p.power_w)
+
+    # Keep image dimensions moderate so chat/image viewers do not clip wide renders.
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.10)
+    fig.patch.set_facecolor("#1a1a2e")
+    ax.set_facecolor("#16213e")
 
     # --- Disconnection episode bands ---
     post_backoff_labels_seen = 0
@@ -162,7 +176,7 @@ def build_plot(
     ax.tick_params(colors="#90a4ae")
     for spine in ax.spines.values():
         spine.set_edgecolor("#37474f")
-    ax.set_xlim(left=0)
+    ax.set_xlim(left=times_min[0] - 0.5)
     ax.set_ylim(bottom=0)
     ax.grid(True, color="#263238", linewidth=0.6, zorder=0)
 
@@ -176,9 +190,8 @@ def build_plot(
         loc="upper right",
     )
 
-    plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=130, bbox_inches="tight")
+    fig.savefig(out_path, dpi=130)
     print(f"Saved plot → {out_path}")
 
     if show:

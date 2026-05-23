@@ -8,7 +8,8 @@
 const char* INVERTER_WIFI_SSID = "mastervolt-soladin-0103";
 const char* INVERTER_WIFI_PASSWORD = "";
 const bool INVERTER_WIFI_AP_HINT_ENABLED = true;
-const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL = 1;
+const uint8_t INVERTER_WIFI_AP_HINT_CHANNELS[] = {1, 6, 11};
+const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL_COUNT = sizeof(INVERTER_WIFI_AP_HINT_CHANNELS);
 const uint8_t INVERTER_WIFI_AP_HINT_BSSID[6] = {0x00, 0x06, 0x66, 0x9D, 0xE0, 0x36};
 
 const char* INVERTER_HOST = "10.0.0.1";

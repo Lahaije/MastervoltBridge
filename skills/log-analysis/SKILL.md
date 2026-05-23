@@ -39,78 +39,85 @@ This skill is self-contained in one folder:
 
 ## Primary Commands
 
-Run from repository root:
+Run from repository root. **The venv MUST be activated first in every terminal session:**
+
+```powershell
+# Activate venv (required once per terminal session — always do this first)
+& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+```
+
+After activation, use plain `python` for all commands below.
 
 ### 1. Show All Log Entries (Chronological)
 Quick dump of every log entry since boot with formatted timestamps:
 ```powershell
-.venv\Scripts\python skills/log-analysis/show_all.py
+python skills/log-analysis/show_all.py
 ```
 
 With custom bridge URL:
 ```powershell
-.venv\Scripts\python skills/log-analysis/show_all.py --base-url http://192.168.1.48:8080
+python skills/log-analysis/show_all.py --base-url http://192.168.1.48:8080
 ```
 
 Faster scoped views (recommended for large buffers):
 ```powershell
-.venv\Scripts\python skills/log-analysis/show_all.py --limit 200
-.venv\Scripts\python skills/log-analysis/show_all.py --since-ms 300000
+python skills/log-analysis/show_all.py --limit 200
+python skills/log-analysis/show_all.py --since-ms 300000
 ```
 
 ### 2. Analyze + Plot (One Pass, Fast Path)
 Run analysis and generate the power plot from one `/api/logs` fetch:
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_and_plot.py
+python skills/log-analysis/analyze_and_plot.py
 ```
 
 With filters (faster on busy systems):
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_and_plot.py --limit 400
-.venv\Scripts\python skills/log-analysis/analyze_and_plot.py --since-ms 300000
+python skills/log-analysis/analyze_and_plot.py --limit 400
+python skills/log-analysis/analyze_and_plot.py --since-ms 300000
 ```
 
 ### 3. Analyze WiFi Connection Attempts
 Full analysis including session summary, power stats, disconnection episodes, and A/B path breakdown:
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+python skills/log-analysis/analyze_bridge_logs.py
 ```
 
 Show all entries plus full analysis:
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py --print-all
+python skills/log-analysis/analyze_bridge_logs.py --print-all
 ```
 
 Custom bridge target and save raw logs to JSON:
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py --base-url http://192.168.1.48:8080 --save-json logs/latest_bridge_logs.json
+python skills/log-analysis/analyze_bridge_logs.py --base-url http://192.168.1.48:8080 --save-json logs/latest_bridge_logs.json
 ```
 
 Filter entries since a specific millisecond offset (e.g., events after 5 minutes uptime):
 ```powershell
-.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py --since-ms 300000
+python skills/log-analysis/analyze_bridge_logs.py --since-ms 300000
 ```
 
 ### 4. Plot Power Output
 Generate a PNG chart of power (W) vs elapsed time, with disconnection episodes shown as shaded bands and explicit backoff transition markers:
 ```powershell
-.venv\Scripts\python skills/log-analysis/plot_power.py
+python skills/log-analysis/plot_power.py
 ```
 
 Open the plot window after saving:
 ```powershell
-.venv\Scripts\python skills/log-analysis/plot_power.py --show
+python skills/log-analysis/plot_power.py --show
 ```
 
 Custom output path or bridge URL:
 ```powershell
-.venv\Scripts\python skills/log-analysis/plot_power.py --base-url http://192.168.1.48:8080 --out output/today.png
+python skills/log-analysis/plot_power.py --base-url http://192.168.1.48:8080 --out output/today.png
 ```
 
 Filter to last N entries or a time window:
 ```powershell
-.venv\Scripts\python skills/log-analysis/plot_power.py --since-ms 300000
-.venv\Scripts\python skills/log-analysis/plot_power.py --limit 200
+python skills/log-analysis/plot_power.py --since-ms 300000
+python skills/log-analysis/plot_power.py --limit 200
 ```
 
 Output is saved to `output/powerplot.png` by default and overwritten each run. The `output/` folder is git-ignored.

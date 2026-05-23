@@ -13,8 +13,15 @@ namespace {
 
 constexpr uint32_t WIFI_CONNECT_POLL_MS = 250;
 constexpr uint32_t WIFI_LOCK_TIMEOUT_MS = 50;
-constexpr uint32_t CONNECT_TIMEOUT_MS = 8000;
+constexpr uint32_t CONNECT_TIMEOUT_MS = 7000;
 constexpr uint32_t SCAN_SETTLE_MS = 100;
+
+// Retry settings for ensureConnected(): pulse once, then try connecting up to
+// MAX_CONNECT_RETRIES times (alternating dwell/auto) before returning failure.
+// This avoids re-pulsing the inverter button on every attempt, which could
+// toggle the WiFi back OFF.
+constexpr int MAX_CONNECT_RETRIES = 3;
+constexpr uint32_t RETRY_PAUSE_MS = 500;
 
 // Dwell path: short scan dwell, hint fallback enabled.
 constexpr uint32_t DWELL_SCAN_DWELL_MS = 200;
@@ -31,9 +38,9 @@ uint8_t discoveredBssid[6] = {0};
 uint8_t discoveredChannel = 0;
 bool hasDiscoveredAp = false;
 
-// Optional configured AP hint from settings (expected inverter channel+BSSID).
+// Optional configured AP hint from settings (expected inverter channels+BSSID).
 uint8_t configuredHintBssid[6] = {0};
-uint8_t configuredHintChannel = 0;
+uint8_t hintChannelIndex = 0;
 bool hasConfiguredHint = false;
 
 class ScopedWifiOperationLock {
@@ -110,14 +117,12 @@ bool acquireConnectedWifi(ScopedWifiOperationLock& lock) {
 
 void initializeConfiguredHint() {
   hasConfiguredHint = INVERTER_WIFI_AP_HINT_ENABLED &&
-                      INVERTER_WIFI_AP_HINT_CHANNEL > 0 &&
-                      INVERTER_WIFI_AP_HINT_CHANNEL <= 14;
+                      INVERTER_WIFI_AP_HINT_CHANNEL_COUNT > 0;
   if (!hasConfiguredHint) {
-    configuredHintChannel = 0;
     memset(configuredHintBssid, 0, sizeof(configuredHintBssid));
     return;
   }
-  configuredHintChannel = INVERTER_WIFI_AP_HINT_CHANNEL;
+  hintChannelIndex = 0;
   memcpy(configuredHintBssid, INVERTER_WIFI_AP_HINT_BSSID, sizeof(configuredHintBssid));
 }
 
@@ -164,7 +169,9 @@ void startWifiBegin(bool useHintFallback) {
   if (hasDiscoveredAp) {
     WiFi.begin(INVERTER_WIFI_SSID, pass, discoveredChannel, discoveredBssid);
   } else if (useHintFallback && hasConfiguredHint) {
-    WiFi.begin(INVERTER_WIFI_SSID, pass, configuredHintChannel, configuredHintBssid);
+    uint8_t ch = INVERTER_WIFI_AP_HINT_CHANNELS[hintChannelIndex];
+    hintChannelIndex = (hintChannelIndex + 1) % INVERTER_WIFI_AP_HINT_CHANNEL_COUNT;
+    WiFi.begin(INVERTER_WIFI_SSID, pass, ch, configuredHintBssid);
   } else if (pass == nullptr) {
     WiFi.begin(INVERTER_WIFI_SSID);
   } else {
@@ -266,11 +273,21 @@ bool WifiConnectionManager::ensureConnected() {
   if (isWifiConnected()) {
     return true;
   }
-  // Inverter WiFi is typically asleep; wake it with a button-press pulse
-  // before the scan/connect attempt. Total cost is ~500ms which leaves the
-  // full 8s connect window inside runConnectPath untouched.
+  // Inverter WiFi is typically asleep; wake it with a double-press pulse
+  // (OFF → ON). We pulse once, then retry the connect up to
+  // MAX_CONNECT_RETRIES times WITHOUT pulsing again — the inverter may
+  // simply need more time to become scannable after the initial wake.
+  // Re-pulsing on every retry risks toggling the inverter WiFi back OFF.
   triggerPulseSequence();
-  return connectUsingNextPath();
+
+  for (int attempt = 0; attempt < MAX_CONNECT_RETRIES; attempt++) {
+    if (connectUsingNextPath()) {
+      return true;
+    }
+    // Brief pause before the next scan/connect attempt (no pulse).
+    vTaskDelay(pdMS_TO_TICKS(RETRY_PAUSE_MS));
+  }
+  return false;
 }
 
 bool WifiConnectionManager::forceReconnect() {

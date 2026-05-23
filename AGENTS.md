@@ -137,12 +137,32 @@ bool fetchPath(const String& path, String& responseBody, int& httpCode, String& 
 .venv\Scripts\python skills/firmware-upload/upload_firmware.py
 
 # Direct arduino-cli:
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/esp32_inverter_bridge
-arduino-cli upload  --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverter_bridge
+arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc firmware/esp32_inverter_bridge
+arduino-cli upload  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc --port COM9 firmware/esp32_inverter_bridge
 ```
 
-**Agent policy**: Agents may compile and upload when needed (FQBN `esp32:esp32:esp32s3`, port `COM9`) unless the user says not to.  
+**Agent policy**: Agents may compile and upload when needed (FQBN `esp32:esp32:esp32s3:CDCOnBoot=cdc`, port `COM9`) unless the user says not to.  
 See `docs/SETUP_README.md` for library prerequisites and IDE setup.
+
+## Python Environment
+
+All Python scripts require the project venv. **Always activate the venv before running Python commands in a terminal:**
+
+```powershell
+# Activate venv (required in every new terminal session)
+& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+
+# Then run scripts normally:
+python skills/log-analysis/plot_power.py
+python skills/firmware-upload/upload_firmware.py
+```
+
+**Key packages** (install via `uv pip install <pkg>` if missing):
+- `requests` — HTTP calls to bridge API
+- `matplotlib` — power plots (`plot_power.py`, `analyze_and_plot.py`)
+- `pyserial` — serial monitor on COM9
+
+**Common mistake**: Opening a new terminal and running `python ...` without activating the venv first. The system Python won't have the project dependencies.
 
 ## Common Tasks
 
@@ -190,6 +210,10 @@ Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.m
 4. **502 = WiFi not connected** (usually). Check `/api/health` first; `/api/info` also returns 502 for ~20 s after boot until first poll completes.
 5. **Pulse state machine**: single press toggles WiFi. `/wifi/off` = one press (OFF). `/pulse` = double-press (OFF→ON). Calling `/pulse` while connected will disconnect then reconnect.
 6. **Power limit**: `setPower()` validates 0–`INVERTER_MAX_POWER_WATTS` before the HTTP request.
+7. **ENC28J60 crash on dead TCP write**: Writing to a disconnected `EthernetClient` via UIPEthernet crashes the device. Always check `client.connected()` before `client.write()` in streaming responses (see `sendLogsResponse()` abort guard).
+8. **CDCOnBoot=cdc resets on serial open**: Opening COM9 with DTR=true resets the ESP32. Use `dsrdtr=False, dtr=False` in pyserial to monitor without reset.
+9. **Changing FQBN flags triggers full rebuild**: Adding/removing flags like `CDCOnBoot=cdc` causes a ~5 min full core recompile. Same flags = fast incremental build (~20s).
+10. **Venv activation required**: Every new terminal needs `.venv\Scripts\Activate.ps1` before running Python scripts. Without it, `ModuleNotFoundError` for `requests`, `matplotlib`, `serial`, etc.
 
 ## Performance
 
@@ -202,6 +226,7 @@ Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.m
 | Polling interval | 20 s |
 | HTTP request timeout | 3.5 s |
 | API response (cached data) | <100 ms |
+| `/api/logs` (1000 entries, 58 KB) | ~7.5 s |
 | Heap used / available | ~65 KB used / ~300 KB free |
 
 ## File Map

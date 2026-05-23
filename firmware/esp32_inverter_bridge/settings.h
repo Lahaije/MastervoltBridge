@@ -13,10 +13,11 @@ extern const char* INVERTER_HOST;
 extern const uint16_t API_PORT;
 
 // Optional AP hint to speed up WiFi association.
-// When enabled, the bridge attempts directed association to this channel+BSSID
-// before falling back to normal SSID scanning behavior.
+// When enabled, the bridge attempts directed association to known channels+BSSID
+// (rotating through the list) before falling back to normal SSID scanning behavior.
 extern const bool INVERTER_WIFI_AP_HINT_ENABLED;
-extern const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL;
+extern const uint8_t INVERTER_WIFI_AP_HINT_CHANNELS[];
+extern const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL_COUNT;
 extern const uint8_t INVERTER_WIFI_AP_HINT_BSSID[6];
 
 // ENC28J60 SPI pin mapping

@@ -20,20 +20,29 @@ This skill is **read-only** — it does not trigger `/pulse`, `/wifi/off`, or an
 
 ## Primary Command
 
+Run from the repository root. **The venv MUST be activated first in every terminal session:**
+
 ```powershell
-.venv\Scripts\python skills/strategy-comparison/compare_strategies.py
+# Activate venv (required once per terminal session — always do this first)
+& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+```
+
+After activation, use plain `python` for all commands below.
+
+```powershell
+python skills/strategy-comparison/compare_strategies.py
 ```
 
 Save result as JSON (for trend tracking across sessions):
 
 ```powershell
-.venv\Scripts\python skills/strategy-comparison/compare_strategies.py --save-json results/comparison.json
+python skills/strategy-comparison/compare_strategies.py --save-json results/comparison.json
 ```
 
 Custom bridge URL or minimum sample threshold:
 
 ```powershell
-.venv\Scripts\python skills/strategy-comparison/compare_strategies.py --base-url http://192.168.1.48:8080 --min-samples 20
+python skills/strategy-comparison/compare_strategies.py --base-url http://192.168.1.48:8080 --min-samples 20
 ```
 
 ---
