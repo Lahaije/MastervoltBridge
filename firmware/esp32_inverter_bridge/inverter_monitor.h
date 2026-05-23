@@ -102,6 +102,12 @@ private:
   // Returns false if the mutex could not be acquired within 5 s.
   bool incrementCounterLocked(uint32_t& counter);
 
+  // After a long inverter disconnect, queue a MAX-power command so the
+  // polling loop will (re)assert it on recovery. The actual delivery and
+  // retry-on-failure is handled by applyPendingPowerCommand(). Idempotent:
+  // if the inverter is already at MAX nothing is queued.
+  void queueMaxPowerAfterLongDisconnect(uint32_t streakMs);
+
   // Private state
   TaskHandle_t pollingTaskHandle = nullptr;
   SemaphoreHandle_t dataMutex = nullptr;

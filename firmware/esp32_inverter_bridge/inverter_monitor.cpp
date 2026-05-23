@@ -43,6 +43,13 @@ static const BackoffStage BACKOFF_STAGES[] = {
 };
 static constexpr size_t BACKOFF_STAGE_COUNT = sizeof(BACKOFF_STAGES) / sizeof(BACKOFF_STAGES[0]);
 
+// A failure streak this long counts as a "long disconnect". On recovery the
+// monitor will force a power-limit reset to MAX because the inverter may have
+// rebooted / forgotten our last setting, and we cannot read the current limit
+// back from it. Matches the first backoff threshold so any time we entered
+// reduced polling, we re-arm to MAX on the next successful poll.
+static constexpr uint32_t LONG_DISCONNECT_THRESHOLD_MS = 5u * 60u * 1000u;
+
 static uint32_t getBackoffIntervalMs(uint32_t failedForMs, uint32_t baseIntervalMs) {
   if (failedForMs < BACKOFF_STAGES[0].after_failure_ms) {
     return baseIntervalMs;
@@ -195,7 +202,17 @@ void InverterMonitor::runPollingTask() {
     // Update failure streak tracking and compute next sleep interval.
     if (iterationOk) {
       if (failureStartMs != 0) {
-        appLogger.log("[INVERTER-MONITOR] Inverter recovered; resuming normal poll interval");
+        uint32_t streakMs = millis() - failureStartMs;
+        appLogger.log(String("[INVERTER-MONITOR] Inverter recovered after ") +
+                      (streakMs / 1000) + "s; resuming normal poll interval");
+        if (streakMs >= LONG_DISCONNECT_THRESHOLD_MS) {
+          // Long disconnect: inverter state is unknown (it may have rebooted
+          // or its power-limit timeout may have expired during the outage).
+          // Force a MAX-power reset and let applyPendingPowerCommand deliver
+          // it on this iteration / retry on subsequent polls until accepted.
+          queueMaxPowerAfterLongDisconnect(streakMs);
+          applyPendingPowerCommand();
+        }
         failureStartMs = 0;
       }
       lastIntervalMs = getPollingIntervalMs();
@@ -456,6 +473,36 @@ void InverterMonitor::checkPowerLimitResetTimer() {
   powerCommandQueued = true;
   // applyPendingPowerCommand runs immediately after this in the polling loop
   // and will send the actual POST /power.
+}
+
+void InverterMonitor::queueMaxPowerAfterLongDisconnect(uint32_t streakMs) {
+  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+  if (!lock.acquired()) return;
+
+  // If a user-initiated command is currently queued (e.g. someone POSTed
+  // /api/power while we were disconnected), respect it; the user's intent
+  // wins over the defensive max-reset.
+  if (powerCommandQueued && !timerTriggeredReset) {
+    appLogger.log(String("[INVERTER-MONITOR] Recovery after ") + (streakMs / 1000) +
+                  "s: user power command still queued, not overriding with MAX");
+    return;
+  }
+
+  // Already known to be at MAX with no pending change — nothing to do.
+  if (confirmedPowerLimit == INVERTER_MAX_POWER_WATTS &&
+      desiredPowerLimit == INVERTER_MAX_POWER_WATTS &&
+      !powerCommandQueued) {
+    return;
+  }
+
+  appLogger.log(String("[INVERTER-MONITOR] Recovery after ") + (streakMs / 1000) +
+                "s: queuing MAX power reset (inverter state unknown)");
+
+  desiredPowerLimit = INVERTER_MAX_POWER_WATTS;
+  desiredPowerSetAtMs = millis();
+  timerTriggeredReset = true;   // exempt from POWER_COMMAND_EXPIRY_MS so it keeps retrying
+  powerCommandQueued = true;
+  powerLimitResetAtMs = 0;      // clear any pending auto-reset; we're resetting now
 }
 
 bool InverterMonitor::fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage) {
