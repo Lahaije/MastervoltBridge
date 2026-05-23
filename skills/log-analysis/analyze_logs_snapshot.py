@@ -13,13 +13,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL
 
-DEFAULT_BASE_URL = "http://192.168.1.48:8080"
+
+DEFAULT_BASE_URL = BRIDGE_BASE_URL
 DEFAULT_SNAPSHOT_GLOB = "logs_before_disconnect_*.json"
 
 

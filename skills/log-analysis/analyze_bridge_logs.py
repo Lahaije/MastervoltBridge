@@ -7,12 +7,18 @@ It extracts [WIFI-CONNECT] start/complete pairs and prints per-path
 (dwell vs auto) reliability and timing summaries, and a session summary
 including power readings and disconnection episode breakdown.
 
-Log format expected (produced by wifi_bridge.cpp):
+Log format expected (produced by wifi_bridge.cpp and inverter_monitor.cpp):
   [WIFI-CONNECT] start path=<dwell|auto> scan_dwell_ms=<N> hint_fallback=<0|1>
   [WIFI-CONNECT] complete path=<dwell|auto> duration_ms=<N> result=<success|timeout> ...
   [INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW
-  [INVERTER-MONITOR] No WiFi connection; skipping poll iteration
-  [INVERTER-MONITOR] Inverter recovered; resuming normal poll interval
+  [INVERTER-MONITOR] Failed to fetch /home: <error>
+  [INVERTER-MONITOR] Link state: FROM -> TO (streak=<N>s, interval=<N>s)
+  [INVERTER-MONITOR] Recovery after <N>s: queuing MAX power reset (inverter state unknown)
+
+Link state values: STARTING / ONLINE / RETRYING / BACKOFF / DORMANT.
+The `BackoffEvent` history captures only transitions whose new state has
+an escalated retry cadence (BACKOFF=60s, DORMANT=600s); other transitions
+are logged by the firmware but not surfaced here.
 
 Timestamp format used throughout: Xm SS.sss  (e.g. 4m 05.123)
 This matches the format produced by format_ms() and is the preferred way
@@ -30,6 +36,9 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL  # noqa: E402
 
 
 def format_ms(ms: int) -> str:
@@ -175,11 +184,27 @@ def parse_attempts(entries: List[Dict]) -> List[Attempt]:
 
 # Poll regex: "[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW"
 _POLL_RE = re.compile(r"\[INVERTER-MONITOR\] Poll #(\d+): Status=(\S+) Power=([\d.]+)W")
-_BACKOFF_RE = re.compile(r"\[INVERTER-MONITOR\] Backoff: retry interval -> (\d+)s")
+
+# Link-state transition regex (firmware: inverter_monitor.cpp -> runPollingTask).
+# Example: "[INVERTER-MONITOR] Link state: BACKOFF -> ONLINE (streak=1247s, interval=20s)"
+_LINK_STATE_RE = re.compile(
+    r"\[INVERTER-MONITOR\] Link state: (\w+) -> (\w+) "
+    r"\(streak=(\d+)s, interval=(\d+)s\)"
+)
+
+# States whose retry cadence is considered "escalated backoff" for plotting
+# and session-summary purposes.
+_BACKOFF_STATES = {"BACKOFF", "DORMANT"}
 
 
 def parse_polls(entries: List[Dict]) -> Tuple[List[PollEntry], int]:
-    """Return (poll_entries, skipped_count) from log entries."""
+    """Return (poll_entries, skipped_count) from log entries.
+
+    `skipped_count` is retained for backward compatibility but is always 0
+    in current firmware: the polling task uses fetchInverterData with
+    waitForConnection=true and blocks until WiFi is up rather than logging
+    an explicit skip, so there is no per-iteration skip marker to count.
+    """
     polls: List[PollEntry] = []
     skipped = 0
     for e in entries:
@@ -193,20 +218,27 @@ def parse_polls(entries: List[Dict]) -> Tuple[List[PollEntry], int]:
                 status=m.group(2),
                 power_w=float(m.group(3)),
             ))
-        elif "No WiFi connection; skipping poll iteration" in msg:
-            skipped += 1
     return polls, skipped
 
 
 def parse_backoff_events(entries: List[Dict]) -> List[BackoffEvent]:
-    """Parse explicit backoff interval transition events."""
+    """Parse retry-cadence escalation events from link-state transitions.
+
+    Emits one BackoffEvent for every Link state transition whose new state
+    has an escalated retry cadence (BACKOFF -> 60s, DORMANT -> 600s). The
+    `interval_seconds` field preserves the previous schema so existing
+    plot/summary code keeps working.
+    """
     events: List[BackoffEvent] = []
     for e in entries:
         msg = str(e.get("message", ""))
         ts = int(e.get("timestamp_ms", 0))
-        m = _BACKOFF_RE.search(msg)
-        if m:
-            events.append(BackoffEvent(timestamp_ms=ts, interval_seconds=int(m.group(1))))
+        m = _LINK_STATE_RE.search(msg)
+        if not m:
+            continue
+        _from_state, to_state, _streak, interval = m.groups()
+        if to_state in _BACKOFF_STATES:
+            events.append(BackoffEvent(timestamp_ms=ts, interval_seconds=int(interval)))
     return events
 
 
@@ -367,7 +399,7 @@ def summarize(attempts: List[Attempt], episodes: List[Episode]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Acquire and analyze bridge logs from /api/logs")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080", help="Bridge base URL")
+    parser.add_argument("--base-url", default=BRIDGE_BASE_URL, help="Bridge base URL")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds")
     parser.add_argument("--save-json", default=None, help="Optional path to save fetched logs JSON")
     parser.add_argument("--since-ms", type=int, default=None, help="Only analyze entries at/after timestamp_ms")

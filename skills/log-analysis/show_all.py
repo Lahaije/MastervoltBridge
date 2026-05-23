@@ -13,6 +13,10 @@ import argparse
 import json
 import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL  # noqa: E402
 
 
 def format_ts(ms):
@@ -29,8 +33,8 @@ def main():
     )
     parser.add_argument(
         "--base-url",
-        default="http://192.168.1.48:8080",
-        help="Bridge base URL (default: http://192.168.1.48:8080)",
+        default=BRIDGE_BASE_URL,
+        help=f"Bridge base URL (default: {BRIDGE_BASE_URL})",
     )
     parser.add_argument(
         "--timeout",

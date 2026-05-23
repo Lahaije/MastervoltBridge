@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:
@@ -22,8 +23,11 @@ except ImportError:
     print("ERROR: 'requests' not installed. Run: uv pip install requests")
     sys.exit(1)
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL
 
-DEFAULT_BASE_URL = "http://192.168.1.48:8080"
+
+DEFAULT_BASE_URL = BRIDGE_BASE_URL
 
 
 def step(title: str) -> None:

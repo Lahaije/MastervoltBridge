@@ -1,6 +1,8 @@
 import requests, time
 
-BASE = "http://192.168.1.48:8080"
+from bridge_config import BRIDGE_BASE_URL
+
+BASE = BRIDGE_BASE_URL
 
 # Wait for natural recovery (up to 2 min)
 for i in range(12):

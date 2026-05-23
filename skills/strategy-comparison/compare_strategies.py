@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL  # noqa: E402
+
 
 # Minimum number of attempts per path before declaring a verdict reliable.
 DEFAULT_MIN_SAMPLES = 10
@@ -331,7 +334,7 @@ def build_json_result(dwell: PathStats, auto: PathStats) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare dwell vs auto WiFi connect strategies")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080")
+    parser.add_argument("--base-url", default=BRIDGE_BASE_URL)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--save-json", default=None, help="Save comparison result to JSON file")
     parser.add_argument("--min-samples", type=int, default=DEFAULT_MIN_SAMPLES,

@@ -12,6 +12,9 @@ import argparse
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL  # noqa: E402
+
 # Local imports from this skill folder
 _SKILL_DIR = Path(__file__).parent
 sys.path.insert(0, str(_SKILL_DIR))
@@ -30,7 +33,7 @@ from plot_power import build_plot  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fast one-pass log analysis + power plot")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080", help="Bridge base URL")
+    parser.add_argument("--base-url", default=BRIDGE_BASE_URL, help="Bridge base URL")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds")
     parser.add_argument("--since-ms", type=int, default=None, help="Only include entries at/after timestamp_ms")
     parser.add_argument("--limit", type=int, default=None, help="Only include last N entries")

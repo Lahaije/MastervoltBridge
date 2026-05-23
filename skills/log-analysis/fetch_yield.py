@@ -16,6 +16,10 @@ import argparse
 import json
 import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL  # noqa: E402
 
 
 def fetch_yield(base_url: str, timeout: float) -> int:
@@ -71,7 +75,7 @@ def fetch_yield(base_url: str, timeout: float) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fetch inverter daily/lifetime yield")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080", help="Bridge base URL")
+    parser.add_argument("--base-url", default=BRIDGE_BASE_URL, help="Bridge base URL")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds")
     args = parser.parse_args()
     return fetch_yield(args.base_url, args.timeout)

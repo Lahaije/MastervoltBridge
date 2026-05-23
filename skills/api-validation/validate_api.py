@@ -18,6 +18,7 @@ Exit code: 0 = all checks passed, 1 = one or more checks failed.
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 try:
@@ -25,6 +26,9 @@ try:
 except ImportError:
     print("ERROR: 'requests' not installed. Run: .venv\\Scripts\\python -m pip install requests")
     sys.exit(1)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bridge_config import BRIDGE_BASE_URL  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Documented API surface (source of truth for this script)
@@ -251,8 +255,8 @@ def print_summary(results: dict[str, bool]) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate ESP32 bridge API against documentation")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080",
-                        help="Base URL of the bridge (default: http://192.168.1.48:8080)")
+    parser.add_argument("--base-url", default=BRIDGE_BASE_URL,
+                        help=f"Base URL of the bridge (default: {BRIDGE_BASE_URL})")
     parser.add_argument("--verbose", action="store_true",
                         help="Print response keys and firmware endpoint list")
     args = parser.parse_args()
