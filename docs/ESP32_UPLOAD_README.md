@@ -24,11 +24,11 @@ arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverte
 
 ## Inverter Availability Caveat
 
-When inverter WiFi is unavailable, these endpoints should return 502:
+When inverter WiFi is unavailable:
 
-- /api/info
-- /api/power
-- /api/inverter/fetch
+- /api/info should return 502 (no cached telemetry yet)
+- /api/power should return 202 (command queued for retry)
+- /api/inverter/fetch should return 502
 
 This is expected and does not indicate upload failure.
 

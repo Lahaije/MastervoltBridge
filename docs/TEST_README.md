@@ -14,9 +14,10 @@ Validation guide for the ESP32 inverter bridge firmware.
 | Check | Expected |
 |---|---|
 | GET / | Endpoint discovery JSON |
+| GET /api/version | JSON with key: `firmware_version` |
 | GET /api/health | JSON with keys: `wifi_connected`, `wifi_ssid`, `wifi_ip`, `ethernet_ip`, `inverter_host`, `last_inverter_status`, `debug_mode` |
 | GET /api/logs | Array of log entries |
-| GET /api/info | Inverter telemetry (or 502 if inverter WiFi is off) |
+| GET /api/info | Inverter telemetry (or 502 if no cached telemetry yet) |
 
 ## Inverter-Dependent Endpoints
 
@@ -28,10 +29,13 @@ These require inverter WiFi to be reachable:
 
 If inverter is off or unavailable (e.g. after sunset), 502 responses are expected and do not indicate a firmware problem.
 
+`POST /api/power` should return 202 (queued) when inverter WiFi is down.
+
 ## Endpoint Verification After Flash
 
 ```
 curl http://192.168.1.48:8080/
+curl http://192.168.1.48:8080/api/version
 curl http://192.168.1.48:8080/api/health
 curl http://192.168.1.48:8080/api/logs
 curl -X POST http://192.168.1.48:8080/wifi/off
@@ -46,4 +50,5 @@ curl http://192.168.1.48:8080/pulse
 | /api/logs JSON decode errors | Truncated response | Verify logging is not excessive |
 | /pulse returns `reconnected: false` at night | Inverter WiFi unavailable | Rerun daytime |
 | /api/info returns 502 after boot | First poll not yet complete | Wait 20-30 s and retry |
+| /api/power returns 202 | Inverter WiFi unavailable, command queued | Expected; command will retry on future polls |
 | Connection timeouts in logs | Inverter WiFi module asleep | Bridge will auto-pulse on next attempt |

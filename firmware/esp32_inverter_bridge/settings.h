@@ -10,6 +10,7 @@ class Logger;
 extern const char* INVERTER_WIFI_SSID;
 extern const char* INVERTER_WIFI_PASSWORD;
 extern const char* INVERTER_HOST;
+extern const char* FIRMWARE_VERSION;
 extern const uint16_t API_PORT;
 
 // Optional AP hint to speed up WiFi association.
@@ -43,6 +44,13 @@ extern const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS;
 // Power management
 extern const uint32_t MAIN_LOOP_SLEEP_MS;
 extern const uint16_t INVERTER_MAX_POWER_WATTS;
+
+// Power limit auto-reset delay (minutes). After this duration without a new
+// sub-max power request, the inverter power limit is reset to maximum.
+extern const uint16_t POWER_LIMIT_RESET_MINUTES;
+
+// How long (ms) a queued power command remains active before expiring.
+extern const uint32_t POWER_COMMAND_EXPIRY_MS;
 
 // API server behavior
 extern const uint16_t API_CLIENT_TIMEOUT_MS;

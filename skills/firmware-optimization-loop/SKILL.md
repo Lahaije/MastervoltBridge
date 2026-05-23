@@ -25,14 +25,14 @@ Use this skill when optimizing firmware logic in:
   - FQBN: esp32:esp32:esp32s3
   - Port: COM9
 - Validation plan:
-  - Number of polling cycles to observe (each cycle is 20s)
+  - Number of polling cycles to observe (cycle length depends on configured poll interval)
   - Success-rate target
   - Timing target (min/avg/median)
 
 ## Background: How Measurements Are Collected
 Measurement is passive and automatic. Every time the bridge reconnects to the inverter:
-1. `WifiConnectionManager::ensureConnected()` triggers a GPIO wake pulse.
-2. It then selects the next alternating connect path (dwell or auto).
+1. The connection worker task handles pulse + connect attempts.
+2. It selects the next alternating connect path (dwell or auto).
 3. The result is logged as structured `[WIFI-CONNECT]` entries readable by `analyze_bridge_logs.py`.
 
 No manual trigger is needed to collect data. Simply let the bridge run for several polling intervals.
@@ -84,7 +84,7 @@ Hard requirement:
 - Do not treat IDE include-path diagnostics as build failure; rely on compile result.
 
 ### Phase 4: Validate
-1. Wait for several polling intervals after upload (each 20s).
+1. Wait for several polling intervals after upload (based on current configured interval).
 2. Run log analysis:
 ```powershell
 python skills/log-analysis/analyze_bridge_logs.py

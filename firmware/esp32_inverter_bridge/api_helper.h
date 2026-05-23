@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 9;
+constexpr size_t API_ENDPOINT_COUNT = 11;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**
@@ -64,6 +64,16 @@ public:
   JsonBuilder& addBool(const String& key, bool value) {
     if (needsComma) json += ",";
     json += "\"" + key + "\":" + (value ? "true" : "false");
+    needsComma = true;
+    return *this;
+  }
+
+  /**
+   * Add a raw JSON value (object, array, or literal — inserted verbatim).
+   */
+  JsonBuilder& addRaw(const String& key, const String& rawJson) {
+    if (needsComma) json += ",";
+    json += "\"" + key + "\":" + rawJson;
     needsComma = true;
     return *this;
   }

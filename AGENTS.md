@@ -4,11 +4,11 @@ This document provides project context for AI agents and future developers worki
 
 ## Project Summary
 
-**What**: Bridge firmware connecting WiFi-only inverters (Mastervolt SOLADIN 1500) to Home Assistant via Ethernet.
+What: Bridge firmware connecting WiFi-only inverters (Mastervolt SOLADIN 1500) to Home Assistant via Ethernet.
 
-**Hardware**: ESP32-S3 + ENC28J60 Ethernet adapter
-- WiFi: Station mode → inverter SSID `mastervolt-soladin-0103` / `10.0.0.1`
-- Ethernet: DHCP client on home LAN → `192.168.1.48:8080`
+Hardware: ESP32-S3 + ENC28J60 Ethernet adapter
+- WiFi: Station mode -> inverter SSID `mastervolt-soladin-0103` / `10.0.0.1`
+- Ethernet: DHCP client on home LAN -> `192.168.1.48:8080`
 - GPIO 36: inverter WiFi wake pulse (active HIGH)
 
 ## Architecture
@@ -17,67 +17,78 @@ This document provides project context for AI agents and future developers worki
 
 ```
 wifi_bridge.cpp/h (core network layer)
-  ├── WifiConnectionManager singleton (ensureConnected, forceReconnect)
-  ├── connectWifiDwell(), connectWifiAuto(), connectWifi(bool)
-  ├── fetchInverterData(method, path, body, ...)
-  └── deps: WiFi.h, HTTPClient.h, settings
+  |- Dedicated connection worker task (FreeRTOS)
+  |- requestWifiConnection(), forceWifiReconnect(), fetchInverterData(..., waitForConnection)
+  |- ScopedWifiOperationLock for WiFi HTTP/connect serialization
+  |- deps: WiFi.h, HTTPClient.h, settings
 
 inverter_data.cpp/h (data model)
-  └── HomeData struct + getInverterData() factory
+  |- HomeData struct + getInverterData() factory
 
 inverter_monitor.cpp/h (business logic)
-  ├── InverterMonitor singleton — FreeRTOS polling task (20s interval)
-  ├── calls WifiConnectionManager::ensureConnected() before each poll
-  └── caches HomeData; exposes getLatestHomeData(), setPower(), fetchPath()
+  |- InverterMonitor singleton - FreeRTOS polling task (runtime-configurable; default 20s)
+  |- Polls /home via fetchInverterData(..., waitForConnection=true)
+  |- Power state machine (desired/confirmed/queued/timer)
+  |- caches HomeData; exposes getLatestHomeData(), setPower(), fetchPath()
 
 ethernet_bridge.cpp/h (network layer)
-  └── ENC28J60 init + HTTP API server on port 8080
+  |- ENC28J60 init + HTTP API server on port 8080
 
 api.cpp / api.h (request routing)
-  ├── handleApiClient() — 9 REST endpoints
-  └── deps: api_helper, InverterMonitor, inverter_data
+  |- handleApiClient() - 11 REST endpoints
+  |- /api/power returns 200 (immediate) or 202 (queued)
+  |- deps: api_helper, InverterMonitor, inverter_data
 
 api_helper.cpp/h (HTTP/JSON utilities)
-  └── sendHttpResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
+  |- sendHttpResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
+  |- /api/info includes power_limit object (desired/confirmed/queued/reset_timer_minutes)
 
 esp32_inverter_bridge.ino (main entry)
-  └── starts ethernetBridgeStartTask() + InverterMonitor::initialize()
+  |- starts ethernetBridgeStartTask() + wifiBridgeInit() + InverterMonitor::initialize()
 
-settings.cpp/h — all global constants
-logger.h — 1000-entry circular log buffer with ms timestamps
+settings.cpp/h - all global constants
+logger.h - 1000-entry circular log buffer with ms timestamps
 ```
 
-### Key Design Pattern: WifiConnectionManager
+### Connection Architecture
 
-**Single entry point for all WiFi connections. Never call `WiFi.status()` directly.**
+Single entry point for inverter HTTP calls:
 
 ```cpp
-class WifiConnectionManager {
-  static WifiConnectionManager& getInstance();
-  bool ensureConnected();   // no-op if connected; else pulses GPIO + connectWifi(alternating)
-  bool forceReconnect();    // always pulses + reconnects (used by /pulse endpoint)
-private:
-  bool nextUseDwell_ = true; // alternates dwell/auto on every attempt
-};
+bool fetchInverterData(const String& method,
+                       const String& path,
+                       const String& body,
+                       String& responseBody,
+                       int& httpCode,
+                       String& errorMessage,
+                       bool waitForConnection);
 ```
 
-**Two connect paths (A/B performance data collected passively in production):**
-- `connectWifiDwell()` — 200 ms scan dwell, AP-hint fallback. ~5 s typical.
-- `connectWifiAuto()` — 500 ms scan dwell, pure auto-discovery. ~6.5 s typical.
+Behavior:
+- `waitForConnection=true`: blocks until connection worker finishes retries (used by polling loop).
+- `waitForConnection=false`: fail-fast if WiFi is down, but triggers background reconnect (used by API requests).
 
-Both emit `[WIFI-CONNECT] start/complete path=... duration_ms=... result=...` log entries.  
-Analyze with: `.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py`  
-Plot power vs time: `.venv\Scripts\python skills/log-analysis/plot_power.py` (saves PNG to `output/`, git-ignored)
+Connection worker notes:
+- Triggered by event-group request bit.
+- Owns pulse + connect attempts.
+- Uses alternating paths (`dwell`, `auto`) across attempts.
+- Logs `[WIFI-CONNECT] start/complete ...` for analysis.
+
+Connect paths:
+- `dwell`: 200 ms scan dwell, AP-hint fallback enabled.
+- `auto`: 500 ms scan dwell, auto-discovery only.
 
 ## API Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/` | API discovery |
+| GET | `/api/version` | Firmware version currently running on this ESP |
 | GET | `/api/health` | Bridge status (WiFi, Ethernet, IPs) |
 | GET | `/api/logs` | Log buffer (1000 entries) |
-| GET | `/api/info` | Latest cached inverter telemetry |
-| POST | `/api/power` | Set inverter power (0–1575 W) |
+| GET | `/api/info` | Latest cached inverter telemetry + power_limit state |
+| POST | `/api/polling` | Set monitor polling interval in seconds (1-3600) |
+| POST | `/api/power` | Set inverter power (0-1575 W), 200 immediate or 202 queued |
 | POST | `/api/inverter/fetch` | Fetch arbitrary inverter path (raw response) |
 | POST | `/wifi/off` | Single press to turn inverter WiFi off if connected |
 | GET | `/pulse` | GPIO double-press wake + forced reconnect; returns `{"reconnected": bool}` |
@@ -100,10 +111,6 @@ struct HomeData {
 };
 ```
 
-> Note: JSON field names in `/api/info` responses differ — `power`, `total_yield`, `daily_yield` (see `api_helper.cpp::buildInfoJson`).
-
-Parsed from inverter `GET /home`: 8 newline-delimited fields.
-
 ### InverterMonitor public interface (inverter_monitor.h)
 ```cpp
 static InverterMonitor& getInstance();
@@ -111,9 +118,16 @@ void initialize();
 bool getLatestHomeData(HomeData& dataOut);
 unsigned long getLastUpdateMs();
 bool setPower(int watts, String& responseBody, int& httpCode, String& errorMessage);
+bool isPowerCommandQueued();
+int getDesiredPowerLimit();
+int getConfirmedPowerLimit();
+unsigned long getPowerLimitResetAtMs();
 bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
 ```
-`dataMutex` protects all cached data; all lock attempts timeout after 5 s.
+
+Synchronization:
+- `dataMutex` protects cached telemetry and poll counters.
+- `powerStateMutex` protects power state machine fields.
 
 ## Configuration (settings.cpp)
 
@@ -129,8 +143,10 @@ bool fetchPath(const String& path, String& responseBody, int& httpCode, String& 
 | `WIFI_BRIDGE_POLL_INTERVAL_MS` | `20000` | Poll interval |
 | `WIFI_BRIDGE_HTTP_TIMEOUT_MS` | `3500` | HTTP request timeout |
 | `INVERTER_MAX_POWER_WATTS` | `1575` | Power set limit |
+| `POWER_LIMIT_RESET_MINUTES` | `120` | Auto-reset timer for sub-max limits |
+| `POWER_COMMAND_EXPIRY_MS` | `300000` | Expiry for user-initiated queued commands |
 
-## Build & Upload
+## Build and Upload
 
 ```powershell
 # Recommended (auto COM detection):
@@ -141,109 +157,74 @@ arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc firmware/esp32_inve
 arduino-cli upload  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc --port COM9 firmware/esp32_inverter_bridge
 ```
 
-**Agent policy**: Agents may compile and upload when needed (FQBN `esp32:esp32:esp32s3:CDCOnBoot=cdc`, port `COM9`) unless the user says not to.  
-See `docs/SETUP_README.md` for library prerequisites and IDE setup.
-
 ## Python Environment
 
-All Python scripts require the project venv. **Always activate the venv before running Python commands in a terminal:**
+All Python scripts require the project venv. Always activate before Python commands:
 
 ```powershell
-# Activate venv (required in every new terminal session)
 & d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
-
-# Then run scripts normally:
-python skills/log-analysis/plot_power.py
-python skills/firmware-upload/upload_firmware.py
 ```
 
-**Key packages** (install via `uv pip install <pkg>` if missing):
-- `requests` — HTTP calls to bridge API
-- `matplotlib` — power plots (`plot_power.py`, `analyze_and_plot.py`)
-- `pyserial` — serial monitor on COM9
+Install missing packages with:
 
-**Common mistake**: Opening a new terminal and running `python ...` without activating the venv first. The system Python won't have the project dependencies.
+```powershell
+uv pip install requests matplotlib pyserial
+```
 
 ## Common Tasks
 
 ### Add a New API Endpoint
-1. Add handler in `api.cpp` → `handleApiClient()`
-2. Add entry to `API_ENDPOINTS[]` in `api.cpp`
-3. Use `InverterMonitor::getInstance()` or `fetchInverterData()` for inverter communication
-4. Respond via `sendHttpResponse(client, code, contentType, body)`
-5. Update `docs/API_REFERENCE.md`, `README.md`, and `skills/api-validation/validate_api.py`
+1. Add handler in `api.cpp` (`handleApiClient()`).
+2. Add entry to `API_ENDPOINTS[]` in `api.cpp`.
+3. Use `InverterMonitor::getInstance()` or `fetchInverterData()` for inverter communication.
+4. Respond via `sendHttpResponse(client, code, contentType, body)`.
+5. Update `docs/API_REFERENCE.md`, `README.md`, and `skills/api-validation/validate_api.py`.
 
-### Change Polling Interval
-Edit `WIFI_BRIDGE_POLL_INTERVAL_MS` in `settings.cpp` (normal rate, stage 0).  
-To adjust the overnight backoff schedule, edit `BACKOFF_STAGES[]` in `inverter_monitor.cpp`.
+### Debug WiFi / Reconnect Behavior
+Run log analysis:
 
-### Debug WiFi Issues
-Run the log analysis skill for a full breakdown (session summary, episode grouping, path A/B stats):
 ```powershell
 .venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
-.venv\Scripts\python skills/log-analysis/plot_power.py   # saves power chart to output/
+.venv\Scripts\python skills/log-analysis/plot_power.py
 ```
 
-Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.md`):
-- `[API] GET /pulse` → external caller triggered a reconnect
-- `[API] POST /api/power` → power set request received
-- `[API] debug mode enabled` → debug mode activated via `/api/debug`
-- `[WIFI-BRIDGE] GET /home success (HTTP 200)` → inverter poll OK (**only logged when `debugMode=true`**)
-- `[WIFI-CONNECT] complete path=dwell duration_ms=5413 result=success` → connected OK
-- `[WIFI-CONNECT] complete path=auto duration_ms=8064 result=timeout` → unreachable
-- `[WIFI-BRIDGE] Triggering inverter WiFi wake pulse sequence.` → pulse sent
-- `[INVERTER-MONITOR] Poll #N: Status=1 Power=Y.ZW` → successful inverter poll
-- `[INVERTER-MONITOR] No WiFi connection; skipping poll iteration` → lost sample (WiFi was down)
-- `[INVERTER-MONITOR] Inverter recovered; resuming normal poll interval` → first poll after dropout
-- `[INVERTER-MONITOR] Failed to fetch /home` → HTTP failed after WiFi up
-
-### Validate API vs Documentation
-```powershell
-.venv\Scripts\python skills/api-validation/validate_api.py
-```
+Useful log patterns:
+- `[API] GET /pulse`
+- `[API] POST /api/power`
+- `[WIFI-CONNECT] complete path=dwell duration_ms=... result=...`
+- `[WIFI-CONNECT] complete path=auto duration_ms=... result=...`
+- `[WIFI-BRIDGE] Triggering inverter WiFi wake pulse sequence.`
+- `[INVERTER-MONITOR] Poll #N: Status=... Power=...W`
+- `[INVERTER-MONITOR] Failed to fetch /home: ...`
+- `[INVERTER-MONITOR] Queued power command delivered: ...W`
 
 ## Gotchas
 
-1. **Never call `WiFi.status()` directly** — use `WifiConnectionManager::getInstance().ensureConnected()`. It pulses and reconnects; `WiFi.status()` does neither.
-2. **Include order**: `inverter_monitor.cpp` needs `wifi_bridge.h` before `fetchInverterData()`.
-3. **Mutex timeouts**: Keep lock time short. Threads waiting >5 s will fail silently.
-4. **502 = WiFi not connected** (usually). Check `/api/health` first; `/api/info` also returns 502 for ~20 s after boot until first poll completes.
-5. **Pulse state machine**: single press toggles WiFi. `/wifi/off` = one press (OFF). `/pulse` = double-press (OFF→ON). Calling `/pulse` while connected will disconnect then reconnect.
-6. **Power limit**: `setPower()` validates 0–`INVERTER_MAX_POWER_WATTS` before the HTTP request.
-7. **ENC28J60 crash on dead TCP write**: Writing to a disconnected `EthernetClient` via UIPEthernet crashes the device. Always check `client.connected()` before `client.write()` in streaming responses (see `sendLogsResponse()` abort guard).
-8. **CDCOnBoot=cdc resets on serial open**: Opening COM9 with DTR=true resets the ESP32. Use `dsrdtr=False, dtr=False` in pyserial to monitor without reset.
-9. **Changing FQBN flags triggers full rebuild**: Adding/removing flags like `CDCOnBoot=cdc` causes a ~5 min full core recompile. Same flags = fast incremental build (~20s).
-10. **Venv activation required**: Every new terminal needs `.venv\Scripts\Activate.ps1` before running Python scripts. Without it, `ModuleNotFoundError` for `requests`, `matplotlib`, `serial`, etc.
-
-## Performance
-
-| Metric | Value |
-|---|---|
-| First poll after boot | ~6–8 s |
-| Reconnect time (dwell path) | ~5 s typical |
-| Reconnect time (auto path) | ~6.5 s typical |
-| Connect budget (timeout) | 8 s |
-| Polling interval | 20 s |
-| HTTP request timeout | 3.5 s |
-| API response (cached data) | <100 ms |
-| `/api/logs` (1000 entries, 58 KB) | ~7.5 s |
-| Heap used / available | ~65 KB used / ~300 KB free |
+1. Prefer `fetchInverterData(..., waitForConnection)` over direct WiFi request logic in business code.
+2. Polling uses blocking connect (`waitForConnection=true`), API paths use fail-fast (`waitForConnection=false`).
+3. `/api/power` can return 202 (queued) when inverter WiFi is unavailable; this is expected.
+4. `/api/info` returns 502 until at least one successful poll has cached telemetry.
+5. `/pulse` while connected intentionally drops/reconnects WiFi to force a measured connect attempt.
+6. `/wifi/off` only sends a single press when bridge WiFi is currently connected.
+7. ENC28J60 can crash on dead TCP write; always check `client.connected()` before streaming writes.
+8. Every new terminal needs venv activation before Python scripts.
 
 ## File Map
 
-**Firmware** (`firmware/esp32_inverter_bridge/`):
+Firmware (`firmware/esp32_inverter_bridge/`):
 `esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_monitor.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `settings.{h,cpp}`, `logger.h`
 
-**Documentation** (`docs/`):
-- `SETUP_README.md` — Hardware assembly, wiring, prerequisites, flash instructions
-- `WIRING_README.md` — Pin table + electrical notes
-- `ESP32_UPLOAD_README.md` — Upload procedure + post-flash verification
-- `API_REFERENCE.md` — Full endpoint reference
-- `TEST_README.md` — Validation checklist + troubleshooting
+Documentation (`docs/`):
+- `SETUP_README.md`
+- `WIRING_README.md`
+- `ESP32_UPLOAD_README.md`
+- `API_REFERENCE.md`
+- `TEST_README.md`
+- `LOCKING_MODEL.md`
+- `MAX_POWER_BEHAVIOR.md`
 
-**Skills** (`skills/`):
+Skills (`skills/`):
 `firmware-upload/`, `firmware-optimization-loop/`, `log-analysis/`, `api-validation/`, `documentation-update/`
 
-**Root**: `README.md`, `AGENTS.md`, `test_bridge.py`, `pyproject.toml`
-
-
+Root:
+`README.md`, `AGENTS.md`, `test_bridge.py`, `pyproject.toml`

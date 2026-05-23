@@ -9,13 +9,16 @@ Usage:
   python upload_firmware.py               # compile + detect + upload
   python upload_firmware.py --skip-compile
   python upload_firmware.py --port COM5
+    python upload_firmware.py --version v0.1.0-alpha2
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +41,8 @@ ARDUINO_CLI = _find_arduino_cli()
 FQBN = "esp32:esp32:esp32s3:CDCOnBoot=cdc"
 DEFAULT_PORT = "COM9"
 SKETCH = "firmware/esp32_inverter_bridge"
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SETTINGS_CPP = os.path.join(REPO_ROOT, "firmware", "esp32_inverter_bridge", "settings.cpp")
 
 
 def list_board_ports(arduino_cli: str) -> list[str]:
@@ -79,6 +84,85 @@ def run_step(label: str, cmd: list[str]) -> bool:
     return True
 
 
+def run_cmd_capture(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
+    result = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True)
+    return result.returncode, result.stdout, result.stderr
+
+
+def compute_default_version() -> str:
+    ts = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    rc, out, _ = run_cmd_capture(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT)
+    short_sha = out.strip() if rc == 0 and out.strip() else "nogit"
+    return f"fw-{ts}-{short_sha}"
+
+
+def stamp_firmware_version(version: str) -> bool:
+    try:
+        with open(SETTINGS_CPP, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError as ex:
+        print(f"ERROR: failed reading settings.cpp: {ex}")
+        return False
+
+    pattern = r'const char\* FIRMWARE_VERSION = "[^"]*";'
+    replacement = f'const char* FIRMWARE_VERSION = "{version}";'
+
+    if not re.search(pattern, content):
+        print("ERROR: FIRMWARE_VERSION setting not found in settings.cpp")
+        return False
+
+    updated = re.sub(pattern, replacement, content, count=1)
+    if updated == content:
+        print(f"Firmware version already set to: {version}")
+        return True
+
+    try:
+        with open(SETTINGS_CPP, "w", encoding="utf-8", newline="\n") as f:
+            f.write(updated)
+    except OSError as ex:
+        print(f"ERROR: failed writing settings.cpp: {ex}")
+        return False
+
+    print(f"Stamped firmware version: {version}")
+    return True
+
+
+def git_trace(version: str) -> bool:
+    rc, _, err = run_cmd_capture(["git", "rev-parse", "--is-inside-work-tree"], cwd=REPO_ROOT)
+    if rc != 0:
+        print(f"ERROR: not a git repository: {err.strip()}")
+        return False
+
+    add_rc, _, add_err = run_cmd_capture(["git", "add", "-A"], cwd=REPO_ROOT)
+    if add_rc != 0:
+        print(f"ERROR: git add failed: {add_err.strip()}")
+        return False
+
+    status_rc, out, status_err = run_cmd_capture(["git", "status", "--porcelain"], cwd=REPO_ROOT)
+    if status_rc != 0:
+        print(f"ERROR: git status failed: {status_err.strip()}")
+        return False
+
+    if out.strip():
+        commit_msg = f"firmware: build {version}"
+        commit_rc, _, commit_err = run_cmd_capture(["git", "commit", "-m", commit_msg], cwd=REPO_ROOT)
+        if commit_rc != 0:
+            print(f"ERROR: git commit failed: {commit_err.strip()}")
+            return False
+        print(f"Created git commit for version: {version}")
+    else:
+        print("No git changes to commit (version may already be committed).")
+
+    # Push so the version trace is durable in remote history.
+    push_rc, _, push_err = run_cmd_capture(["git", "push"], cwd=REPO_ROOT)
+    if push_rc != 0:
+        print(f"ERROR: git push failed: {push_err.strip()}")
+        return False
+
+    print("Git trace pushed successfully.")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Compile and upload ESP32 inverter bridge firmware"
@@ -93,12 +177,28 @@ def main() -> int:
         action="store_true",
         help="Skip compilation, go straight to upload",
     )
+    parser.add_argument(
+        "--version",
+        default="",
+        help="Explicit firmware version to stamp into settings.cpp (default: auto timestamp+git sha)",
+    )
+    parser.add_argument(
+        "--skip-git-trace",
+        action="store_true",
+        help="Skip git add/commit/push after successful compile+upload",
+    )
     args = parser.parse_args()
+
+    version = args.version.strip() if args.version.strip() else compute_default_version()
 
     print("ESP32 Firmware Upload")
     print(f"  FQBN   : {FQBN}")
     print(f"  Port   : {args.port}")
     print(f"  Sketch : {SKETCH}")
+    print(f"  Version: {version}")
+
+    if not stamp_firmware_version(version):
+        return 1
 
     # ------------------------------------------------------------------
     # Step 1: Detect device
@@ -152,6 +252,11 @@ def main() -> int:
     )
     if not ok:
         return 1
+
+    if not args.skip_git_trace:
+        ok = git_trace(version)
+        if not ok:
+            return 1
 
     print("\nFirmware upload complete.")
     return 0

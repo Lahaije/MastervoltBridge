@@ -121,4 +121,4 @@ This skill (`compare_strategies.py`) is purpose-built for the dwell vs auto ques
 ## Source of Truth
 
 Connect strategy parameters are defined in `firmware/esp32_inverter_bridge/wifi_bridge.cpp`.  
-Full architecture description: `AGENTS.md` → "Key Design Pattern: WifiConnectionManager".
+Full architecture description: `AGENTS.md` → "Connection Architecture".

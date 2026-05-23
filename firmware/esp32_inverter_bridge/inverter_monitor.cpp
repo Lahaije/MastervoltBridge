@@ -8,6 +8,22 @@
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
 constexpr bool ENABLE_INVERTER_POLLING = true;
+constexpr uint32_t POWER_STATE_LOCK_TIMEOUT_MS = 1000;
+
+// RAII lock guard for power-state mutex. Held briefly only.
+class ScopedPowerStateLock {
+public:
+  ScopedPowerStateLock(SemaphoreHandle_t mtx, uint32_t timeoutMs)
+      : mutex_(mtx),
+        acquired_(mtx != nullptr && xSemaphoreTake(mtx, pdMS_TO_TICKS(timeoutMs)) == pdTRUE) {}
+  ~ScopedPowerStateLock() {
+    if (acquired_ && mutex_ != nullptr) xSemaphoreGive(mutex_);
+  }
+  bool acquired() const { return acquired_; }
+private:
+  SemaphoreHandle_t mutex_;
+  bool acquired_;
+};
 
 // ---------------------------------------------------------------------------
 // Stepped retry backoff for inverter unavailability (e.g. overnight).
@@ -22,20 +38,22 @@ struct BackoffStage {
 };
 
 static const BackoffStage BACKOFF_STAGES[] = {
-  {           0,  20000u },  //  0 –  5 min : every 20 s   (normal rate, matches WIFI_BRIDGE_POLL_INTERVAL_MS)
   {  5 * 60000u,  60000u },  //  5 – 20 min : every  1 min
   { 20 * 60000u, 600000u },  // 20+    min  : every 10 min
 };
 static constexpr size_t BACKOFF_STAGE_COUNT = sizeof(BACKOFF_STAGES) / sizeof(BACKOFF_STAGES[0]);
 
-static uint32_t getBackoffIntervalMs(uint32_t failedForMs) {
+static uint32_t getBackoffIntervalMs(uint32_t failedForMs, uint32_t baseIntervalMs) {
+  if (failedForMs < BACKOFF_STAGES[0].after_failure_ms) {
+    return baseIntervalMs;
+  }
   // Walk stages in reverse; return the interval of the last threshold reached.
   for (int i = static_cast<int>(BACKOFF_STAGE_COUNT) - 1; i >= 0; i--) {
     if (failedForMs >= BACKOFF_STAGES[i].after_failure_ms) {
       return BACKOFF_STAGES[i].interval_ms;
     }
   }
-  return BACKOFF_STAGES[0].interval_ms;
+  return baseIntervalMs;
 }
 
 }  // namespace
@@ -54,6 +72,14 @@ void InverterMonitor::initialize() {
 
   if (dataMutex == nullptr) {
     dataMutex = xSemaphoreCreateMutex();
+  }
+
+  if (powerStateMutex == nullptr) {
+    powerStateMutex = xSemaphoreCreateMutex();
+  }
+
+  if (pollingConfigMutex == nullptr) {
+    pollingConfigMutex = xSemaphoreCreateMutex();
   }
 
   if (ENABLE_INVERTER_POLLING && pollingTaskHandle == nullptr) {
@@ -87,6 +113,16 @@ void InverterMonitor::shutdown() {
     dataMutex = nullptr;
   }
 
+  if (powerStateMutex != nullptr) {
+    vSemaphoreDelete(powerStateMutex);
+    powerStateMutex = nullptr;
+  }
+
+  if (pollingConfigMutex != nullptr) {
+    vSemaphoreDelete(pollingConfigMutex);
+    pollingConfigMutex = nullptr;
+  }
+
   isInitialized = false;
   appLogger.log("[INVERTER-MONITOR] Inverter monitor shut down");
 }
@@ -112,48 +148,46 @@ bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
 
 void InverterMonitor::runPollingTask() {
   uint32_t failureStartMs = 0;  // millis() when current failure streak began; 0 = no streak
-  uint32_t lastIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+  uint32_t lastIntervalMs = getPollingIntervalMs();
 
   while (true) {
     bool iterationOk = false;
 
-    // Obtain a WiFi connection via the connection manager. The manager
-    // returns immediately if WiFi is already up, or invokes the next
-    // alternating connect path (dwell/auto) if WiFi is down.
-    if (!WifiConnectionManager::getInstance().ensureConnected()) {
-      appLogger.log("[INVERTER-MONITOR] No WiFi connection; skipping poll iteration");
-    } else {
-      // Fetch the latest /home response
-      String rawResponse;
-      String errorMessage;
-      int httpCode = 0;
+    // fetchInverterData(waitForConnection=true) handles WiFi connect/wait
+    // internally via the connection worker. No need to pre-check.
+    String rawResponse;
+    String errorMessage;
+    int httpCode = 0;
 
-      bool ok = fetchInverterData("GET", HOME_ENDPOINT, "", rawResponse, httpCode, errorMessage);
+    bool ok = fetchInverterData("GET", HOME_ENDPOINT, "", rawResponse, httpCode, errorMessage, true);
 
-      if (ok) {
-        // Parse the response into HomeData
-        HomeData parsedData;
-        if (parseHomeResponse(rawResponse, parsedData)) {
-          // Update cached data with mutex protection
-          if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            cachedData = parsedData;
-            lastUpdateMs = millis();
-            successfulPolls++;
-            xSemaphoreGive(dataMutex);
+    if (ok) {
+      // Parse the response into HomeData
+      HomeData parsedData;
+      if (parseHomeResponse(rawResponse, parsedData)) {
+        // Update cached data with mutex protection
+        if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          cachedData = parsedData;
+          lastUpdateMs = millis();
+          successfulPolls++;
+          xSemaphoreGive(dataMutex);
 
-            appLogger.log(String("[INVERTER-MONITOR] Poll #") + successfulPolls +
-                          ": Status=" + parsedData.operatingStatus +
-                          " Power=" + parsedData.instantaneousPower + "W");
-          }
-          iterationOk = true;
-        } else {
-          incrementCounterLocked(failedPolls);
-          appLogger.log("[INVERTER-MONITOR] Failed to parse /home response");
+          appLogger.log(String("[INVERTER-MONITOR] Poll #") + successfulPolls +
+                        ": Status=" + parsedData.operatingStatus +
+                        " Power=" + parsedData.instantaneousPower + "W");
         }
+        iterationOk = true;
+
+        // Check timer FIRST (queues MAX if expired) so apply sends it now.
+        checkPowerLimitResetTimer();
+        applyPendingPowerCommand();
       } else {
         incrementCounterLocked(failedPolls);
-        appLogger.log(String("[INVERTER-MONITOR] Failed to fetch /home: ") + errorMessage);
+        appLogger.log("[INVERTER-MONITOR] Failed to parse /home response");
       }
+    } else {
+      incrementCounterLocked(failedPolls);
+      appLogger.log(String("[INVERTER-MONITOR] Failed to fetch /home: ") + errorMessage);
     }
 
     // Update failure streak tracking and compute next sleep interval.
@@ -161,13 +195,13 @@ void InverterMonitor::runPollingTask() {
       if (failureStartMs != 0) {
         appLogger.log("[INVERTER-MONITOR] Inverter recovered; resuming normal poll interval");
         failureStartMs = 0;
-        lastIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
       }
+      lastIntervalMs = getPollingIntervalMs();
     } else {
       if (failureStartMs == 0) {
         failureStartMs = millis();
       }
-      uint32_t nextIntervalMs = getBackoffIntervalMs(millis() - failureStartMs);
+      uint32_t nextIntervalMs = getBackoffIntervalMs(millis() - failureStartMs, getPollingIntervalMs());
       if (nextIntervalMs != lastIntervalMs) {
         appLogger.log(String("[INVERTER-MONITOR] Backoff: retry interval -> ") +
                       (nextIntervalMs / 1000) + "s");
@@ -214,6 +248,44 @@ unsigned long InverterMonitor::getLastUpdateMs() {
   return result;
 }
 
+bool InverterMonitor::setPollingIntervalSeconds(uint32_t seconds, uint32_t& appliedMs, String& errorMessage) {
+  if (seconds < 1 || seconds > 3600) {
+    errorMessage = "seconds must satisfy 1 <= seconds <= 3600";
+    return false;
+  }
+
+  if (pollingConfigMutex == nullptr) {
+    errorMessage = "polling config mutex not initialized";
+    return false;
+  }
+
+  if (xSemaphoreTake(pollingConfigMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    errorMessage = "polling config mutex busy";
+    return false;
+  }
+
+  pollingIntervalMs = seconds * 1000UL;
+  appliedMs = pollingIntervalMs;
+
+  xSemaphoreGive(pollingConfigMutex);
+  appLogger.log(String("[INVERTER-MONITOR] Poll interval updated to ") + seconds + "s");
+  return true;
+}
+
+uint32_t InverterMonitor::getPollingIntervalMs() {
+  if (pollingConfigMutex == nullptr) {
+    return WIFI_BRIDGE_POLL_INTERVAL_MS;
+  }
+
+  if (xSemaphoreTake(pollingConfigMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    return pollingIntervalMs;
+  }
+
+  uint32_t result = pollingIntervalMs;
+  xSemaphoreGive(pollingConfigMutex);
+  return result;
+}
+
 bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, String& errorMessage) {
   // Safety check before inverter command: enforce hardware range
   if (watts < 0 || watts > INVERTER_MAX_POWER_WATTS) {
@@ -224,8 +296,164 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
     return false;
   }
 
+  // --- Update desired state under lock ---
+  {
+    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+    if (!lock.acquired()) {
+      errorMessage = "Power state mutex busy";
+      httpCode = 0;
+      return false;
+    }
+    desiredPowerLimit = watts;
+    desiredPowerSetAtMs = millis();
+    timerTriggeredReset = false;
+
+    // Sub-max requests (re)arm the reset timer; max-power requests don't touch it.
+    if (watts < INVERTER_MAX_POWER_WATTS) {
+      powerLimitResetAtMs = millis() + ((unsigned long)POWER_LIMIT_RESET_MINUTES * 60UL * 1000UL);
+    }
+    // NOTE: do NOT pre-mark queued. If we did, the polling task could observe
+    // queued=true between our lock release and the HTTP call, and send a
+    // duplicate POST /power. Mark queued only on failure below.
+  }
+
+  // --- HTTP call OUTSIDE the lock ---
   String payload = String(watts);
-  return fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage);
+  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, false);
+
+  // --- Commit result under lock ---
+  {
+    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+    if (lock.acquired()) {
+      // Only commit if desired hasn't changed since.
+      if (desiredPowerLimit == watts) {
+        if (ok) {
+          confirmedPowerLimit = watts;
+          powerCommandQueued = false;
+        } else {
+          powerCommandQueued = true;
+        }
+      }
+    }
+  }
+
+  if (ok) {
+    appLogger.log(String("[INVERTER-MONITOR] Power set to ") + watts + "W (immediate)");
+    return true;
+  }
+  appLogger.log(String("[INVERTER-MONITOR] Power command queued: ") + watts + "W (WiFi unavailable)");
+  return false;
+}
+
+bool InverterMonitor::isPowerCommandQueued() {
+  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+  if (!lock.acquired()) return false;
+  return powerCommandQueued;
+}
+
+int InverterMonitor::getDesiredPowerLimit() {
+  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+  if (!lock.acquired()) return desiredPowerLimit;  // best-effort read
+  return desiredPowerLimit;
+}
+
+int InverterMonitor::getConfirmedPowerLimit() {
+  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+  if (!lock.acquired()) return confirmedPowerLimit;
+  return confirmedPowerLimit;
+}
+
+unsigned long InverterMonitor::getPowerLimitResetAtMs() {
+  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+  if (!lock.acquired()) return powerLimitResetAtMs;
+  return powerLimitResetAtMs;
+}
+
+void InverterMonitor::applyPendingPowerCommand() {
+  // --- Snapshot under lock ---
+  int targetWatts;
+  bool isTimerTriggered;
+  bool shouldExpire = false;
+  {
+    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+    if (!lock.acquired()) return;
+    if (!powerCommandQueued) return;
+
+    // Check 5-minute expiry for user-initiated commands (not timer resets).
+    if (!timerTriggeredReset && POWER_COMMAND_EXPIRY_MS > 0 &&
+        millis() - desiredPowerSetAtMs > POWER_COMMAND_EXPIRY_MS) {
+      shouldExpire = true;
+      targetWatts = desiredPowerLimit;  // for logging
+    } else {
+      targetWatts = desiredPowerLimit;
+      isTimerTriggered = timerTriggeredReset;
+    }
+  }
+
+  if (shouldExpire) {
+    appLogger.log(String("[INVERTER-MONITOR] Queued power command expired (") +
+                  targetWatts + "W)");
+    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+    if (lock.acquired() && powerCommandQueued && !timerTriggeredReset) {
+      powerCommandQueued = false;
+      desiredPowerLimit = confirmedPowerLimit;
+    }
+    return;
+  }
+
+  // --- HTTP call outside the lock ---
+  String responseBody, errorMessage;
+  int httpCode = 0;
+  String payload = String(targetWatts);
+  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, false);
+
+  // --- Commit result under lock ---
+  if (ok) {
+    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+    if (lock.acquired()) {
+      // Only commit if desired didn't change while we were sending.
+      if (desiredPowerLimit == targetWatts) {
+        confirmedPowerLimit = targetWatts;
+        powerCommandQueued = false;
+        if (isTimerTriggered && targetWatts == INVERTER_MAX_POWER_WATTS) {
+          powerLimitResetAtMs = 0;
+          timerTriggeredReset = false;
+        }
+      }
+    }
+    appLogger.log(String("[INVERTER-MONITOR] Queued power command delivered: ") +
+                  targetWatts + "W");
+  } else {
+    appLogger.log(String("[INVERTER-MONITOR] Retry power command failed: ") + errorMessage);
+  }
+}
+
+void InverterMonitor::checkPowerLimitResetTimer() {
+  // The timer arms a pending command; the actual send happens via
+  // applyPendingPowerCommand. This avoids a race where the timer's HTTP
+  // could fire AFTER a concurrent setPower(N<MAX) and leave the inverter
+  // at MAX while our state thinks it's at N.
+  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+  if (!lock.acquired()) return;
+  if (powerLimitResetAtMs == 0 || millis() < powerLimitResetAtMs) return;
+
+  // Timer fired.
+  if (confirmedPowerLimit == INVERTER_MAX_POWER_WATTS &&
+      desiredPowerLimit == INVERTER_MAX_POWER_WATTS) {
+    // Already at max — just clear the timer.
+    powerLimitResetAtMs = 0;
+    return;
+  }
+
+  appLogger.log(String("[INVERTER-MONITOR] Power limit timer expired. Queuing reset to ") +
+                INVERTER_MAX_POWER_WATTS + "W");
+
+  desiredPowerLimit = INVERTER_MAX_POWER_WATTS;
+  desiredPowerSetAtMs = millis();
+  timerTriggeredReset = true;
+  powerCommandQueued = true;
+  // applyPendingPowerCommand runs immediately after this in the polling loop
+  // and will send the actual POST /power.
 }
 
 bool InverterMonitor::fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage) {
@@ -234,5 +462,5 @@ bool InverterMonitor::fetchPath(const String& path, String& responseBody, int& h
     return false;
   }
 
-  return fetchInverterData("GET", path, "", responseBody, httpCode, errorMessage);
+  return fetchInverterData("GET", path, "", responseBody, httpCode, errorMessage, false);
 }

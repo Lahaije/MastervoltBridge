@@ -46,13 +46,29 @@ python skills/firmware-upload/upload_firmware.py --skip-compile
 python skills/firmware-upload/upload_firmware.py --port COM5
 ```
 
+### Pin an explicit firmware version string
+```powershell
+python skills/firmware-upload/upload_firmware.py --version v0.1.0-alpha2
+```
+
+### Skip git commit/push trace step
+```powershell
+python skills/firmware-upload/upload_firmware.py --skip-git-trace
+```
+
 ## What the Script Does
 1. **Detect device**: Queries `arduino-cli board list` to check whether the expected
    port (default `COM9`) is present. If not found, exits immediately with a diagnostic
    message listing all currently visible ports (to help identify the correct port).
-2. **Compile**: Runs `arduino-cli compile --fqbn esp32:esp32:esp32s3` on the sketch.
-   Skipped with `--skip-compile`.
-3. **Upload**: Runs `arduino-cli upload` to flash the compiled binary.
+2. **Stamp firmware version**: Updates `FIRMWARE_VERSION` in
+  `firmware/esp32_inverter_bridge/settings.cpp`.
+  - default format: `fw-YYYYMMDD-HHMMSS-<short-git-sha>`
+  - override with `--version`
+3. **Compile**: Runs `arduino-cli compile --fqbn esp32:esp32:esp32s3` on the sketch.
+  Skipped with `--skip-compile`.
+4. **Upload**: Runs `arduino-cli upload` to flash the compiled binary.
+5. **Git trace**: Runs `git add -A`, `git commit`, and `git push` so every flashed
+  version is traceable in remote history. Skipped with `--skip-git-trace`.
 
 ## Example Output — Device Not Connected
 ```

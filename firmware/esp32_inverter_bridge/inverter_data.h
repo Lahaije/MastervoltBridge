@@ -38,7 +38,8 @@ struct HomeData {
 /**
  * Fetch the latest inverter /home telemetry data.
  * 
- * This function retrieves data from the inverter monitor's cache (20s polling interval).
+ * This function retrieves data from the inverter monitor's cache
+ * (runtime-configurable polling interval; default 20s).
  * For real-time data, consider fetching directly if latency is critical.
  * 
  * Returns: HomeData object with parsed fields, or empty if unavailable.

@@ -13,9 +13,11 @@ http://192.168.1.48:8080
 | Method | Path | Notes |
 |---|---|---|
 | GET | / | API discovery |
+| GET | /api/version | Firmware version currently running on ESP |
 | GET | /api/health | Bridge network/inverter status |
 | GET | /api/logs | Log buffer (up to 1000 entries) |
 | GET | /api/info | Cached inverter /home telemetry |
+| POST | /api/polling | Set monitor polling interval in seconds |
 | POST | /api/power | Set inverter power |
 | POST | /api/inverter/fetch | Fetch inverter endpoint |
 | POST | /wifi/off | Single button press if WiFi is connected |
@@ -25,6 +27,14 @@ http://192.168.1.48:8080
 ## GET /
 
 Returns discovery JSON containing all current endpoints.
+
+## GET /api/version
+
+Returns the firmware version string currently running on the ESP.
+
+Response example:
+
+{"firmware_version":"fw-20260523-193045-a1b2c3d"}
 
 ## GET /api/health
 
@@ -61,6 +71,9 @@ Response fields:
 | Field | Type | Description |
 |---|---|---|
 | `last_update_ms` | number | Bridge uptime ms of last successful poll |
+| `firmware_version` | string | Firmware version currently running on this ESP |
+| `poll_interval_seconds` | number | Current normal polling interval in seconds |
+| `poll_interval_ms` | number | Current normal polling interval in milliseconds |
 | `operating_status` | string | "1" = normal |
 | `error_alarm_code` | string | "0" = no error |
 | `operating_mode` | string | "1" = production |
@@ -69,6 +82,10 @@ Response fields:
 | `power` | string | Current output power in watts, e.g. "674.547" |
 | `total_yield` | string | Lifetime energy in kWh, e.g. "08566.628" |
 | `daily_yield` | string | Daily energy in kWh, e.g. "12.811" |
+| `power_limit.desired` | number | Latest requested power limit (W) |
+| `power_limit.confirmed` | number | Last power limit confirmed by inverter (W) |
+| `power_limit.queued` | bool | true when a power command is waiting for delivery |
+| `power_limit.reset_timer_minutes` | number | Whole minutes until auto-reset to max (0 = inactive/elapsed) |
 
 Typical failure when inverter is unavailable:
 
@@ -85,7 +102,35 @@ Validation:
 - integer only
 - range 0 to 1575
 
-If inverter WiFi is down, returns 502.
+Responses:
+
+- 200 when command is delivered immediately
+- 202 when command is queued because inverter WiFi is currently unavailable
+- 400 on invalid input
+- 502 on immediate inverter communication failure when command could not be queued
+
+Successful immediate response example:
+
+{"requested_power_watts":1200,"inverter_http_status":200,"inverter_response":"ok"}
+
+Queued response example:
+
+{"requested_power_watts":1200,"status":"queued","message":"Command queued; will be delivered when inverter is reachable"}
+
+## POST /api/polling
+
+Body:
+
+{"seconds":3}
+
+Validation:
+
+- integer only
+- range 1 to 3600
+
+Response:
+
+{"poll_interval_seconds":3,"poll_interval_ms":3000}
 
 ## POST /api/inverter/fetch
 
@@ -163,12 +208,13 @@ Debug mode starts as `true` at boot and is automatically set to `false` at the e
 When inverter WiFi is not available:
 
 - GET /api/info -> 502
-- POST /api/power -> 502
+- POST /api/power -> 202 (queued)
 - POST /api/inverter/fetch -> 502
 
 Still expected to respond:
 
 - /
+- /api/version
 - /api/health
 - /api/logs
 - /wifi/off

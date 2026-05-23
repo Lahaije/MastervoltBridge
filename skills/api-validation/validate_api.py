@@ -33,9 +33,11 @@ except ImportError:
 # Every endpoint the documentation promises exists, with its HTTP method.
 DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/"),
+    ("GET",  "/api/version"),
     ("GET",  "/api/health"),
     ("GET",  "/api/logs"),
     ("GET",  "/api/info"),
+    ("POST", "/api/polling"),
     ("POST", "/api/power"),
     ("POST", "/api/inverter/fetch"),
     ("POST", "/wifi/off"),
@@ -53,6 +55,12 @@ GET_CHECKS: list[dict[str, Any]] = [
         "allow_502": False,
     },
     {
+        "path": "/api/version",
+        "description": "Firmware version",
+        "required_keys": ["firmware_version"],
+        "allow_502": False,
+    },
+    {
         "path": "/api/health",
         "description": "Bridge health",
         "required_keys": ["wifi_connected", "ethernet_ip"],
@@ -67,7 +75,7 @@ GET_CHECKS: list[dict[str, Any]] = [
     {
         "path": "/api/info",
         "description": "Inverter telemetry (may be 502 if inverter WiFi is off)",
-        "required_keys": ["power", "total_yield", "daily_yield"],
+        "required_keys": ["firmware_version", "poll_interval_seconds", "poll_interval_ms", "power", "total_yield", "daily_yield", "power_limit"],
         "allow_502": True,
     },
     {

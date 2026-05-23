@@ -9,9 +9,11 @@
 
 const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/", "API discovery and endpoint overview"},
+  {"GET", "/api/version", "Firmware version currently running on this ESP"},
   {"GET", "/api/health", "Bridge connectivity state: WiFi, Ethernet, inverter host, IPs"},
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
-  {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
+  {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (runtime-configurable poll interval)"},
+  {"POST", "/api/polling", "Set monitor polling interval in seconds: JSON body with seconds field, e.g. {\"seconds\":3} (1 <= seconds <= 3600)"},
   {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
@@ -89,6 +91,14 @@ void handleApiClient(EthernetClient& client) {
     return;
   }
 
+  if (method == "GET" && path == "/api/version") {
+    String response = JsonBuilder()
+      .addString("firmware_version", String(FIRMWARE_VERSION))
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
   if (method == "GET" && path == "/api/health") {
     sendHttpResponse(client, 200, "application/json", buildHealthJson());
     return;
@@ -100,10 +110,10 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/pulse") {
-    // forceReconnect() pulses the wake GPIO and then runs a fresh connect
+    // forceWifiReconnect() pulses the wake GPIO and then runs a fresh connect
     // attempt using the next alternating path, so the resulting
     // [WIFI-CONNECT] log line captures real-world performance.
-    bool ok = WifiConnectionManager::getInstance().forceReconnect();
+    bool ok = forceWifiReconnect();
     String response = JsonBuilder().addBool("reconnected", ok).build();
     sendHttpResponse(client, 200, "application/json", response);
     return;
@@ -126,6 +136,35 @@ void handleApiClient(EthernetClient& client) {
     debugMode = (value == "true");
     appLogger.log(String("[API] debug mode ") + (debugMode ? "enabled" : "disabled"));
     String response = JsonBuilder().addBool("debug", debugMode).build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "POST" && path == "/api/polling") {
+    String rawSeconds = getJsonValueByKey(body, "seconds");
+    if (rawSeconds.length() == 0) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain seconds value"));
+      return;
+    }
+
+    int requestedSeconds = 0;
+    if (!parseStringToInt(rawSeconds, requestedSeconds)) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("seconds must be an integer value"));
+      return;
+    }
+
+    uint32_t appliedMs = 0;
+    String err;
+    bool ok = InverterMonitor::getInstance().setPollingIntervalSeconds((uint32_t)requestedSeconds, appliedMs, err);
+    if (!ok) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson(err));
+      return;
+    }
+
+    String response = JsonBuilder()
+      .addNumber("poll_interval_seconds", String(appliedMs / 1000UL))
+      .addNumber("poll_interval_ms", String(appliedMs))
+      .build();
     sendHttpResponse(client, 200, "application/json", response);
     return;
   }
@@ -171,8 +210,18 @@ void handleApiClient(EthernetClient& client) {
     int inverterHttpCode = 0;
     bool ok = InverterMonitor::getInstance().setPower(requestedPower, inverterResponse, inverterHttpCode, errorMsg);
     if (!ok) {
-      // Inverter communication failed (WiFi down or HTTP error)
-      sendHttpResponse(client, 502, "application/json", buildErrorJson(errorMsg));
+      // Command could not be delivered immediately.
+      // If queued (WiFi down), return 202; if validation failed, return 502.
+      if (InverterMonitor::getInstance().isPowerCommandQueued()) {
+        String response = JsonBuilder()
+          .addNumber("requested_power_watts", String(requestedPower))
+          .addString("status", "queued")
+          .addString("message", "Command queued; will be delivered when inverter is reachable")
+          .build();
+        sendHttpResponse(client, 202, "application/json", response);
+      } else {
+        sendHttpResponse(client, 502, "application/json", buildErrorJson(errorMsg));
+      }
       return;
     }
 

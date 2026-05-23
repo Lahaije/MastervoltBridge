@@ -13,6 +13,7 @@ const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL_COUNT = sizeof(INVERTER_WIFI_AP_HINT
 const uint8_t INVERTER_WIFI_AP_HINT_BSSID[6] = {0x00, 0x06, 0x66, 0x9D, 0xE0, 0x36};
 
 const char* INVERTER_HOST = "10.0.0.1";
+const char* FIRMWARE_VERSION = "fw-20260523-172043-e38e5ad";
 
 const uint16_t API_PORT = 8080;
 
@@ -30,6 +31,8 @@ const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS = 20000;
 const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS = 3500;
 const uint32_t MAIN_LOOP_SLEEP_MS = 5;
 const uint16_t INVERTER_MAX_POWER_WATTS = 1575;
+const uint16_t POWER_LIMIT_RESET_MINUTES = 120;  // minutes
+const uint32_t POWER_COMMAND_EXPIRY_MS = 5u * 60u * 1000u;  // 5 minutes
 const uint16_t API_CLIENT_TIMEOUT_MS = 250;
 const uint32_t ETHERNET_INIT_RETRY_MS = 5000;
 const uint32_t ETHERNET_SERVICE_INTERVAL_MS = 2;

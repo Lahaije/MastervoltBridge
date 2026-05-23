@@ -2,7 +2,7 @@
 
 The Mastervolt SOLADIN 1500 inverter has a built-in web interface, accessible over its own WiFi access point, that provides real-time production data and installer-level settings. This firmware bridges that interface to a wired home network.
 
-Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to the inverter's WiFi access point, reads the web interface every 20 seconds, and makes the data available through a REST API over Ethernet. A wake-pulse circuit keeps the inverter's WiFi radio alive between polls. The installer menu is also accessible via the API, so power output can be adjusted or stopped without needing direct WiFi access to the inverter.
+Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to the inverter's WiFi access point, polls the web interface on a runtime-configurable interval (default 20 seconds), and makes the data available through a REST API over Ethernet. A wake-pulse circuit keeps the inverter's WiFi radio alive between polls. The installer menu is also accessible via the API, so power output can be adjusted or stopped without needing direct WiFi access to the inverter.
 
 ![Inverter power output over time](docs/powerplot.png)
 *Live power output chart — generated from the onboard log buffer by the built-in analysis tooling.*
@@ -11,9 +11,11 @@ Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to 
 
 - **WiFi → Ethernet bridge** for inverters with a local WiFi AP only
 - **REST API on port 8080** served over DHCP-assigned Ethernet IP
-- **20-second live telemetry polling** with cached data for instant API responses
+- **Runtime-configurable live telemetry polling** (default 20 seconds) with cached data for instant API responses
 - **Installer menu access** — read and control inverter settings not normally exposed
 - **Power output control** — limit or stop production in real time via `POST /api/power` (0–1575 W)
+- **Non-blocking power command queue** — `POST /api/power` returns `202 Accepted` when WiFi is down and retries automatically
+- **Automatic max-power reset timer** — sub-max limits auto-reset to max after `POWER_LIMIT_RESET_MINUTES`
 - **GPIO wake-pulse** to keep the inverter WiFi radio alive between polls
 - **Circular log buffer** (1000 entries) with millisecond timestamps
 - **Home Assistant compatible** — poll `/api/info` for power, yield, and status
@@ -32,7 +34,12 @@ See [`docs/WIRING_README.md`](docs/WIRING_README.md) for the full pin table and 
 
 ## API
 
-9 REST endpoints covering health, live telemetry, power control, log access, and diagnostics. See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full reference.
+11 REST endpoints covering health, version reporting, live telemetry, power control, log access, and diagnostics.
+
+- Power commands are delivered immediately when inverter WiFi is reachable (`200 OK`).
+- If inverter WiFi is down, power commands are queued and return `202 Accepted`.
+
+See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full reference.
 
 ## Build and Upload
 
@@ -69,6 +76,8 @@ The bridge logs WiFi events, inverter polls, and API calls to a circular buffer.
 - [`docs/ESP32_UPLOAD_README.md`](docs/ESP32_UPLOAD_README.md) — Upload procedure and post-flash verification
 - [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — Full endpoint reference
 - [`docs/TEST_README.md`](docs/TEST_README.md) — Validation checklist and troubleshooting
+- [`docs/LOCKING_MODEL.md`](docs/LOCKING_MODEL.md) — Locking strategy and mutex ownership rules
+- [`docs/MAX_POWER_BEHAVIOR.md`](docs/MAX_POWER_BEHAVIOR.md) — Exact power-limit and auto-reset behavior
 - [`AGENTS.md`](AGENTS.md) — Architecture reference for agents and developers
 - [`TECHNICAL_DEBT.md`](TECHNICAL_DEBT.md) — Known limitations and future enhancements
 

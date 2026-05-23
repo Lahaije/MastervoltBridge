@@ -61,7 +61,7 @@ Calls `GET /api/health`. If unreachable, stops immediately with a clear error me
 
 ### 3. GET endpoint response validation
 For each GET endpoint, checks:
-- HTTP status code is 200 (or 502 when inverter WiFi is off, for inverter-dependent endpoints).
+- HTTP status code is 200 (or expected documented status for inverter-dependent endpoints).
 - Response JSON contains the documented top-level keys.
 
 | Endpoint | Expected keys |
@@ -69,7 +69,7 @@ For each GET endpoint, checks:
 | `GET /` | `endpoints` |
 | `GET /api/health` | `wifi_connected`, `ethernet_ip` |
 | `GET /api/logs` | `entries` |
-| `GET /api/info` | `power`, `total_yield`, `daily_yield` (or 502 if inverter offline) |
+| `GET /api/info` | `power`, `total_yield`, `daily_yield`, `power_limit` (or 502 if no cached telemetry yet) |
 | `GET /pulse` | `reconnected` |
 
 ---
@@ -82,7 +82,7 @@ For each GET endpoint, checks:
 | Documented endpoint missing from firmware | `api.cpp` is missing the handler | Add endpoint to `api.cpp`, re-upload with firmware-upload skill |
 | Firmware endpoint missing from documentation | New endpoint was added without updating docs | Update `docs/API_REFERENCE.md` and `AGENTS.md` endpoint table |
 | Response key missing | `api_helper.cpp` response changed, or docs are wrong | Align docs with firmware or restore the field |
-| `GET /api/info` returns 502 | Inverter WiFi is off (e.g. nighttime) | Expected — skip or rerun daytime |
+| `GET /api/info` returns 502 | No cached telemetry yet (boot/inverter unavailable) | Expected — wait for successful poll or rerun daytime |
 | Bridge not reachable | Ethernet disconnected or wrong IP | Check hardware and bridge IP |
 
 ---
@@ -128,6 +128,8 @@ curl -X POST http://192.168.1.48:8080/wifi/off
 ```
 
 Expected responses are documented in `docs/API_REFERENCE.md`.
+
+Note: when inverter WiFi is down, `/api/power` may return `202` (queued) instead of failing.
 
 ---
 

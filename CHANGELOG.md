@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.0-alpha2] - May 23, 2026
+
+### Firmware Behavior Updates
+
+- Replaced `WifiConnectionManager`-driven flow with a dedicated WiFi connection worker task.
+- Added `fetchInverterData(..., waitForConnection)` behavior split:
+	- blocking for polling (`waitForConnection=true`)
+	- fail-fast for API handlers (`waitForConnection=false`)
+- Added power-limit state machine with explicit desired/confirmed state tracking.
+- Added queued power command delivery with retry-on-poll behavior.
+- Added automatic max-power reset timer (`POWER_LIMIT_RESET_MINUTES`) for sub-max requests.
+- Added queued command expiry window (`POWER_COMMAND_EXPIRY_MS`) for user-initiated commands.
+
+### API Behavior Updates
+
+- `POST /api/power` now returns:
+	- `200` when delivered immediately
+	- `202` when queued due to inverter WiFi unavailability
+- `GET /api/info` now includes `power_limit` object:
+	- `desired`
+	- `confirmed`
+	- `queued`
+	- `reset_timer_minutes`
+
+### Documentation Updates
+
+- Updated `README.md`, `AGENTS.md`, and core docs to reflect current architecture.
+- Added `docs/LOCKING_MODEL.md` with lock ownership and ordering rules.
+- Added `docs/MAX_POWER_BEHAVIOR.md` with exact power-limit and auto-reset behavior.
+
 ## [0.1.0-alpha1] — May 19, 2026
 
 ### Initial Alpha Release
@@ -22,7 +52,7 @@ This is the first alpha release of the ESP32 WiFi-to-Ethernet bridge for Masterv
 - **Ethernet**: ENC28J60 (SPI interface)
 - **Power**: USB or Ethernet PoE (when implemented)
 
-#### API Endpoints (9)
+#### API Endpoints (9 at alpha1)
 
 | Method | Path | Purpose |
 |--------|------|---------|

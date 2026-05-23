@@ -5,48 +5,51 @@
 
 /**
  * Public WiFi Bridge API - Provides WiFi connectivity and generic HTTP request utilities.
+ *
+ * Architecture:
+ *   A dedicated connection worker task owns all WiFi connect/pulse logic.
+ *   fetchInverterData() is the single entry point for all inverter HTTP requests.
+ *   The waitForConnection parameter controls blocking behavior:
+ *     true  = block until WiFi is established (used by polling loop)
+ *     false = return error immediately if WiFi is down (used by API endpoints)
+ *   When WiFi is already connected, callers wait for the operation lock with a
+ *   generous timeout so concurrent requests queue rather than fail.
  */
 
 // HTTP status code from the last inverter request (defined in settings.cpp)
 extern int lastInverterStatusCode;
 
-// Initialize WiFi bridge: configure GPIO pin for inverter wake signal
+// Initialize WiFi bridge: configure GPIO, create mutexes, start connection worker task.
 void wifiBridgeInit();
 
 // ---------------------------------------------------------------------------
-// WifiConnectionManager: owns the alternating-path state and is the single
-// entry point used by request handlers / polling tasks to obtain a working
-// WiFi connection. If WiFi is already up, ensureConnected() returns true
-// immediately; otherwise it pulses the inverter wake GPIO and invokes the
-// next alternating connect path (dwell / auto).
+// fetchInverterData: single entry point for all inverter HTTP communication.
 //
-//   dwell : scan-first with short dwell (200ms), uses configured AP hint as
-//           fallback when scan does not locate the inverter.
-//   auto  : scan-first with longer dwell (500ms), pure auto-discovery (no
-//           hint fallback).
+//   waitForConnection=true:
+//     If WiFi is down, notifies the connection worker and blocks until WiFi
+//     is established (up to 3 connect attempts). Then performs the HTTP request.
+//     Used by the polling loop which can afford to wait.
+//
+//   waitForConnection=false:
+//     If WiFi is down, notifies the connection worker (so it reconnects in the
+//     background) but returns immediately with an error. If WiFi is up, waits
+//     for the operation lock and performs the request. Used by API endpoints
+//     that need fast responses.
 // ---------------------------------------------------------------------------
-class WifiConnectionManager {
-public:
-  static WifiConnectionManager& getInstance();
-
-  // Returns true if WiFi is connected (already up, or after a successful
-  // (re)connect using the next alternating path).
-  bool ensureConnected();
-
-  // Forces a fresh connect using the next alternating path, regardless of
-  // current WiFi status. Used by /pulse for measurement.
-  bool forceReconnect();
-
-private:
-  WifiConnectionManager() = default;
-  bool connectUsingNextPath();
-  bool nextUseDwell_ = true;
-};
-
-// Generic method to fetch data from inverter (GET or POST).
-// Uses WifiConnectionManager to obtain a connection before issuing HTTP.
 bool fetchInverterData(const String& method, const String& path, const String& body,
-                       String& responseBody, int& httpCode, String& errorMessage);
+                       String& responseBody, int& httpCode, String& errorMessage,
+                       bool waitForConnection);
+
+// Request the connection worker to establish WiFi (non-blocking trigger).
+// Returns immediately; the worker runs in the background.
+void requestWifiConnection();
+
+// Check if WiFi is currently connected (non-blocking status check).
+bool isWifiConnectedStatus();
+
+// Forces a fresh connect using the next alternating path, regardless of
+// current WiFi status. Used by /pulse for measurement. Blocks until done.
+bool forceWifiReconnect();
 
 // If WiFi is connected, send a single button press to turn inverter WiFi off.
 // Returns true when a press was sent, false when no press was needed/busy.

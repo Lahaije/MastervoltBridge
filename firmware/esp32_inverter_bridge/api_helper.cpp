@@ -4,6 +4,8 @@
 #include "settings.h"
 #include "logger.h"
 #include "inverter_data.h"
+#include "inverter_monitor.h"
+#include "wifi_bridge.h"
 
 String jsonEscape(const String& input) {
   String out;
@@ -128,16 +130,40 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
 }
 
 String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
+  InverterMonitor& monitor = InverterMonitor::getInstance();
+  int desired = monitor.getDesiredPowerLimit();
+  int confirmed = monitor.getConfirmedPowerLimit();
+  unsigned long resetAt = monitor.getPowerLimitResetAtMs();
+  bool queued = monitor.isPowerCommandQueued();
+  uint32_t pollIntervalMs = monitor.getPollingIntervalMs();
+
+  // Compute minutes remaining on reset timer (0 if inactive or already elapsed).
+  unsigned long remainingMinutes = 0;
+  if (resetAt != 0 && millis() < resetAt) {
+    remainingMinutes = (resetAt - millis()) / 60000UL;
+  }
+
+  String powerLimitJson = String("{") +
+    "\"desired\":" + desired + "," +
+    "\"confirmed\":" + confirmed + "," +
+    "\"queued\":" + (queued ? "true" : "false") + "," +
+    "\"reset_timer_minutes\":" + remainingMinutes +
+    "}";
+
   return JsonBuilder()
     .addNumber("last_update_ms", String(lastUpdateMs))
+    .addString("firmware_version", String(FIRMWARE_VERSION))
     .addString("operating_status", data.operatingStatus)
     .addString("error_alarm_code", data.errorAlarmCode)
     .addString("operating_mode", data.operatingMode)
     .addString("inverter_model", data.inverterModel)
     .addString("inverter_mac_address", data.inverterMacAddress)
+    .addNumber("poll_interval_seconds", String(pollIntervalMs / 1000UL))
+    .addNumber("poll_interval_ms", String(pollIntervalMs))
     .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
     .addString("total_yield", data.lifetimeEnergy)  // Total lifetime yield (via get_Total_Yield())
     .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
+    .addRaw("power_limit", powerLimitJson)
     .build();
 }
 
