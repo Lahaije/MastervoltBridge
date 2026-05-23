@@ -29,6 +29,7 @@ build/
 
 # Temporary files
 output/
+docs/web-cache/
 *.log
 *.tmp
 logs_salvaged.json
@@ -37,6 +38,9 @@ audit_release_files.py
 test_bridge.py
 run_clean_tests.py
 analyze_logs.py
+
+# Local bridge configuration (holds your real LAN IP)
+bridge_config.py
 
 # Arduino build artifacts
 build/
