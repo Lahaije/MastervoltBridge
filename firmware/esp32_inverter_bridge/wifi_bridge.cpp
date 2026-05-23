@@ -18,13 +18,14 @@ constexpr uint32_t CONNECT_TIMEOUT_MS = 7000;
 constexpr uint32_t SCAN_SETTLE_MS = 100;
 
 // Lock timeout when WiFi is connected: wait for current HTTP request to finish.
-// Must exceed the longest HTTP timeout used below (POST is the slowest).
-constexpr uint32_t WIFI_LOCK_TIMEOUT_CONNECTED_MS = 16000;
+// Must exceed WIFI_BRIDGE_HTTP_TIMEOUT_MS to allow the active request to complete.
+constexpr uint32_t WIFI_LOCK_TIMEOUT_CONNECTED_MS = 4500;
 
-// POST /power on the inverter can take ~10s to respond because the inverter
-// has to actually change its output before answering. GET /home returns in
-// ~100ms. Use a longer timeout for POST so commands actually land.
-constexpr uint32_t HTTP_POST_TIMEOUT_MS = 15000;
+// Per-request budget for the manual POST implementation below. Inverter is
+// expected to respond well under 2s; anything longer is considered a stall.
+constexpr uint32_t HTTP_POST_BUDGET_MS = 3000;
+constexpr uint32_t HTTP_TCP_CONNECT_TIMEOUT_MS = 1500;
+constexpr uint32_t HTTP_FIRST_BYTE_TIMEOUT_MS = 2000;
 
 // Retry settings for connection worker: pulse once, then try connecting up to
 // MAX_CONNECT_RETRIES times (alternating dwell/auto) before signaling failure.
@@ -483,6 +484,148 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   HTTPClient http;
   String url = String("http://") + INVERTER_HOST + path;
 
+  // POST goes through a manual implementation to get phase-level timing logs.
+  if (method == "POST") {
+    unsigned long postStartMs = millis();
+    uint16_t host_port = 80;
+    if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] POST begin path=") + path +
+                    " host=" + INVERTER_HOST + ":" + host_port +
+                    " body_len=" + body.length());
+    }
+
+    wifiClient.setTimeout(HTTP_FIRST_BYTE_TIMEOUT_MS);
+
+    unsigned long t0 = millis();
+    int connectOk = wifiClient.connect(INVERTER_HOST, host_port, HTTP_TCP_CONNECT_TIMEOUT_MS);
+    unsigned long connectMs = millis() - t0;
+    if (!connectOk) {
+      errorMessage = String("POST ") + path + " failed: TCP connect (" + connectMs + "ms)";
+      httpCode = 0;
+      lastInverterStatusCode = 0;
+      if (debugMode) {
+        appLogger.log(String("[WIFI-DEBUG] POST tcp_connect_failed path=") + path +
+                      " connect_ms=" + connectMs +
+                      " wifi_status=" + wifiStatusToString(WiFi.status()));
+      }
+      wifiClient.stop();
+      wl_status_t status = WiFi.status();
+      if (status != WL_CONNECTED) {
+        powerDownWifiRadio();
+      }
+      return false;
+    }
+    if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] POST tcp_connected path=") + path +
+                    " connect_ms=" + connectMs);
+    }
+
+    // Build request and send headers + body in as few packets as possible.
+    String request;
+    request.reserve(96 + path.length() + body.length());
+    request += "POST ";
+    request += path;
+    request += " HTTP/1.1\r\nHost: ";
+    request += INVERTER_HOST;
+    request += "\r\nContent-Type: text/plain\r\nContent-Length: ";
+    request += String(body.length());
+    request += "\r\nConnection: close\r\n\r\n";
+    request += body;
+
+    unsigned long t1 = millis();
+    size_t sent = wifiClient.write((const uint8_t*)request.c_str(), request.length());
+    wifiClient.flush();
+    unsigned long sendMs = millis() - t1;
+    if (sent != request.length()) {
+      errorMessage = String("POST ") + path + " failed: short send (" + sent + "/" + request.length() + ")";
+      httpCode = 0;
+      lastInverterStatusCode = 0;
+      if (debugMode) {
+        appLogger.log(String("[WIFI-DEBUG] POST short_send path=") + path +
+                      " sent=" + sent + " expected=" + request.length() +
+                      " send_ms=" + sendMs);
+      }
+      wifiClient.stop();
+      return false;
+    }
+    if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] POST sent path=") + path +
+                    " bytes=" + sent + " send_ms=" + sendMs);
+    }
+
+    // Wait for first byte of response.
+    unsigned long t2 = millis();
+    unsigned long firstByteDeadline = t2 + HTTP_FIRST_BYTE_TIMEOUT_MS;
+    while (wifiClient.connected() && wifiClient.available() == 0 && millis() < firstByteDeadline) {
+      vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    unsigned long firstByteMs = millis() - t2;
+    if (wifiClient.available() == 0) {
+      errorMessage = String("POST ") + path + " failed: no response in " + firstByteMs + "ms (connected=" + wifiClient.connected() + ")";
+      httpCode = 0;
+      lastInverterStatusCode = 0;
+      if (debugMode) {
+        appLogger.log(String("[WIFI-DEBUG] POST no_response path=") + path +
+                      " first_byte_ms=" + firstByteMs +
+                      " connected=" + wifiClient.connected() +
+                      " wifi_status=" + wifiStatusToString(WiFi.status()) +
+                      " total_ms=" + (millis() - postStartMs));
+      }
+      wifiClient.stop();
+      return false;
+    }
+    if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] POST first_byte path=") + path +
+                    " first_byte_ms=" + firstByteMs);
+    }
+
+    // Read status line.
+    String statusLine = wifiClient.readStringUntil('\n');
+    int code = 0;
+    int sp1 = statusLine.indexOf(' ');
+    if (sp1 > 0) {
+      int sp2 = statusLine.indexOf(' ', sp1 + 1);
+      if (sp2 > sp1) {
+        code = statusLine.substring(sp1 + 1, sp2).toInt();
+      }
+    }
+
+    // Drain headers.
+    while (wifiClient.connected() || wifiClient.available()) {
+      String line = wifiClient.readStringUntil('\n');
+      if (line.length() == 0 || line == "\r") break;
+    }
+
+    // Read body until connection close or no more data within budget.
+    responseBody = "";
+    unsigned long bodyDeadline = millis() + 500;
+    while ((wifiClient.connected() || wifiClient.available()) && millis() < bodyDeadline) {
+      while (wifiClient.available()) {
+        responseBody += (char)wifiClient.read();
+        bodyDeadline = millis() + 200;
+      }
+      vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    wifiClient.stop();
+
+    unsigned long totalMs = millis() - postStartMs;
+    httpCode = code;
+    lastInverterStatusCode = code;
+    if (debugMode) {
+      appLogger.log(String("[WIFI-DEBUG] POST done path=") + path +
+                    " http=" + code +
+                    " total_ms=" + totalMs +
+                    " body_len=" + responseBody.length());
+    }
+    if (code <= 0) {
+      errorMessage = String("POST ") + path + " failed: bad status line '" + statusLine + "'";
+      return false;
+    }
+    logWifiBridge(String("POST ") + path + " success (HTTP " + code + ", " + totalMs + "ms)");
+    return true;
+  }
+
+  // GET path uses HTTPClient as before.
   if (!http.begin(wifiClient, url)) {
     errorMessage = String("Failed to initialize HTTP client for ") + path;
     httpCode = 0;
@@ -495,10 +638,6 @@ bool fetchInverterData(const String& method, const String& path, const String& b
 
   if (method == "GET") {
     code = http.GET();
-  } else if (method == "POST") {
-    http.setTimeout(HTTP_POST_TIMEOUT_MS);
-    http.addHeader("Content-Type", "text/plain");
-    code = http.POST(body);
   } else {
     errorMessage = String("Unsupported HTTP method: ") + method;
     http.end();
