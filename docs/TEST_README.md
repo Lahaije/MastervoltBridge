@@ -15,9 +15,9 @@ Validation guide for the ESP32 inverter bridge firmware.
 |---|---|
 | GET / | Endpoint discovery JSON |
 | GET /api/version | JSON with key: `firmware_version` |
-| GET /api/health | JSON with keys: `wifi_connected`, `wifi_ssid`, `wifi_ip`, `ethernet_ip`, `inverter_host`, `last_inverter_status`, `debug_mode` |
+| GET /api/health | JSON with keys: `wifi_connected`, `wifi_ssid`, `wifi_ip`, `ethernet_ip`, `inverter_host`, `last_inverter_status`, `debug_mode`, `inverter_link_state`, `inverter_failure_streak_ms`, `inverter_retry_interval_ms` |
 | GET /api/logs | Array of log entries |
-| GET /api/info | Inverter telemetry (or 502 if no cached telemetry yet) |
+| GET /api/info | Inverter telemetry (`ready=true` once a poll has succeeded; `ready=false` with empty fields immediately after boot) |
 
 ## Inverter-Dependent Endpoints
 
@@ -49,6 +49,6 @@ curl http://192.168.1.48:8080/pulse
 | /wifi/off returns 404 | Old firmware image | Re-upload latest firmware |
 | /api/logs JSON decode errors | Truncated response | Verify logging is not excessive |
 | /pulse returns `reconnected: false` at night | Inverter WiFi unavailable | Rerun daytime |
-| /api/info returns 502 after boot | First poll not yet complete | Wait 20-30 s and retry |
+| /api/info shows `ready=false` after boot | First poll not yet complete | Wait 20-30 s and retry |
 | /api/power returns 202 | Inverter WiFi unavailable, command queued | Expected; command will retry on future polls |
 | Connection timeouts in logs | Inverter WiFi module asleep | Bridge will auto-pulse on next attempt |

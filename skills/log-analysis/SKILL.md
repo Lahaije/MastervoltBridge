@@ -124,7 +124,10 @@ python skills/log-analysis/plot_power.py --limit 200
 Output is saved to `output/powerplot.png` by default and overwritten each run. The `output/` folder is git-ignored.
 
 Plot behavior notes:
-- Backoff transitions (`retry interval -> 60s` / `600s`) are drawn as dashed vertical markers.
+- Backoff transitions (link-state moves into `BACKOFF` -> 60s or `DORMANT` -> 600s)
+  are drawn as dashed vertical markers. Parsed from the firmware's
+  `[INVERTER-MONITOR] Link state: FROM -> TO (streak=..., interval=...)`
+  logs (debug-mode only).
 - In backoff mode, episode labels are simplified (no retry counts) to reduce clutter.
 - Post-backoff episode labels are thinned for readability in dense retry regions.
 
@@ -156,10 +159,13 @@ This is the best choice when you already have an archived snapshot and want to k
 **Session Summary** (always shown):
 - Uptime span and duration
 - Total log entries
-- Poll counts: successful, skipped (WiFi down), total
+- Poll counts: successful, total (the legacy `skipped` counter is always 0:
+  current firmware blocks on WiFi rather than logging per-iteration skips)
 - Power readings: min/avg/max/last + trend arrow (↑ ↓ →) with start-vs-end comparison
 - Disconnection episode count, average recovery time, average retries per episode
-- Backoff transition events (explicit `retry interval -> Ns` logs) with latest and recent switch points
+- Backoff transition events (link-state moves into BACKOFF or DORMANT,
+  parsed from `[INVERTER-MONITOR] Link state: ...` logs) with latest and
+  recent switch points
 
 **Connection Analysis**:
 - Total attempts, overall success/failure rate and timing (min/avg/max/median)
@@ -179,11 +185,11 @@ Use these as a fast-reference lookup when manually scanning `--print-all` output
 | `[WIFI-CONNECT] complete ... result=success ...` | wifi_bridge.cpp | WiFi connected — note `channel=` and `duration_ms=` |
 | `[WIFI-CONNECT] complete ... result=timeout ...` | wifi_bridge.cpp | Connect timed out (~8s budget); note `final_status=` |
 | `[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW` | inverter_monitor.cpp | Successful inverter poll. Status=1 is normal. Power in watts. |
-| `[INVERTER-MONITOR] No WiFi connection; skipping poll iteration` | inverter_monitor.cpp | Poll skipped — WiFi was down; counts as a lost sample |
-| `[INVERTER-MONITOR] Inverter recovered; resuming normal poll interval` | inverter_monitor.cpp | First successful poll after a disconnection episode |
-| `[INVERTER-MONITOR] Backoff: retry interval -> 60s` | inverter_monitor.cpp | Retry cadence switched to 60-second interval |
-| `[INVERTER-MONITOR] Backoff: retry interval -> 600s` | inverter_monitor.cpp | Retry cadence switched to 10-minute interval |
+| `[INVERTER-MONITOR] Link state: FROM -> TO (streak=Ns, interval=Ns)` | inverter_monitor.cpp | Link state changed (debug mode only). States: STARTING / ONLINE / RETRYING / BACKOFF / DORMANT. Backoff cadence = 60s; dormant cadence = 600s. |
+| `[INVERTER-MONITOR] Recovery after Ns: queuing MAX power reset (inverter state unknown)` | inverter_monitor.cpp | First successful poll after a long outage (BACKOFF or DORMANT -> ONLINE); defensive MAX-power reset queued. |
+| `[INVERTER-MONITOR] Recovery after Ns: user power command still queued, not overriding with MAX` | inverter_monitor.cpp | Same recovery transition, but a pending user `/api/power` command wins and the MAX reset is suppressed. |
 | `[INVERTER-MONITOR] Failed to fetch /home` | inverter_monitor.cpp | WiFi was up but HTTP request to inverter failed |
+| `[LOCK-HIERARCHY] VIOLATION ...` | lock_guard.cpp (via appLogger) | Lock-ordering rule violated; indicates a firmware bug. Include the bitmap and task name in any bug report. |
 | `[ETH] ENC28J60 hardware initialized. Waiting for cable...` | ethernet_bridge.cpp | Boot — Ethernet chip ready |
 | `[ETH] Cable detected. Attempting DHCP...` | ethernet_bridge.cpp | Physical Ethernet link came up |
 | `[ETH] DHCP OK. IP=192.168.1.48` | ethernet_bridge.cpp | LAN address assigned; API is reachable |
@@ -213,11 +219,11 @@ Morning ramp-up from sunrise.
 **"`Failed to fetch /home` after WiFi connected"**  
 WiFi up but inverter HTTP unreachable. Check if the inverter IP changed or if it rebooted mid-session.
 
-**"No WiFi connection; skipping poll iteration"**  
-Counted as `skipped` in Session Summary. High skipped counts indicate prolonged disconnection; divide by ~3 to estimate lost minutes of data.
+**"Link state: ... -> DORMANT (interval=600s)"**  
+Backoff escalation is active and reconnect attempts are now 10 minutes apart. This is explicitly logged by the firmware (debug-mode only) and usually indicates sustained unreachability. Earlier escalation: `-> BACKOFF (interval=60s)` after 5 minutes of failed polls.
 
-**"Backoff: retry interval -> 600s"**  
-Backoff escalation is active and reconnect attempts are now 10 minutes apart. This is explicitly logged (not inferred) and usually indicates sustained unreachability.
+**"Link state: BACKOFF -> ONLINE (or DORMANT -> ONLINE)"**  
+Recovery from a long outage. Look immediately afterwards for `Recovery after Ns: queuing MAX power reset` — the bridge defensively reasserts MAX power because the inverter may have rebooted during the outage.
 
 ## Expected Log Signals
 The scripts look for these log markers produced by `wifi_bridge.cpp`:
@@ -232,9 +238,10 @@ The scripts look for these log markers produced by `wifi_bridge.cpp`:
 Poll entries parsed for power stats:
 ```
 [INVERTER-MONITOR] Poll #N: Status=1 Power=674.547W
-[INVERTER-MONITOR] No WiFi connection; skipping poll iteration
-[INVERTER-MONITOR] Backoff: retry interval -> 60s
-[INVERTER-MONITOR] Backoff: retry interval -> 600s
+[INVERTER-MONITOR] Link state: ONLINE -> RETRYING (streak=20s, interval=20s)
+[INVERTER-MONITOR] Link state: RETRYING -> BACKOFF (streak=305s, interval=60s)
+[INVERTER-MONITOR] Link state: BACKOFF -> DORMANT (streak=1205s, interval=600s)
+[INVERTER-MONITOR] Link state: DORMANT -> ONLINE (streak=2400s, interval=20s)
 ```
 
 ## Timestamp Format

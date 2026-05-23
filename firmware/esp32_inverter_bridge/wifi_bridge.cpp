@@ -9,6 +9,7 @@
 
 #include "settings.h"
 #include "logger.h"
+#include "lock_guard.h"
 
 namespace {
 
@@ -69,25 +70,11 @@ uint8_t hintChannelIndex = 0;
 bool hasConfiguredHint = false;
 
 // ---------------------------------------------------------------------------
-// ScopedWifiOperationLock: RAII mutex guard for WiFi HTTP operations.
+// ScopedWifiOperationLock: alias for the hierarchy-aware ScopedLock at the
+// highest rank. Enforces that no business-state lock is held while we are
+// touching the WiFi radio or running an HTTP request.
 // ---------------------------------------------------------------------------
-class ScopedWifiOperationLock {
-public:
-  explicit ScopedWifiOperationLock(uint32_t timeoutMs)
-      : acquired_(wifiOperationMutex != nullptr &&
-                  xSemaphoreTake(wifiOperationMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE) {}
-
-  ~ScopedWifiOperationLock() {
-    if (acquired_) {
-      xSemaphoreGive(wifiOperationMutex);
-    }
-  }
-
-  bool acquired() const { return acquired_; }
-
-private:
-  bool acquired_;
-};
+using ScopedWifiOperationLock = ScopedLock<LockRank::WIFI_OPERATION>;
 
 // ---------------------------------------------------------------------------
 // Logging helpers.
@@ -314,7 +301,7 @@ void connectionWorkerTask(void* param) {
 
     // Acquire the WiFi operation mutex for the entire connection sequence.
     // This prevents HTTP requests from interfering during connect.
-    ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_CONNECTED_MS);
+    ScopedWifiOperationLock lock(wifiOperationMutex, WIFI_LOCK_TIMEOUT_CONNECTED_MS, "wifiOperationMutex/connect");
     if (!lock.acquired()) {
       // Someone else has the lock (e.g. an HTTP request in flight).
       // Wait for them to finish and check again.
@@ -413,7 +400,7 @@ void requestWifiConnection() {
 
 bool forceWifiReconnect() {
   // Acquire the operation lock to prevent interference.
-  ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_CONNECTED_MS);
+  ScopedWifiOperationLock lock(wifiOperationMutex, WIFI_LOCK_TIMEOUT_CONNECTED_MS, "wifiOperationMutex/forceReconnect");
   if (!lock.acquired()) {
     logWifiBridge("WiFi operation busy; lock not acquired for forceReconnect.");
     return false;
@@ -425,6 +412,10 @@ bool forceWifiReconnect() {
 bool fetchInverterData(const String& method, const String& path, const String& body,
                        String& responseBody, int& httpCode, String& errorMessage,
                        bool waitForConnection) {
+  // Lock-hierarchy invariant: never hold a business-state lock while doing
+  // network I/O. Logged loudly via appLogger if violated.
+  assertNoStateLocksHeld("fetchInverterData");
+
   // --- WiFi connectivity check ---
   if (!isWifiConnected()) {
     if (waitForConnection) {
@@ -447,7 +438,7 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   // Use a generous timeout: the current lock holder is doing an HTTP request
   // (max ~3.5s). We queue behind it rather than failing.
   unsigned long lockWaitStartMs = millis();
-  ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_CONNECTED_MS);
+  ScopedWifiOperationLock lock(wifiOperationMutex, WIFI_LOCK_TIMEOUT_CONNECTED_MS, "wifiOperationMutex/fetch");
   if (!lock.acquired()) {
     errorMessage = "WiFi operation busy; lock timeout";
     httpCode = 0;
@@ -685,7 +676,7 @@ bool fetchInverterData(const String& method, const String& path, const String& b
 }
 
 bool triggerWifiOffIfConnected() {
-  ScopedWifiOperationLock lock(WIFI_LOCK_TIMEOUT_CONNECTED_MS);
+  ScopedWifiOperationLock lock(wifiOperationMutex, WIFI_LOCK_TIMEOUT_CONNECTED_MS, "wifiOperationMutex/wifiOff");
   if (!lock.acquired()) {
     return false;
   }

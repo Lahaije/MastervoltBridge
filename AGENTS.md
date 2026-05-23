@@ -29,7 +29,11 @@ inverter_monitor.cpp/h (business logic)
   |- InverterMonitor singleton - FreeRTOS polling task (runtime-configurable; default 20s)
   |- Polls /home via fetchInverterData(..., waitForConnection=true)
   |- Power state machine (desired/confirmed/queued/timer)
-  |- caches HomeData; exposes getLatestHomeData(), setPower(), fetchPath()
+  |- Link state machine: STARTING / ONLINE / RETRYING / BACKOFF / DORMANT
+  |    transitions fire onLinkStateTransition(from, to, streakMs)
+  |    bound action: BACKOFF|DORMANT -> ONLINE = queueMaxPowerAfterLongDisconnect + applyPendingPowerCommand
+  |- caches HomeData; exposes getLatestHomeData(), setPower(), fetchPath(),
+  |    getLinkState(), getFailureStreakMs(), getRetryIntervalMs()
 
 ethernet_bridge.cpp/h (network layer)
   |- ENC28J60 init + HTTP API server on port 8080
@@ -84,7 +88,7 @@ Connect paths:
 |--------|------|---------|
 | GET | `/` | API discovery |
 | GET | `/api/version` | Firmware version currently running on this ESP |
-| GET | `/api/health` | Bridge status (WiFi, Ethernet, IPs) |
+| GET | `/api/health` | Bridge status (WiFi, Ethernet, IPs, inverter link state) |
 | GET | `/api/logs` | Log buffer (1000 entries) |
 | GET | `/api/info` | Latest cached inverter telemetry + power_limit state |
 | POST | `/api/polling` | Set monitor polling interval in seconds (1-3600) |
@@ -203,7 +207,7 @@ Useful log patterns:
 1. Prefer `fetchInverterData(..., waitForConnection)` over direct WiFi request logic in business code.
 2. Polling uses blocking connect (`waitForConnection=true`), API paths use fail-fast (`waitForConnection=false`).
 3. `/api/power` can return 202 (queued) when inverter WiFi is unavailable; this is expected.
-4. `/api/info` returns 502 until at least one successful poll has cached telemetry.
+4. `/api/info` returns 200 with `ready=false` (and empty telemetry strings) until at least one successful poll has cached telemetry.
 5. `/pulse` while connected intentionally drops/reconnects WiFi to force a measured connect attempt.
 6. `/wifi/off` only sends a single press when bridge WiFi is currently connected.
 7. ENC28J60 can crash on dead TCP write; always check `client.connected()` before streaming writes.

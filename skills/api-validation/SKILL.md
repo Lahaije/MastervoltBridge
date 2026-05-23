@@ -85,7 +85,7 @@ For each GET endpoint, checks:
 | `GET /` | `endpoints` |
 | `GET /api/health` | `wifi_connected`, `ethernet_ip` |
 | `GET /api/logs` | `entries` |
-| `GET /api/info` | `power`, `total_yield`, `daily_yield`, `power_limit` (or 502 if no cached telemetry yet) |
+| `GET /api/info` | `ready`, `power`, `total_yield`, `daily_yield`, `power_limit` (telemetry empty when `ready=false`) |
 | `GET /pulse` | `reconnected` |
 
 ---
@@ -98,7 +98,7 @@ For each GET endpoint, checks:
 | Documented endpoint missing from firmware | `api.cpp` is missing the handler | Add endpoint to `api.cpp`, re-upload with firmware-upload skill |
 | Firmware endpoint missing from documentation | New endpoint was added without updating docs | Update `docs/API_REFERENCE.md` and `AGENTS.md` endpoint table |
 | Response key missing | `api_helper.cpp` response changed, or docs are wrong | Align docs with firmware or restore the field |
-| `GET /api/info` returns 502 | No cached telemetry yet (boot/inverter unavailable) | Expected — wait for successful poll or rerun daytime |
+| `GET /api/info` returns `ready=false` | No cached telemetry yet (boot/inverter unavailable) | Expected — wait for successful poll or rerun daytime |
 | Bridge not reachable | Ethernet disconnected or wrong IP | Check hardware and bridge IP |
 
 ---

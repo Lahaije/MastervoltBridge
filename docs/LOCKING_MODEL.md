@@ -9,12 +9,39 @@ The firmware uses three synchronization domains:
 1. WiFi operation serialization in `wifi_bridge.cpp`
 2. Cached telemetry protection in `inverter_monitor.cpp`
 3. Power state-machine protection in `inverter_monitor.cpp`
+4. Polling configuration protection in `inverter_monitor.cpp`
 
 The design intentionally keeps lock hold times short and never holds a lock while waiting on network I/O unless that lock is specifically intended to serialize WiFi operations.
 
+## Hierarchy Enforcement (lock_guard.h)
+
+All four mutexes are acquired through `ScopedLock<LockRank>` from
+`firmware/esp32_inverter_bridge/lock_guard.h`. Each rank tags the mutex's
+position in the acquisition order:
+
+| Rank value | `LockRank` enum | Mutex |
+|---|---|---|
+| 0 | `POLLING_CONFIG` | `pollingConfigMutex` |
+| 1 | `DATA` | `dataMutex` |
+| 2 | `POWER_STATE` | `powerStateMutex` |
+| 3 | `WIFI_OPERATION` | `wifiOperationMutex` |
+
+The guard maintains a per-task bitmap of currently-held ranks and, on
+every acquisition, verifies that no rank `>= R` is already held by the
+calling task. Violations are logged via `appLogger` as
+`[LOCK-HIERARCHY] VIOLATION: ...` (visible in `/api/logs`). The guard
+still proceeds with the acquisition so the check never introduces new
+failure modes, but every violation indicates a bug.
+
+In addition, `fetchInverterData()` calls `assertNoStateLocksHeld(...)`
+at entry: any business-state lock held when an HTTP call begins is
+reported the same way. This catches both the most common ordering bug
+("HTTP under a state lock") and the most dangerous one (held across a
+3.5 s timeout).
+
 ## Lock Inventory
 
-### 1) `wifiOperationMutex` (global in `wifi_bridge.cpp`)
+### 1) `wifiOperationMutex` (global in `wifi_bridge.cpp`, rank `WIFI_OPERATION`)
 
 Purpose:
 - Serialize all WiFi operations that must not overlap:
@@ -28,7 +55,7 @@ Behavior:
 - `fetchInverterData(..., waitForConnection=false)` triggers the connection worker in the background and returns immediately if WiFi is down.
 
 Guard helper:
-- `ScopedWifiOperationLock`
+- `ScopedLock<LockRank::WIFI_OPERATION>` (aliased `ScopedWifiOperationLock`)
 
 Timeouts:
 - `WIFI_LOCK_TIMEOUT_SHORT_MS` (50 ms): short, non-blocking probes
@@ -37,7 +64,7 @@ Timeouts:
 Key rule:
 - Only one WiFi-affecting operation is active at a time.
 
-### 2) `dataMutex` (member of `InverterMonitor`)
+### 2) `dataMutex` (member of `InverterMonitor`, rank `DATA`)
 
 Purpose:
 - Protect cached telemetry and counters:
@@ -56,7 +83,7 @@ Timeout:
 Key rule:
 - Treat telemetry cache as a separate domain from power control state.
 
-### 3) `powerStateMutex` (member of `InverterMonitor`)
+### 3) `powerStateMutex` (member of `InverterMonitor`, rank `POWER_STATE`)
 
 Purpose:
 - Protect power-limit state machine fields:
@@ -81,14 +108,23 @@ Key rule:
 
 ## Lock Ordering Rules
 
-To avoid deadlock and hidden contention, follow these rules:
+To avoid deadlock and hidden contention, follow these rules. All are
+enforced at runtime by `ScopedLock<R>` (see *Hierarchy Enforcement* above);
+violations are logged as `[LOCK-HIERARCHY] VIOLATION` and visible via
+`/api/logs`.
 
-1. Do not hold `powerStateMutex` while calling `fetchInverterData()`.
-2. Do not nest `powerStateMutex` and `dataMutex`.
-3. WiFi operations are serialized only by `wifiOperationMutex`; business-logic state locks must not be used as transport locks.
+1. Acquire mutexes in ascending `LockRank` order:
+   `POLLING_CONFIG` < `DATA` < `POWER_STATE` < `WIFI_OPERATION`.
+2. Never hold a business-state lock (`POLLING_CONFIG`, `DATA`, or
+   `POWER_STATE`) while calling `fetchInverterData()`.
+3. WiFi operations are serialized only by `wifiOperationMutex`;
+   business-logic state locks must not be used as transport locks.
 4. Keep all lock scopes minimal (field read/write only).
 
-Current code follows these rules by design.
+The current code follows these rules by design, and the `ScopedLock`
+guard plus the `assertNoStateLocksHeld()` call at the entry of
+`fetchInverterData()` make every accidental future violation visible in
+the logs.
 
 ## Why This Split Exists
 
@@ -111,8 +147,16 @@ Current approach:
 
 When adding new code:
 
-1. If touching WiFi radio or inverter HTTP path, use `ScopedWifiOperationLock`.
-2. If touching telemetry cache fields, use `dataMutex`.
-3. If touching power-limit fields, use `powerStateMutex`.
-4. If you need both transport and power state, update power state first (short lock), release, then perform transport call.
-5. Never add long `delay()` sections inside lock scopes.
+1. If touching WiFi radio or inverter HTTP path, use
+   `ScopedLock<LockRank::WIFI_OPERATION>` (alias `ScopedWifiOperationLock`).
+2. If touching telemetry cache fields, use
+   `ScopedLock<LockRank::DATA>` (alias `ScopedDataLock`).
+3. If touching power-limit fields, use
+   `ScopedLock<LockRank::POWER_STATE>` (alias `ScopedPowerStateLock`).
+4. If touching polling configuration fields, use
+   `ScopedLock<LockRank::POLLING_CONFIG>` (alias `ScopedPollingConfigLock`).
+5. If you need both transport and power state, update power state first
+   (short lock), release, then perform transport call.
+6. Never add long `delay()` sections inside lock scopes.
+7. Adding a new mutex? Add a new `LockRank` value at the correct position
+   in `lock_guard.h` and wrap acquisitions in `ScopedLock<...>`.

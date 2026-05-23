@@ -38,6 +38,7 @@ See [`docs/WIRING_README.md`](docs/WIRING_README.md) for the full pin table and 
 
 - Power commands are delivered immediately when inverter WiFi is reachable (`200 OK`).
 - If inverter WiFi is down, power commands are queued and return `202 Accepted`.
+- `GET /api/health` exposes the inverter link state (`STARTING` / `ONLINE` / `RETRYING` / `BACKOFF` / `DORMANT`), failure-streak duration, and current retry interval. On recovery from `BACKOFF` or `DORMANT`, a MAX-power reset is automatically queued so the inverter returns to full production after any extended outage.
 
 See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full reference.
 

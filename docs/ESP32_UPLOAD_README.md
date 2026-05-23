@@ -26,7 +26,7 @@ arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverte
 
 When inverter WiFi is unavailable:
 
-- /api/info should return 502 (no cached telemetry yet)
+- /api/info should return 200 with `ready=false` (no cached telemetry yet)
 - /api/power should return 202 (command queued for retry)
 - /api/inverter/fetch should return 502
 

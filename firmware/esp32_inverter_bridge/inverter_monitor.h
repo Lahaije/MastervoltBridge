@@ -10,6 +10,31 @@
 #include "settings.h"
 
 /**
+ * Link-state machine for the inverter polling loop.
+ *
+ * Transitions are driven by the failure streak length (no successful /home
+ * poll since this many ms). The polling interval per state is in
+ * inverter_monitor.cpp (LINK_*_INTERVAL_MS constants).
+ *
+ *   STARTING  -> ONLINE                : first ever successful poll
+ *   ONLINE    -> RETRYING              : poll failed
+ *   RETRYING  -> ONLINE                : poll succeeded (no recovery action)
+ *   RETRYING  -> BACKOFF               : streak >= LINK_RETRYING_TO_BACKOFF_MS
+ *   BACKOFF   -> ONLINE (+MAX reset)   : poll succeeded after long outage
+ *   BACKOFF   -> DORMANT               : streak >= LINK_BACKOFF_TO_DORMANT_MS
+ *   DORMANT   -> ONLINE (+MAX reset)   : poll succeeded after very long outage
+ */
+enum class InverterLinkState : uint8_t {
+  STARTING = 0,  // boot, no successful poll yet
+  ONLINE,        // last poll OK; polling at base interval
+  RETRYING,      // streak < short threshold; still at base interval
+  BACKOFF,       // streak between short and long thresholds; relaxed interval
+  DORMANT,       // streak >= long threshold; max-throttled retries (e.g. overnight)
+};
+
+const char* toString(InverterLinkState s);
+
+/**
  * InverterMonitor: Manages polling of the inverter's /home endpoint,
  * caches the latest response as a parsed HomeData object, and provides
  * HTTP request functions for interacting with the inverter.
@@ -84,6 +109,16 @@ public:
    */
   bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
 
+  /**
+   * Current link state and how long the bridge has been failing to reach
+   * the inverter. failure_streak_ms == 0 when state is ONLINE or STARTING.
+   * retry_interval_ms is the interval the polling loop will wait until the
+   * next attempt while in the current state.
+   */
+  InverterLinkState getLinkState();
+  uint32_t getFailureStreakMs();
+  uint32_t getRetryIntervalMs();
+
 private:
   InverterMonitor();
   ~InverterMonitor();
@@ -108,6 +143,21 @@ private:
   // if the inverter is already at MAX nothing is queued.
   void queueMaxPowerAfterLongDisconnect(uint32_t streakMs);
 
+  // Fired by the polling task whenever the link state changes. All actions
+  // that should run once-per-transition (as opposed to once-per-poll) belong
+  // here. Called from the polling task only; not thread-safe for arbitrary
+  // callers. streakMs is the failure-streak duration at the moment of the
+  // transition (always 0 when transitioning into ONLINE).
+  //
+  // Current bindings:
+  //   STARTING -> ONLINE                : (none; cached telemetry now available)
+  //   ONLINE   -> RETRYING              : (none; first failure of a new streak)
+  //   RETRYING -> BACKOFF               : (none; relaxed retry cadence starts)
+  //   BACKOFF  -> DORMANT               : (none; max-throttled cadence starts)
+  //   BACKOFF|DORMANT -> ONLINE         : queueMaxPowerAfterLongDisconnect()
+  //                                       + applyPendingPowerCommand()
+  void onLinkStateTransition(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
+
   // Private state
   TaskHandle_t pollingTaskHandle = nullptr;
   SemaphoreHandle_t dataMutex = nullptr;
@@ -120,6 +170,13 @@ private:
   // Polling interval runtime config.
   SemaphoreHandle_t pollingConfigMutex = nullptr;
   uint32_t pollingIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+
+  // Link-state snapshot. Written only by the polling task; read by API
+  // handlers. Reads/writes are protected by pollingConfigMutex (cheap
+  // tiny-state lock; reuses an existing mutex to avoid adding another).
+  InverterLinkState linkState = InverterLinkState::STARTING;
+  uint32_t failureStartMs = 0;     // millis() when current streak began; 0 if none
+  uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 
   // Power limit state machine. All fields below are protected by powerStateMutex.
   // Held briefly only to read/update fields (never across HTTP calls).

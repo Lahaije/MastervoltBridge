@@ -170,14 +170,11 @@ void handleApiClient(EthernetClient& client) {
   }
   
   if (method == "GET" && path == "/api/info") {
-    // Retrieve latest cached inverter telemetry from polling task
+    // Always return 200 with a `ready` flag. Before the first successful
+    // poll, telemetry fields will be empty strings; clients should branch
+    // on `ready` rather than expect non-empty values. This avoids the
+    // startup-race 502 that callers previously had to poll around.
     HomeData inverterData = getInverterData();
-    if (!inverterData.isValid()) {
-      // Polling hasn't completed yet or WiFi connection failed
-      sendHttpResponse(client, 502, "application/json", buildErrorJson("No inverter telemetry data available yet"));
-      return;
-    }
-
     unsigned long lastUpdateMs = InverterMonitor::getInstance().getLastUpdateMs();
     sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs));
     return;

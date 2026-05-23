@@ -46,9 +46,41 @@ Returns bridge state, including:
 - ethernet_ip
 - inverter_host
 - last_inverter_status
+- inverter_link_state — one of `STARTING`, `ONLINE`, `RETRYING`, `BACKOFF`, `DORMANT` (see "Inverter link state machine" below)
+- inverter_failure_streak_ms — milliseconds since the current failure streak began; `0` while ONLINE/STARTING
+- inverter_retry_interval_ms — the interval the polling loop will wait between attempts while in the current state
 - debug_mode
 
 When inverter is unavailable, this endpoint still works.
+
+### Inverter link state machine
+
+The polling loop tracks how long the bridge has been unable to reach the
+inverter and exposes that as a named link state. Transitions are driven by
+the failure-streak duration:
+
+| State | Entry condition | Retry interval |
+|---|---|---|
+| `STARTING` | Boot, no successful poll yet | base `poll_interval_seconds` |
+| `ONLINE` | Last poll succeeded | base `poll_interval_seconds` |
+| `RETRYING` | Streak > 0, < 5 min | base `poll_interval_seconds` |
+| `BACKOFF` | Streak ≥ 5 min, < 20 min | 60 s |
+| `DORMANT` | Streak ≥ 20 min | 600 s (10 min) |
+
+Every transition fires a single internal event hook
+(`onLinkStateTransition`). Bound actions today:
+
+- `BACKOFF` or `DORMANT` → `ONLINE`: queue a MAX-power reset and attempt
+  immediate delivery. The queued command is retried on every successful
+  poll until accepted (see `docs/MAX_POWER_BEHAVIOR.md`).
+- All other transitions: no bound action; the transition is logged when
+  `debug_mode` is enabled.
+
+When `debug_mode` is enabled, transitions are logged as:
+
+```
+[INVERTER-MONITOR] Link state: BACKOFF -> ONLINE (streak=1247s, interval=20s)
+```
 
 ## GET /api/logs
 
@@ -64,13 +96,16 @@ Notes:
 
 ## GET /api/info
 
-Returns cached parsed inverter telemetry from /home.
+Returns cached parsed inverter telemetry from /home. Always returns `200 OK`.
+Before the first successful poll the telemetry string fields are empty;
+clients should branch on the `ready` flag.
 
 Response fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `last_update_ms` | number | Bridge uptime ms of last successful poll |
+| `ready` | bool | `true` once at least one poll has succeeded; while `false` all telemetry strings are empty |
+| `last_update_ms` | number | Bridge uptime ms of last successful poll (`0` until ready) |
 | `firmware_version` | string | Firmware version currently running on this ESP |
 | `poll_interval_seconds` | number | Current normal polling interval in seconds |
 | `poll_interval_ms` | number | Current normal polling interval in milliseconds |
@@ -87,9 +122,8 @@ Response fields:
 | `power_limit.queued` | bool | true when a power command is waiting for delivery |
 | `power_limit.reset_timer_minutes` | number | Whole minutes until auto-reset to max, derived from `POWER_LIMIT_RESET_MINUTES` (0 = inactive/elapsed) |
 
-Typical failure when inverter is unavailable:
-
-- 502 with error: No inverter telemetry data available yet
+This endpoint no longer returns 502 on startup. A caller polling for
+readiness should check `ready == true`.
 
 ## POST /api/power
 
@@ -186,8 +220,17 @@ Important behavior:
 Purpose:
 
 - Enable or disable debug mode at runtime.
-- When debug mode is **on**, `[WIFI-BRIDGE] METHOD /path success (HTTP 200)` entries are written to the log buffer on every successful inverter poll.
-- When debug mode is **off** (the default after boot), HTTP 200 successes are silent to keep the log buffer focused on errors and connectivity events.
+- Logging asymmetry by HTTP method (see `wifi_bridge.cpp::fetchInverterData`):
+  - **POST** request successes (e.g. `/api/power` writes) are **always** logged as
+    `[WIFI-BRIDGE] POST /path success (HTTP 200, Nms)` to provide an audit trail
+    for every state-changing call. They are not gated by debug mode.
+  - **GET** request successes (e.g. `/home` polls) are gated by debug mode and
+    logged as `[WIFI-BRIDGE] GET /path success (HTTP 200)` only when debug is on.
+- Debug mode additionally gates `[INVERTER-MONITOR] Link state: ...` transition
+  logs and other high-volume diagnostic messages.
+- When debug mode is **off** (the default after boot), GET successes and link-state
+  transitions are silent to keep the log buffer focused on errors, connectivity
+  events, and write-path activity.
 
 Body:
 
@@ -207,7 +250,7 @@ Debug mode starts as `true` at boot and is automatically set to `false` at the e
 
 When inverter WiFi is not available:
 
-- GET /api/info -> 502
+- GET /api/info -> 200 with `ready=false` if no poll has ever succeeded; otherwise 200 with the last cached telemetry (`ready=true`, but `last_update_ms` will be stale)
 - POST /api/power -> 202 (queued)
 - POST /api/inverter/fetch -> 502
 

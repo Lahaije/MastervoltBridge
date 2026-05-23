@@ -151,6 +151,7 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     "}";
 
   return JsonBuilder()
+    .addBool("ready", data.isValid())
     .addNumber("last_update_ms", String(lastUpdateMs))
     .addString("firmware_version", String(FIRMWARE_VERSION))
     .addString("operating_status", data.operatingStatus)
@@ -168,6 +169,7 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
 }
 
 String buildHealthJson() {
+  InverterMonitor& mon = InverterMonitor::getInstance();
   return JsonBuilder()
     .addBool("wifi_connected", WiFi.status() == WL_CONNECTED)
     .addString("wifi_ssid", String(INVERTER_WIFI_SSID))
@@ -175,6 +177,9 @@ String buildHealthJson() {
     .addString("ethernet_ip", Ethernet.localIP().toString())
     .addString("inverter_host", String(INVERTER_HOST))
     .addNumber("last_inverter_status", String(lastInverterStatusCode))
+    .addString("inverter_link_state", String(toString(mon.getLinkState())))
+    .addNumber("inverter_failure_streak_ms", String(mon.getFailureStreakMs()))
+    .addNumber("inverter_retry_interval_ms", String(mon.getRetryIntervalMs()))
     .addBool("debug_mode", debugMode)
     .build();
 }

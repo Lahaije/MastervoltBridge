@@ -4,66 +4,68 @@
 #include "settings.h"
 #include "logger.h"
 #include "wifi_bridge.h"
+#include "lock_guard.h"
 
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
-constexpr bool ENABLE_INVERTER_POLLING = true;
 constexpr uint32_t POWER_STATE_LOCK_TIMEOUT_MS = 1000;
+constexpr uint32_t DATA_LOCK_TIMEOUT_MS = 5000;
+constexpr uint32_t POLLING_CONFIG_LOCK_TIMEOUT_MS = 1000;
 
-// RAII lock guard for power-state mutex. Held briefly only.
-class ScopedPowerStateLock {
-public:
-  ScopedPowerStateLock(SemaphoreHandle_t mtx, uint32_t timeoutMs)
-      : mutex_(mtx),
-        acquired_(mtx != nullptr && xSemaphoreTake(mtx, pdMS_TO_TICKS(timeoutMs)) == pdTRUE) {}
-  ~ScopedPowerStateLock() {
-    if (acquired_ && mutex_ != nullptr) xSemaphoreGive(mutex_);
-  }
-  bool acquired() const { return acquired_; }
-private:
-  SemaphoreHandle_t mutex_;
-  bool acquired_;
-};
+// Aliases for clarity at call sites. All three obey the lock hierarchy
+// enforced by lock_guard.h: POLLING_CONFIG < DATA < POWER_STATE < WIFI.
+using ScopedPowerStateLock    = ScopedLock<LockRank::POWER_STATE>;
+using ScopedDataLock          = ScopedLock<LockRank::DATA>;
+using ScopedPollingConfigLock = ScopedLock<LockRank::POLLING_CONFIG>;
 
 // ---------------------------------------------------------------------------
-// Stepped retry backoff for inverter unavailability (e.g. overnight).
-// When the inverter stops responding the poll interval is relaxed in stages
-// to avoid flooding the log buffer and hammering the GPIO button all night.
-// On the next successful poll the interval resets to normal automatically.
-// Edit this table to tune retry aggressiveness vs. log/GPIO noise.
+// Link-state thresholds and per-state polling intervals.
+//
+// The polling loop occupies one InverterLinkState at a time, derived from
+// the length of the current failure streak. The state determines the next
+// retry interval and is exposed via /api/health for the dashboard.
+//
+// Edit these to tune retry aggressiveness vs. log/GPIO noise.
 // ---------------------------------------------------------------------------
-struct BackoffStage {
-  uint32_t after_failure_ms;  // Enter this stage once failure streak >= this duration
-  uint32_t interval_ms;       // Poll/retry interval while in this stage
-};
+static constexpr uint32_t LINK_RETRYING_TO_BACKOFF_MS =  5u * 60u * 1000u;  // 5 min
+static constexpr uint32_t LINK_BACKOFF_TO_DORMANT_MS  = 20u * 60u * 1000u;  // 20 min
+static constexpr uint32_t LINK_BACKOFF_INTERVAL_MS    =        60u * 1000u; // 1 min
+static constexpr uint32_t LINK_DORMANT_INTERVAL_MS    =      600u * 1000u;  // 10 min
 
-static const BackoffStage BACKOFF_STAGES[] = {
-  {  5 * 60000u,  60000u },  //  5 – 20 min : every  1 min
-  { 20 * 60000u, 600000u },  // 20+    min  : every 10 min
-};
-static constexpr size_t BACKOFF_STAGE_COUNT = sizeof(BACKOFF_STAGES) / sizeof(BACKOFF_STAGES[0]);
+// Decide which link state matches a given failure-streak length.
+// streakMs == 0 means "no failure streak", which the caller should map to
+// ONLINE (or STARTING on first boot).
+static InverterLinkState linkStateFromStreak(uint32_t streakMs) {
+  if (streakMs == 0) return InverterLinkState::ONLINE;
+  if (streakMs >= LINK_BACKOFF_TO_DORMANT_MS) return InverterLinkState::DORMANT;
+  if (streakMs >= LINK_RETRYING_TO_BACKOFF_MS) return InverterLinkState::BACKOFF;
+  return InverterLinkState::RETRYING;
+}
 
-// A failure streak this long counts as a "long disconnect". On recovery the
-// monitor will force a power-limit reset to MAX because the inverter may have
-// rebooted / forgotten our last setting, and we cannot read the current limit
-// back from it. Matches the first backoff threshold so any time we entered
-// reduced polling, we re-arm to MAX on the next successful poll.
-static constexpr uint32_t LONG_DISCONNECT_THRESHOLD_MS = 5u * 60u * 1000u;
-
-static uint32_t getBackoffIntervalMs(uint32_t failedForMs, uint32_t baseIntervalMs) {
-  if (failedForMs < BACKOFF_STAGES[0].after_failure_ms) {
-    return baseIntervalMs;
+static uint32_t intervalForState(InverterLinkState s, uint32_t baseIntervalMs) {
+  switch (s) {
+    case InverterLinkState::BACKOFF: return LINK_BACKOFF_INTERVAL_MS;
+    case InverterLinkState::DORMANT: return LINK_DORMANT_INTERVAL_MS;
+    case InverterLinkState::STARTING:
+    case InverterLinkState::ONLINE:
+    case InverterLinkState::RETRYING:
+    default:
+      return baseIntervalMs;
   }
-  // Walk stages in reverse; return the interval of the last threshold reached.
-  for (int i = static_cast<int>(BACKOFF_STAGE_COUNT) - 1; i >= 0; i--) {
-    if (failedForMs >= BACKOFF_STAGES[i].after_failure_ms) {
-      return BACKOFF_STAGES[i].interval_ms;
-    }
-  }
-  return baseIntervalMs;
 }
 
 }  // namespace
+
+const char* toString(InverterLinkState s) {
+  switch (s) {
+    case InverterLinkState::STARTING: return "STARTING";
+    case InverterLinkState::ONLINE:   return "ONLINE";
+    case InverterLinkState::RETRYING: return "RETRYING";
+    case InverterLinkState::BACKOFF:  return "BACKOFF";
+    case InverterLinkState::DORMANT:  return "DORMANT";
+  }
+  return "UNKNOWN";
+}
 
 InverterMonitor::InverterMonitor() {
 }
@@ -89,7 +91,7 @@ void InverterMonitor::initialize() {
     pollingConfigMutex = xSemaphoreCreateMutex();
   }
 
-  if (ENABLE_INVERTER_POLLING && pollingTaskHandle == nullptr) {
+  if (pollingTaskHandle == nullptr) {
     xTaskCreatePinnedToCore(
       pollingTaskEntry,
       "inverter_monitor",
@@ -102,11 +104,7 @@ void InverterMonitor::initialize() {
   }
 
   isInitialized = true;
-  if (ENABLE_INVERTER_POLLING) {
-    appLogger.log("[INVERTER-MONITOR] Inverter monitor initialized");
-  } else {
-    appLogger.log("[INVERTER-MONITOR] Inverter polling disabled (measurement mode)");
-  }
+  appLogger.log("[INVERTER-MONITOR] Inverter monitor initialized");
 }
 
 void InverterMonitor::shutdown() {
@@ -142,20 +140,19 @@ void InverterMonitor::pollingTaskEntry(void* param) {
 }
 
 bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
-  if (dataMutex == nullptr) {
-    return false;
-  }
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-    return false;
-  }
+  if (dataMutex == nullptr) return false;
+  ScopedDataLock lock(dataMutex, DATA_LOCK_TIMEOUT_MS, "dataMutex");
+  if (!lock.acquired()) return false;
   counter++;
-  xSemaphoreGive(dataMutex);
   return true;
 }
 
 void InverterMonitor::runPollingTask() {
-  uint32_t failureStartMs = 0;  // millis() when current failure streak began; 0 = no streak
-  uint32_t lastIntervalMs = getPollingIntervalMs();
+  // failureStartMs and linkState are members so the API layer can read them.
+  // The polling task is the sole writer.
+  failureStartMs = 0;
+  linkState = InverterLinkState::STARTING;
+  currentRetryIntervalMs = getPollingIntervalMs();
 
   while (true) {
     bool iterationOk = false;
@@ -173,16 +170,17 @@ void InverterMonitor::runPollingTask() {
       HomeData parsedData;
       if (parseHomeResponse(rawResponse, parsedData)) {
         // Update cached data with mutex protection
-        if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-          cachedData = parsedData;
-          lastUpdateMs = millis();
-          successfulPolls++;
-          xSemaphoreGive(dataMutex);
-
-          appLogger.log(String("[INVERTER-MONITOR] Poll #") + successfulPolls +
-                        ": Status=" + parsedData.operatingStatus +
-                        " Power=" + parsedData.instantaneousPower + "W");
+        {
+          ScopedDataLock lock(dataMutex, DATA_LOCK_TIMEOUT_MS, "dataMutex");
+          if (lock.acquired()) {
+            cachedData = parsedData;
+            lastUpdateMs = millis();
+            successfulPolls++;
+          }
         }
+        appLogger.log(String("[INVERTER-MONITOR] Poll #") + successfulPolls +
+                      ": Status=" + parsedData.operatingStatus +
+                      " Power=" + parsedData.instantaneousPower + "W");
         iterationOk = true;
 
         // After a successful poll, first check whether the auto-reset timer
@@ -199,36 +197,44 @@ void InverterMonitor::runPollingTask() {
       appLogger.log(String("[INVERTER-MONITOR] Failed to fetch /home: ") + errorMessage);
     }
 
-    // Update failure streak tracking and compute next sleep interval.
+    // ---- Link state transition + recovery action ----
+    InverterLinkState prevState = linkState;
+    InverterLinkState newState;
+    uint32_t streakMs = 0;
+
     if (iterationOk) {
-      if (failureStartMs != 0) {
-        uint32_t streakMs = millis() - failureStartMs;
-        appLogger.log(String("[INVERTER-MONITOR] Inverter recovered after ") +
-                      (streakMs / 1000) + "s; resuming normal poll interval");
-        if (streakMs >= LONG_DISCONNECT_THRESHOLD_MS) {
-          // Long disconnect: inverter state is unknown (it may have rebooted
-          // or its power-limit timeout may have expired during the outage).
-          // Force a MAX-power reset and let applyPendingPowerCommand deliver
-          // it on this iteration / retry on subsequent polls until accepted.
-          queueMaxPowerAfterLongDisconnect(streakMs);
-          applyPendingPowerCommand();
-        }
-        failureStartMs = 0;
-      }
-      lastIntervalMs = getPollingIntervalMs();
+      streakMs = (failureStartMs != 0) ? (millis() - failureStartMs) : 0;
+      newState = InverterLinkState::ONLINE;
+      failureStartMs = 0;
     } else {
       if (failureStartMs == 0) {
         failureStartMs = millis();
       }
-      uint32_t nextIntervalMs = getBackoffIntervalMs(millis() - failureStartMs, getPollingIntervalMs());
-      if (nextIntervalMs != lastIntervalMs) {
-        appLogger.log(String("[INVERTER-MONITOR] Backoff: retry interval -> ") +
-                      (nextIntervalMs / 1000) + "s");
-        lastIntervalMs = nextIntervalMs;
-      }
+      streakMs = millis() - failureStartMs;
+      newState = linkStateFromStreak(streakMs);
     }
 
-    vTaskDelay(pdMS_TO_TICKS(lastIntervalMs));
+    uint32_t baseIntervalMs = getPollingIntervalMs();
+    uint32_t nextIntervalMs = intervalForState(newState, baseIntervalMs);
+
+    if (newState != prevState) {
+      linkState = newState;
+      currentRetryIntervalMs = nextIntervalMs;
+      if (debugMode) {
+        appLogger.log(String("[INVERTER-MONITOR] Link state: ") + toString(prevState) +
+                      " -> " + toString(newState) +
+                      " (streak=" + (streakMs / 1000) + "s, interval=" +
+                      (nextIntervalMs / 1000) + "s)");
+      }
+      // Fire the single transition event. All once-per-transition behaviour
+      // lives in onLinkStateTransition() so this loop stays a pure dispatcher.
+      onLinkStateTransition(prevState, newState, streakMs);
+    } else if (nextIntervalMs != currentRetryIntervalMs) {
+      // Same state but the base interval may have been retuned at runtime.
+      currentRetryIntervalMs = nextIntervalMs;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(nextIntervalMs));
   }
 }
 
@@ -238,33 +244,22 @@ bool InverterMonitor::getLatestHomeData(HomeData& dataOut) {
     return false;
   }
 
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+  ScopedDataLock lock(dataMutex, DATA_LOCK_TIMEOUT_MS, "dataMutex");
+  if (!lock.acquired()) {
     appLogger.log("[INVERTER-MONITOR] Failed to acquire data mutex");
     return false;
   }
 
-  if (!cachedData.isValid()) {
-    xSemaphoreGive(dataMutex);
-    return false;
-  }
-
+  if (!cachedData.isValid()) return false;
   dataOut = cachedData;
-  xSemaphoreGive(dataMutex);
   return true;
 }
 
 unsigned long InverterMonitor::getLastUpdateMs() {
-  if (dataMutex == nullptr) {
-    return 0;
-  }
-
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-    return 0;
-  }
-
-  unsigned long result = lastUpdateMs;
-  xSemaphoreGive(dataMutex);
-  return result;
+  if (dataMutex == nullptr) return 0;
+  ScopedDataLock lock(dataMutex, DATA_LOCK_TIMEOUT_MS, "dataMutex");
+  if (!lock.acquired()) return 0;
+  return lastUpdateMs;
 }
 
 bool InverterMonitor::setPollingIntervalSeconds(uint32_t seconds, uint32_t& appliedMs, String& errorMessage) {
@@ -278,31 +273,42 @@ bool InverterMonitor::setPollingIntervalSeconds(uint32_t seconds, uint32_t& appl
     return false;
   }
 
-  if (xSemaphoreTake(pollingConfigMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  ScopedPollingConfigLock lock(pollingConfigMutex, POLLING_CONFIG_LOCK_TIMEOUT_MS, "pollingConfigMutex");
+  if (!lock.acquired()) {
     errorMessage = "polling config mutex busy";
     return false;
   }
 
   pollingIntervalMs = seconds * 1000UL;
   appliedMs = pollingIntervalMs;
-
-  xSemaphoreGive(pollingConfigMutex);
   appLogger.log(String("[INVERTER-MONITOR] Poll interval updated to ") + seconds + "s");
   return true;
 }
 
 uint32_t InverterMonitor::getPollingIntervalMs() {
-  if (pollingConfigMutex == nullptr) {
-    return WIFI_BRIDGE_POLL_INTERVAL_MS;
-  }
+  if (pollingConfigMutex == nullptr) return WIFI_BRIDGE_POLL_INTERVAL_MS;
+  ScopedPollingConfigLock lock(pollingConfigMutex, POLLING_CONFIG_LOCK_TIMEOUT_MS, "pollingConfigMutex");
+  // Best-effort read if the lock is contended; pollingIntervalMs is a 32-bit
+  // value whose torn read would just yield a slightly stale interval.
+  if (!lock.acquired()) return pollingIntervalMs;
+  return pollingIntervalMs;
+}
 
-  if (xSemaphoreTake(pollingConfigMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-    return pollingIntervalMs;
-  }
+InverterLinkState InverterMonitor::getLinkState() {
+  // linkState is written only by the polling task. Reading a uint8_t enum
+  // value is atomic on ESP32; no lock needed.
+  return linkState;
+}
 
-  uint32_t result = pollingIntervalMs;
-  xSemaphoreGive(pollingConfigMutex);
-  return result;
+uint32_t InverterMonitor::getFailureStreakMs() {
+  uint32_t startMs = failureStartMs;  // atomic read of uint32_t on ESP32
+  if (startMs == 0) return 0;
+  uint32_t now = millis();
+  return (now >= startMs) ? (now - startMs) : 0;
+}
+
+uint32_t InverterMonitor::getRetryIntervalMs() {
+  return currentRetryIntervalMs;
 }
 
 bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, String& errorMessage) {
@@ -503,6 +509,30 @@ void InverterMonitor::queueMaxPowerAfterLongDisconnect(uint32_t streakMs) {
   timerTriggeredReset = true;   // exempt from POWER_COMMAND_EXPIRY_MS so it keeps retrying
   powerCommandQueued = true;
   powerLimitResetAtMs = 0;      // clear any pending auto-reset; we're resetting now
+}
+
+void InverterMonitor::onLinkStateTransition(InverterLinkState from,
+                                            InverterLinkState to,
+                                            uint32_t streakMs) {
+  // Single dispatch point for every link-state transition. Add new bindings
+  // here; the polling loop and any callers stay untouched.
+  //
+  // Recovery from an extended outage: the inverter may have rebooted or its
+  // power-limit reset timer may have elapsed while we were unreachable, and
+  // there is no read-back endpoint for the current limit. Defensively force
+  // a MAX-power reset; applyPendingPowerCommand() delivers it on this
+  // iteration and the queued command persists across polls until accepted.
+  const bool wasOutage =
+      (from == InverterLinkState::BACKOFF || from == InverterLinkState::DORMANT);
+  if (to == InverterLinkState::ONLINE && wasOutage) {
+    queueMaxPowerAfterLongDisconnect(streakMs);
+    applyPendingPowerCommand();
+    return;
+  }
+
+  // STARTING -> ONLINE, ONLINE -> RETRYING, RETRYING -> BACKOFF,
+  // BACKOFF -> DORMANT: no bound action today. The transition is logged
+  // (when debugMode is on) by runPollingTask() before calling this method.
 }
 
 bool InverterMonitor::fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage) {
