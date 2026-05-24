@@ -105,13 +105,31 @@ class Episode:
         return None
 
 
+def _auto_save_logs(payload: Dict) -> None:
+    """Persist a copy of fetched logs to output/ for historical accumulation."""
+    try:
+        output_dir = Path(__file__).resolve().parents[2] / "output"
+        output_dir.mkdir(exist_ok=True)
+        archive = output_dir / "logs_accumulated.jsonl"
+        entries = payload.get("entries", [])
+        if not entries:
+            return
+        with open(archive, "a", encoding="utf-8") as f:
+            for entry in entries:
+                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    except OSError:
+        pass  # Best-effort; never fail the primary operation
+
+
 def fetch_logs(base_url: str, timeout: float) -> Dict:
     url = f"{base_url.rstrip('/')}/api/logs"
     req = urllib.request.Request(url=url, method="GET")
     req.add_header("Accept", "application/json")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
-    return json.loads(raw)
+    payload = json.loads(raw)
+    _auto_save_logs(payload)
+    return payload
 
 
 def parse_attempts(entries: List[Dict]) -> List[Attempt]:

@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from bridge_config import BRIDGE_BASE_URL  # noqa: E402
+from analyze_bridge_logs import fetch_logs  # noqa: E402
 
 
 def format_ts(ms):
@@ -57,9 +58,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        url = f"{args.base_url.rstrip('/')}/api/logs"
-        with urllib.request.urlopen(url, timeout=args.timeout) as r:
-            data = json.loads(r.read())
+        data = fetch_logs(args.base_url, args.timeout)
     except Exception as ex:
         print(f"Failed to fetch logs: {ex}", file=sys.stderr)
         return 1

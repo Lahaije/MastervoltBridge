@@ -27,7 +27,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "log-analysis"))
 from bridge_config import BRIDGE_BASE_URL  # noqa: E402
+from analyze_bridge_logs import fetch_logs as _shared_fetch_logs  # noqa: E402
 
 
 # Minimum number of attempts per path before declaring a verdict reliable.
@@ -124,12 +126,7 @@ class PathStats:
 # ---------------------------------------------------------------------------
 
 def fetch_logs(base_url: str, timeout: float) -> List[Dict]:
-    url = f"{base_url.rstrip('/')}/api/logs"
-    req = urllib.request.Request(url=url, method="GET")
-    req.add_header("Accept", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-    payload = json.loads(raw)
+    payload = _shared_fetch_logs(base_url, timeout)
     return payload.get("entries", []) if isinstance(payload, dict) else []
 
 

@@ -17,10 +17,9 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-import requests
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from bridge_config import BRIDGE_BASE_URL
+from analyze_bridge_logs import fetch_logs as _shared_fetch_logs  # noqa: E402
 
 
 DEFAULT_BASE_URL = BRIDGE_BASE_URL
@@ -85,9 +84,7 @@ def main() -> int:
     snapshot_path = _latest_snapshot(snapshot_dir, args.snapshot_glob)
     snapshot = _load_json(snapshot_path)
 
-    live_response = requests.get(f"{args.base_url.rstrip('/')}/api/logs", timeout=args.timeout)
-    live_response.raise_for_status()
-    live = live_response.json()
+    live = _shared_fetch_logs(args.base_url, args.timeout)
 
     snapshot_entries = _entries(snapshot)
     live_entries = _entries(live) if isinstance(live, dict) else []

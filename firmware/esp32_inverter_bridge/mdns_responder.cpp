@@ -256,15 +256,28 @@ void mdnsProcess() {
             resp[rLen++] = myIP[2];
             resp[rLen++] = myIP[3];
 
-            // Send response back to querier
+            // Send response back to querier (unicast) AND broadcast
+            // Some UIPEthernet builds have issues with unicast UDP reply after
+            // receiving broadcast, so we send to both as a workaround.
+            IPAddress broadcastIP(255, 255, 255, 255);
+            bool sent = false;
+
+            // Try unicast first
             if (nbnsUdp.beginPacket(remoteIP, remotePort) == 1) {
               nbnsUdp.write(resp, rLen);
-              if (nbnsUdp.endPacket() == 1) {
-                nbnsResponsesSent++;
-                if (nbnsResponsesSent <= 3) {
-                  appLogger.log(String("[NBNS] Responded to ") + remoteIP.toString() +
-                                " -> " + myIP.toString());
-                }
+              if (nbnsUdp.endPacket() == 1) sent = true;
+            }
+            // Also send broadcast response
+            if (nbnsUdp.beginPacket(broadcastIP, NBNS_PORT) == 1) {
+              nbnsUdp.write(resp, rLen);
+              if (nbnsUdp.endPacket() == 1) sent = true;
+            }
+
+            if (sent) {
+              nbnsResponsesSent++;
+              if (nbnsResponsesSent <= 5) {
+                appLogger.log(String("[NBNS] Responded to ") + remoteIP.toString() +
+                              ":" + String(remotePort) + " -> " + myIP.toString());
               }
             }
           }
