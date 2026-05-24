@@ -41,6 +41,9 @@ extern const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS;
 // Higher values tolerate slower inverter responses but can delay bridge cycles.
 extern const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS;
 
+// mDNS hostname (advertised as <hostname>.local)
+extern const char* MDNS_HOSTNAME;
+
 // Power management
 extern const uint32_t MAIN_LOOP_SLEEP_MS;
 extern const uint16_t INVERTER_MAX_POWER_WATTS;

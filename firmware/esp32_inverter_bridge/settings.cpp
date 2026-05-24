@@ -14,6 +14,7 @@ const uint8_t INVERTER_WIFI_AP_HINT_BSSID[6] = {0x00, 0x06, 0x66, 0x9D, 0xE0, 0x
 
 const char* INVERTER_HOST = "10.0.0.1";
 const char* FIRMWARE_VERSION = "fw-20260524-070800-ca5ac52";
+const char* MDNS_HOSTNAME = "mastervolt-bridge";
 
 const uint16_t API_PORT = 8080;
 

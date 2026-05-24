@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "api.h"
+#include "mdns_responder.h"
 
 namespace {
 TaskHandle_t ethernetTaskHandle = nullptr;
@@ -72,6 +73,9 @@ void ethernetBridgeTask(void* param) {
                       String(" (IP=") + Ethernet.localIP().toString() + String(")");
       appLogger.log(apiMsg);
       apiServerStarted = true;
+
+      // Start mDNS responder so bridge is discoverable as mastervolt-bridge.local
+      mdnsBegin();
     }
 
     int maintainCode = Ethernet.maintain();
@@ -89,6 +93,9 @@ void ethernetBridgeTask(void* param) {
       handleApiClient(client);
       client.stop();
     }
+
+    // Process mDNS queries
+    mdnsProcess();
 
     vTaskDelay(pdMS_TO_TICKS(ETHERNET_SERVICE_INTERVAL_MS));
   }
