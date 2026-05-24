@@ -88,7 +88,7 @@ public:
    * Set the inverter power limit.
    * If the inverter is reachable, sets immediately and returns true.
    * If unreachable, queues the command for retry and returns false
-   * (caller should check isCommandQueued()).
+   * (caller should check isPowerCommandQueued()).
    */
   bool setPower(int watts, String& responseBody, int& httpCode, String& errorMessage);
 
@@ -98,16 +98,16 @@ public:
   bool isPowerCommandQueued();
 
   /**
-   * Get current power limit state.
+   * Get the cached power limit (last successful read from inverter).
+   * Returns -1 if never read yet.
    */
-  int getDesiredPowerLimit();
-  int getConfirmedPowerLimit();
-  unsigned long getPowerLimitResetAtMs();
+  int getCachedPowerLimit();
 
   /**
-   * Fetch a specific path from the inverter.
+   * Fetch the current power limit directly from the inverter's /power endpoint.
+   * Returns the value in watts, or -1 on failure.
    */
-  bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
+  int fetchPowerLimit(String& errorMessage);
 
   /**
    * Current link state and how long the bridge has been failing to reach
@@ -133,15 +133,7 @@ private:
   // Polling task implementation
   void runPollingTask();
 
-  // Increment a counter (e.g. successfulPolls / failedPolls) under dataMutex.
-  // Returns false if the mutex could not be acquired within 5 s.
-  bool incrementCounterLocked(uint32_t& counter);
 
-  // After a long inverter disconnect, queue a MAX-power command so the
-  // polling loop will (re)assert it on recovery. The actual delivery and
-  // retry-on-failure is handled by applyPendingPowerCommand(). Idempotent:
-  // if the inverter is already at MAX nothing is queued.
-  void queueMaxPowerAfterLongDisconnect(uint32_t streakMs);
 
   // Fired by the polling task whenever the link state changes. All actions
   // that should run once-per-transition (as opposed to once-per-poll) belong
@@ -150,12 +142,8 @@ private:
   // transition (always 0 when transitioning into ONLINE).
   //
   // Current bindings:
-  //   STARTING -> ONLINE                : (none; cached telemetry now available)
-  //   ONLINE   -> RETRYING              : (none; first failure of a new streak)
-  //   RETRYING -> BACKOFF               : (none; relaxed retry cadence starts)
-  //   BACKOFF  -> DORMANT               : (none; max-throttled cadence starts)
-  //   BACKOFF|DORMANT -> ONLINE         : queueMaxPowerAfterLongDisconnect()
-  //                                       + applyPendingPowerCommand()
+  //   STARTING -> ONLINE                : refreshPowerLimit() (initial read)
+  //   BACKOFF|DORMANT -> ONLINE         : refreshPowerLimit() + applyPendingPowerCommand()
   void onLinkStateTransition(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
 
   // Private state
@@ -164,7 +152,6 @@ private:
   HomeData cachedData;
   unsigned long lastUpdateMs = 0;
   uint32_t successfulPolls = 0;
-  uint32_t failedPolls = 0;
   bool isInitialized = false;
 
   // Polling interval runtime config.
@@ -178,21 +165,19 @@ private:
   uint32_t failureStartMs = 0;     // millis() when current streak began; 0 if none
   uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 
-  // Power limit state machine. All fields below are protected by powerStateMutex.
+  // Power limit state. All fields below are protected by powerStateMutex.
   // Held briefly only to read/update fields (never across HTTP calls).
   SemaphoreHandle_t powerStateMutex = nullptr;
-  int desiredPowerLimit = INVERTER_MAX_POWER_WATTS;
-  int confirmedPowerLimit = INVERTER_MAX_POWER_WATTS;
-  unsigned long desiredPowerSetAtMs = 0;        // when the user command was received
-  unsigned long powerLimitResetAtMs = 0;        // absolute ms deadline; 0 = no timer active
-  bool powerCommandQueued = false;              // true = desired != confirmed, awaiting delivery
-  bool timerTriggeredReset = false;             // true = reset was triggered by timer (never expires)
+  int cachedPowerLimit = -1;                    // last read from inverter; -1 = unknown
+  int queuedPowerWatts = -1;                    // queued command; -1 = nothing queued
+  unsigned long queuedAtMs = 0;                 // when queued command was created
 
-  // Apply pending power command if needed (called from polling loop).
+  // Read the power limit from the inverter and update cachedPowerLimit.
+  // Called at startup, after outage recovery, and after successful setPower.
+  void refreshPowerLimit();
+
+  // Apply pending power command if queued (called from polling loop).
   void applyPendingPowerCommand();
-
-  // Check and handle power-limit reset timer (called from polling loop).
-  void checkPowerLimitResetTimer();
 };
 
 #endif // INVERTER_MONITOR_H

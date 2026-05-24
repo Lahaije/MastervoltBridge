@@ -82,12 +82,9 @@ GET_CHECKS: list[dict[str, Any]] = [
         "required_keys": ["firmware_version", "poll_interval_seconds", "poll_interval_ms", "power", "total_yield", "daily_yield", "power_limit"],
         "allow_502": True,
     },
-    {
-        "path": "/pulse",
-        "description": "GPIO wake pulse + forced reconnect",
-        "required_keys": ["reconnected"],
-        "allow_502": False,
-    },
+    # Intentionally do not call /pulse in routine validation because it
+    # actively perturbs WiFi state (forced reconnect), which can skew other
+    # endpoint checks in the same run.
 ]
 
 # ---------------------------------------------------------------------------

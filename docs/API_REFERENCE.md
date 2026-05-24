@@ -117,10 +117,8 @@ Response fields:
 | `power` | string | Current output power in watts, e.g. "674.547" |
 | `total_yield` | string | Lifetime energy in kWh, e.g. "08566.628" |
 | `daily_yield` | string | Daily energy in kWh, e.g. "12.811" |
-| `power_limit.desired` | number | Latest requested power limit (W) |
-| `power_limit.confirmed` | number | Last power limit confirmed by inverter (W) |
+| `power_limit.watts` | number | Cached power limit read from inverter (W), -1 if never read |
 | `power_limit.queued` | bool | true when a power command is waiting for delivery |
-| `power_limit.reset_timer_minutes` | number | Whole minutes until auto-reset to max, derived from `POWER_LIMIT_RESET_MINUTES` (0 = inactive/elapsed) |
 
 This endpoint no longer returns 502 on startup. A caller polling for
 readiness should check `ready == true`.

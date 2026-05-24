@@ -5,7 +5,6 @@
 #include "logger.h"
 #include "inverter_data.h"
 #include "inverter_monitor.h"
-#include "wifi_bridge.h"
 
 String jsonEscape(const String& input) {
   String out;
@@ -131,23 +130,13 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
 
 String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
   InverterMonitor& monitor = InverterMonitor::getInstance();
-  int desired = monitor.getDesiredPowerLimit();
-  int confirmed = monitor.getConfirmedPowerLimit();
-  unsigned long resetAt = monitor.getPowerLimitResetAtMs();
+  int powerLimit = monitor.getCachedPowerLimit();
   bool queued = monitor.isPowerCommandQueued();
   uint32_t pollIntervalMs = monitor.getPollingIntervalMs();
 
-  // Compute minutes remaining on reset timer (0 if inactive or already elapsed).
-  unsigned long remainingMinutes = 0;
-  if (resetAt != 0 && millis() < resetAt) {
-    remainingMinutes = (resetAt - millis()) / 60000UL;
-  }
-
   String powerLimitJson = String("{") +
-    "\"desired\":" + desired + "," +
-    "\"confirmed\":" + confirmed + "," +
-    "\"queued\":" + (queued ? "true" : "false") + "," +
-    "\"reset_timer_minutes\":" + remainingMinutes +
+    "\"watts\":" + powerLimit + "," +
+    "\"queued\":" + (queued ? "true" : "false") +
     "}";
 
   return JsonBuilder()

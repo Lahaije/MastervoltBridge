@@ -1,15 +1,19 @@
-# Max Power Behavior
+# Power Limit Behavior
 
-This document describes the exact implemented behavior for power-limit commands and the automatic reset to max power.
+This document describes the implemented behavior for power-limit commands.
 
 ## Definitions
 
 - Max power: `INVERTER_MAX_POWER_WATTS` (currently 1575)
-- Desired power: latest requested target (`desiredPowerLimit`)
-- Confirmed power: last power value confirmed by inverter (`confirmedPowerLimit`)
-- Queued command: pending command waiting for inverter reachability (`powerCommandQueued`)
-- Reset timer: absolute deadline for auto-reset (`powerLimitResetAtMs`)
-- Reset delay setting: `POWER_LIMIT_RESET_MINUTES` (minutes)
+- Cached power limit: last value read from the inverter (`cachedPowerLimit`, -1 until first read)
+- Queued command: pending power command waiting for WiFi availability (`queuedPowerWatts`)
+- Command expiry: `POWER_COMMAND_EXPIRY_MS` (5 minutes)
+
+## Design Principles
+
+1. The ESP is the **sole writer** of the inverter's power limit setting.
+2. The cached value is always **read back from the inverter** — never assumed from what was written.
+3. A queued command bridges the gap between user intent and actual delivery when WiFi is unavailable.
 
 ## User Command Flow (`POST /api/power`)
 
@@ -17,117 +21,73 @@ Input validation:
 - Must be integer
 - Must satisfy `0 <= power <= INVERTER_MAX_POWER_WATTS`
 
-If valid, `setPower()`:
-1. Updates desired state.
-2. If request is sub-max (`power < max`), arms or extends timer using `POWER_LIMIT_RESET_MINUTES`.
-3. If request is max (`power == max`), does not modify timer.
-4. Attempts immediate inverter POST.
+If valid, `setPower()` attempts an immediate POST to the inverter:
 
-Outcomes:
-- Immediate success -> API returns `200`, confirmed becomes desired, queued=false.
-- Immediate failure due WiFi/path issue -> queued=true, API returns `202`.
+**WiFi available (immediate delivery):**
+1. POST sent to inverter `/power` endpoint.
+2. On success: `refreshPowerLimit()` reads back the actual value from `/power` GET.
+3. API returns `200`.
 
-## Polling Loop Behavior
+**WiFi unavailable (queued):**
+1. Command stored in `queuedPowerWatts` with timestamp.
+2. Background reconnect triggered.
+3. API returns `202 Accepted`.
 
-After each successful `/home` poll, the monitor performs:
+## Queued Command Delivery (`applyPendingPowerCommand`)
 
-1. `checkPowerLimitResetTimer()`
-2. `applyPendingPowerCommand()`
+Called after successful polls and on link-state recovery. Behavior:
 
-This ordering ensures timer-fired max reset can be sent in the same poll iteration.
+1. Check expiry: if queued command is older than `POWER_COMMAND_EXPIRY_MS`, discard it and log.
+2. POST the queued watts to the inverter.
+3. On success: clear the queue (only if no newer command replaced it), call `refreshPowerLimit()`.
+4. On failure: command stays queued for next attempt.
 
-These two calls are **steady-state** actions: they run on every successful
-poll while the link is `ONLINE`. They are distinct from the
-**transition-event** action described next.
+## Power Limit Cache (`refreshPowerLimit`)
 
-## Long-disconnect Recovery (link-state transition event)
+Reads the current power limit from `GET /power` and stores it in `cachedPowerLimit`.
 
-The polling loop classifies the link into one of `STARTING`, `ONLINE`,
-`RETRYING`, `BACKOFF`, `DORMANT` (see `docs/API_REFERENCE.md`). Every
-transition fires a single internal hook, `onLinkStateTransition(from, to,
-streakMs)`, which is the only place per-transition actions are bound.
+Called:
+- After startup (first successful poll: `STARTING → ONLINE`)
+- After recovery from long outage (`BACKOFF/DORMANT → ONLINE`)
+- After every successful `setPower()` delivery
+- After every successful queued command delivery
 
-Bound action: **`BACKOFF` or `DORMANT` → `ONLINE`** (i.e. recovery after
-an outage of ≥ 5 minutes):
+The cached value is served by `GET /api/info` without a network call.
 
-1. `queueMaxPowerAfterLongDisconnect(streakMs)` queues a MAX reset, unless
-   either:
-   - a user-initiated command is already queued (user intent wins), or
-   - desired and confirmed are both already MAX with no pending change.
-2. The queued command is marked `timerTriggeredReset=true` so it is
-   exempt from `POWER_COMMAND_EXPIRY_MS` and keeps retrying.
-3. `applyPendingPowerCommand()` attempts immediate delivery in the same
-   poll iteration.
+## Link-State Recovery
 
-Rationale: while the bridge was unreachable, the inverter may have
-rebooted or its own power-limit reset timer may have elapsed, and there
-is no read-back endpoint for the current limit. Defensively reasserting
-MAX guarantees the inverter returns to full production after any
-outage long enough to be operationally significant.
+The polling loop classifies the link into `STARTING`, `ONLINE`, `RETRYING`, `BACKOFF`, `DORMANT`.
 
-No other transition has a bound action today; transitions are only logged
-(when `debug_mode` is enabled).
+Bound action on **`BACKOFF` or `DORMANT` → `ONLINE`**:
+1. `refreshPowerLimit()` — re-read in case inverter rebooted to a default.
+2. `applyPendingPowerCommand()` — deliver any queued user command.
 
-## Reset Timer Semantics
+Bound action on **`STARTING` → `ONLINE`**:
+1. `refreshPowerLimit()` — initial cache population.
 
-Timer is active when:
-- `powerLimitResetAtMs != 0`
+## Expiry Rules
 
-Timer fires when:
-- `millis() >= powerLimitResetAtMs`
-
-When fired:
-1. If both desired and confirmed are already max, clear timer (`powerLimitResetAtMs = 0`).
-2. Otherwise queue a reset command:
-   - desired=max
-   - `timerTriggeredReset=true`
-   - `powerCommandQueued=true`
-3. Actual POST is sent by `applyPendingPowerCommand()`.
-
-On successful timer-triggered reset delivery:
-- confirmed=max
-- queued=false
-- timer cleared (`powerLimitResetAtMs = 0`)
-- `timerTriggeredReset=false`
-
-On failed timer-triggered reset delivery:
-- queued remains true
-- timer remains active
-- retried on future successful polls
-
-## Expiry Rules (`POWER_COMMAND_EXPIRY_MS`)
-
-Expiry applies only to user-initiated queued commands:
-- `timerTriggeredReset == false`
-
-If queued command age exceeds `POWER_COMMAND_EXPIRY_MS`:
-- queued=false
-- desired reverts to confirmed
-
-Expiry does not apply to timer-triggered max resets:
-- `timerTriggeredReset == true`
-- these keep retrying until success
+Queued commands expire after `POWER_COMMAND_EXPIRY_MS` (5 minutes):
+- Discarded with a log message.
+- No fallback action — the user must re-submit if needed.
 
 ## API Status Mapping
 
 `POST /api/power`:
-- `200`: delivered now
-- `202`: queued for retry
-- `400`: invalid payload/range
-- `502`: command failed and could not be queued (rare path)
+- `200`: delivered immediately, cache updated
+- `202`: queued for retry when WiFi becomes available
+- `400`: invalid payload or out of range
 
-`GET /api/info` returns power-limit state:
-- `power_limit.desired`
-- `power_limit.confirmed`
-- `power_limit.queued`
-- `power_limit.reset_timer_minutes`
+`GET /api/info` returns:
+- `power_limit.watts`: cached power limit from inverter (-1 if never read)
+- `power_limit.queued`: true if a command is awaiting delivery
 
 ## Important Edge Cases
 
-1. Repeated sub-max requests push the timer forward (latest command wins).
-2. Max request does not clear/reset timer by itself.
-3. If desired changes while an HTTP command is in flight, commit logic checks current desired before applying completion updates.
-4. On startup with no successful poll yet, `/api/info` returns 200 with `ready=false` and empty telemetry strings; the `power_limit` object is always populated.
+1. On startup before the first successful poll, `cachedPowerLimit` is -1.
+2. If the inverter reboots during a long outage, it may reset to its own default — the recovery transition re-reads the actual value.
+3. A newer `setPower()` call while a command is already queued replaces the queued value (latest user intent wins).
+4. The read-back after write happens immediately — the inverter commits synchronously on POST success.
 
 ## Practical Examples
 

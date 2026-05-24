@@ -22,18 +22,23 @@ wifi_bridge.cpp/h (core network layer)
   |- ScopedWifiOperationLock for WiFi HTTP/connect serialization
   |- deps: WiFi.h, HTTPClient.h, settings
 
+inverter_fetch.cpp/h (raw HTTP/1.0 page fetch)
+  |- fetchInverterPage(path, responseBody, httpCode, errorMessage, waitForConnection)
+  |- Works for all inverter endpoints (data + HTML/JS/CSS files)
+  |- Uses wifiOperationMutex from wifi_bridge for serialization
+
 inverter_data.cpp/h (data model)
   |- HomeData struct + getInverterData() factory
 
 inverter_monitor.cpp/h (business logic)
   |- InverterMonitor singleton - FreeRTOS polling task (runtime-configurable; default 20s)
   |- Polls /home via fetchInverterData(..., waitForConnection=true)
-  |- Power state machine (desired/confirmed/queued/timer)
+  |- Power limit: cached from inverter via refreshPowerLimit(), queued command on WiFi failure
   |- Link state machine: STARTING / ONLINE / RETRYING / BACKOFF / DORMANT
   |    transitions fire onLinkStateTransition(from, to, streakMs)
-  |    bound action: BACKOFF|DORMANT -> ONLINE = queueMaxPowerAfterLongDisconnect + applyPendingPowerCommand
-  |- caches HomeData; exposes getLatestHomeData(), setPower(), fetchPath(),
-  |    getLinkState(), getFailureStreakMs(), getRetryIntervalMs()
+  |    bound action: BACKOFF|DORMANT -> ONLINE = refreshPowerLimit + applyPendingPowerCommand
+  |- caches HomeData; exposes getLatestHomeData(), setPower(),
+  |    getCachedPowerLimit(), getLinkState(), getFailureStreakMs(), getRetryIntervalMs()
 
 ethernet_bridge.cpp/h (network layer)
   |- ENC28J60 init + HTTP API server on port 8080
@@ -41,11 +46,11 @@ ethernet_bridge.cpp/h (network layer)
 api.cpp / api.h (request routing)
   |- handleApiClient() - 11 REST endpoints
   |- /api/power returns 200 (immediate) or 202 (queued)
-  |- deps: api_helper, InverterMonitor, inverter_data
+  |- deps: api_helper, InverterMonitor, inverter_fetch, inverter_data
 
 api_helper.cpp/h (HTTP/JSON utilities)
   |- sendHttpResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
-  |- /api/info includes power_limit object (desired/confirmed/queued/reset_timer_minutes)
+  |- /api/info includes power_limit object (watts/queued)
 
 esp32_inverter_bridge.ino (main entry)
   |- starts ethernetBridgeStartTask() + wifiBridgeInit() + InverterMonitor::initialize()
@@ -123,15 +128,13 @@ bool getLatestHomeData(HomeData& dataOut);
 unsigned long getLastUpdateMs();
 bool setPower(int watts, String& responseBody, int& httpCode, String& errorMessage);
 bool isPowerCommandQueued();
-int getDesiredPowerLimit();
-int getConfirmedPowerLimit();
-unsigned long getPowerLimitResetAtMs();
-bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
+int getCachedPowerLimit();
+int fetchPowerLimit(String& errorMessage);
 ```
 
 Synchronization:
 - `dataMutex` protects cached telemetry and poll counters.
-- `powerStateMutex` protects power state machine fields.
+- `powerStateMutex` protects power state (cachedPowerLimit, queuedPowerWatts).
 
 ## Configuration (settings.cpp)
 
@@ -147,8 +150,7 @@ Synchronization:
 | `WIFI_BRIDGE_POLL_INTERVAL_MS` | `20000` | Poll interval |
 | `WIFI_BRIDGE_HTTP_TIMEOUT_MS` | `3500` | HTTP request timeout |
 | `INVERTER_MAX_POWER_WATTS` | `1575` | Power set limit |
-| `POWER_LIMIT_RESET_MINUTES` | `120` | Auto-reset timer for sub-max limits |
-| `POWER_COMMAND_EXPIRY_MS` | `300000` | Expiry for user-initiated queued commands |
+| `POWER_COMMAND_EXPIRY_MS` | `300000` | Expiry for queued power commands (5 min) |
 
 ## Build and Upload
 
@@ -216,7 +218,7 @@ Useful log patterns:
 ## File Map
 
 Firmware (`firmware/esp32_inverter_bridge/`):
-`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_monitor.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `settings.{h,cpp}`, `logger.h`
+`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_fetch.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_monitor.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `settings.{h,cpp}`, `logger.h`
 
 Documentation (`docs/`):
 - `SETUP_README.md`

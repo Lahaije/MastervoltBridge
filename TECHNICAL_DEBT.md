@@ -1,55 +1,27 @@
 # Technical Debt & Future Work
 
-## POST /api/power Latency & Silent Drops (IN PROGRESS)
+## POST /api/power Remaining Work (LOW PRIORITY)
 
-**Priority**: High
-**Scope**: `firmware/esp32_inverter_bridge/inverter_monitor.cpp`, `wifi_bridge.cpp`
-**Status**: Investigation paused — inverter went dark (sundown); resume next daylight window
+**Priority**: Low
+**Scope**: `firmware/esp32_inverter_bridge/wifi_bridge.cpp`
+**Status**: Mostly resolved — one optional improvement remains
 
-### Problem
-- `POST /api/power` should complete in under 2 s but is occasionally observed
-  to hang or silently fail.
-- The inverter accepts the TCP connection and HTTP request but does not
-  apply the new limit and does not return a recognizable success body.
-- No clear log signal today for *why* a given POST was dropped (TCP write
-  succeeded? HTTP response framed? body parsed?).
+### Resolved
+- ✅ Phase-level debug logs (TCP connect, send, first-byte, full response) gated on `debugMode`
+- ✅ Multipart/form-data encoding matching the inverter web UI's conventions
+- ✅ Deterministic timeout budget (`HTTP_POST_BUDGET_MS` = 3 s, per-phase caps)
+- ✅ Fallback from multipart to text/plain if first attempt fails
+- ✅ `/key` endpoint confirmed unrelated to `/power` — it's for HMAC login only
 
-### What We Know (from `docs/web-cache/Mastervolt.js` analysis)
-- The inverter's own web UI submits **every** POST as
-  `multipart/form-data`, via a hidden `<iframe>`, with the form built
-  client-side and `form.setAttribute("enctype","multipart/form-data")`.
-- Successful POSTs return the literal body string `"Update successful!"`.
-- The bridge currently posts `text/plain` (or similar non-multipart)
-  bodies to `/power`, which is the most likely cause of the silent drops.
-- `/home` and `/power` are not yet present in the cached JS bundle —
-  only the option/setup endpoints. The multipart convention is, however,
-  used by every POST in the cached bundle, so it is very likely the
-  required encoding for `/power` too.
-
-### Next Steps (when inverter is back online)
-1. Add fine-grained debug logs around the POST path in
-   `inverter_monitor.cpp` / `wifi_bridge.cpp` (phase timing: DNS → connect
-   → write headers → write body → first byte → last byte → close), gated
-   on `debug_mode` so they don't spam normal operation.
-2. Switch `/power` POSTs to `multipart/form-data` matching the inverter
-   web UI's exact field names and ordering, and look for the
-   `"Update successful!"` literal in the response body before declaring
-   success.
-3. Capture and cache `OptionsMain.js`, `MonitoringMain.js`, and
-   `Setup3Main.js` from the inverter under `docs/web-cache/` to confirm
-   the exact `/power` request shape.
-4. Add a deterministic timeout-and-fail path so a hung POST cannot block
-   the API handler past the 2 s budget.
-
-### Blocked By
-- Inverter availability (only reachable during daylight; offline as of
-  sundown on the day this entry was written).
+### Remaining
+- [ ] Optionally validate `"Update successful!"` in the response body before
+  declaring success (currently accepts any 2xx). Low priority because
+  `refreshPowerLimit()` reads back the actual value immediately after, so
+  a silent drop would be caught as a stale cached value.
 
 ### Related
 - `docs/web-cache/Mastervolt.js` — source of the multipart-form finding
-- `docs/MAX_POWER_BEHAVIOR.md` — queued-command retry behavior masks
-  individual POST failures from the user, but does not fix the underlying
-  silent-drop issue.
+- `docs/MAX_POWER_BEHAVIOR.md` — power limit cache and queued-command behavior
 
 ---
 
@@ -103,14 +75,13 @@ Other URLs referenced:
 - Is there an HTTP equivalent to the GPIO-based WiFi-off? The `/apstatus`
   endpoint is the matching read-side; the matching write almost certainly
   lives in one of the un-cached `*Main.html` pages.
-- Does `/key` need to be fetched and replayed as a header / form field
-  before any POST will be accepted? Could explain the silent `/power`
-  drops tracked in the section above.
 - Are `/cid`, `/invid`, and `/usertype` stable enough to surface as fields
   on `/api/health` / `/api/info` (firmware identification at a glance)?
-- Confirm `/power` and `/home` are real endpoints (neither appears in the
-  cached JS — both were learned out-of-band). They may live in the
-  un-cached `Monitoring*` or `Status*` HTML.
+
+### Resolved Questions
+- `/key` is confirmed to be part of the HMAC-SHA1 login flow only (challenge-
+  response auth). It does NOT need to be fetched before `/power` POSTs.
+- `/power` and `/home` are confirmed real endpoints (working in production).
 
 ### Next Steps (when inverter is back online)
 1. Cache the missing HTML pages under `docs/web-cache/`:
@@ -120,21 +91,18 @@ Other URLs referenced:
 2. Probe each cached endpoint via `POST /api/inverter/fetch` from the
    bridge and record responses under `docs/web-cache/responses/`.
    Start with the safe read-only ones (`/cid`, `/invid`, `/usertype`,
-   `/key`, `/apstatus`, `/language`, `/reginfo`).
+   `/apstatus`, `/language`, `/reginfo`).
 3. Decide whether to surface stable identifiers (`/invid`, `/cid`) in
    `/api/info` or `/api/health`.
 4. If a write-side WiFi-off endpoint is identified, replace or augment
    the GPIO double-press in `wifi_bridge.cpp` with an HTTP call (more
    reliable, no hardware dependency).
-5. Feed any `/key` / session findings back into the `POST /api/power`
-   investigation above.
 
 ### Blocked By
 - Inverter availability (daylight-only).
 - No cached copy of the inverter's `*Main.html` SPA pages.
 
 ### Related
-- `POST /api/power Latency & Silent Drops` section above
 - `docs/web-cache/Mastervolt.js`, `docs/web-cache/content.js`
 - `firmware/esp32_inverter_bridge/api.cpp` — `/api/inverter/fetch`
   handler that can be used as the probing tool

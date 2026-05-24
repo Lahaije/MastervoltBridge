@@ -15,7 +15,7 @@ Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to 
 - **Installer menu access** — read and control inverter settings not normally exposed
 - **Power output control** — limit or stop production in real time via `POST /api/power` (0–1575 W)
 - **Non-blocking power command queue** — `POST /api/power` returns `202 Accepted` when WiFi is down and retries automatically
-- **Automatic max-power reset timer** — sub-max limits auto-reset to max after `POWER_LIMIT_RESET_MINUTES`
+- **Power limit cache** — real value read from inverter, refreshed on startup, recovery, and after every write
 - **GPIO wake-pulse** to keep the inverter WiFi radio alive between polls
 - **Circular log buffer** (1000 entries) with millisecond timestamps
 - **Home Assistant compatible** — poll `/api/info` for power, yield, and status

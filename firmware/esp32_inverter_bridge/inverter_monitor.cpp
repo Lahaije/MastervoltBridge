@@ -139,14 +139,6 @@ void InverterMonitor::pollingTaskEntry(void* param) {
   }
 }
 
-bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
-  if (dataMutex == nullptr) return false;
-  ScopedDataLock lock(dataMutex, DATA_LOCK_TIMEOUT_MS, "dataMutex");
-  if (!lock.acquired()) return false;
-  counter++;
-  return true;
-}
-
 void InverterMonitor::runPollingTask() {
   // failureStartMs and linkState are members so the API layer can read them.
   // The polling task is the sole writer.
@@ -183,17 +175,12 @@ void InverterMonitor::runPollingTask() {
                       " Power=" + parsedData.instantaneousPower + "W");
         iterationOk = true;
 
-        // After a successful poll, first check whether the auto-reset timer
-        // has expired. If it has, queue a MAX request. Then deliver any
-        // pending power command in the same iteration.
-        checkPowerLimitResetTimer();
+        // Deliver any pending power command after a successful poll.
         applyPendingPowerCommand();
       } else {
-        incrementCounterLocked(failedPolls);
         appLogger.log("[INVERTER-MONITOR] Failed to parse /home response");
       }
     } else {
-      incrementCounterLocked(failedPolls);
       appLogger.log(String("[INVERTER-MONITOR] Failed to fetch /home: ") + errorMessage);
     }
 
@@ -321,50 +308,24 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
     return false;
   }
 
-  // --- Update desired state under lock ---
-  {
-    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-    if (!lock.acquired()) {
-      errorMessage = "Power state mutex busy";
-      httpCode = 0;
-      return false;
-    }
-    desiredPowerLimit = watts;
-    desiredPowerSetAtMs = millis();
-    timerTriggeredReset = false;
-
-    // Sub-max requests (re)arm the reset timer; max-power requests don't touch it.
-    if (watts < INVERTER_MAX_POWER_WATTS) {
-      powerLimitResetAtMs = millis() + ((unsigned long)POWER_LIMIT_RESET_MINUTES * 60UL * 1000UL);
-    }
-    // NOTE: do NOT pre-mark queued. If we did, the polling task could observe
-    // queued=true between our lock release and the HTTP call, and send a
-    // duplicate POST /power. Mark queued only on failure below.
-  }
-
-  // --- HTTP call OUTSIDE the lock ---
+  // --- HTTP call (no lock held) ---
   String payload = String(watts);
   bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, false);
 
-  // --- Commit result under lock ---
+  if (ok) {
+    appLogger.log(String("[INVERTER-MONITOR] Power set to ") + watts + "W (immediate)");
+    // Re-read the actual value from the inverter to confirm.
+    refreshPowerLimit();
+    return true;
+  }
+
+  // WiFi unavailable — queue the command for retry.
   {
     ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
     if (lock.acquired()) {
-      // Only commit if desired hasn't changed since.
-      if (desiredPowerLimit == watts) {
-        if (ok) {
-          confirmedPowerLimit = watts;
-          powerCommandQueued = false;
-        } else {
-          powerCommandQueued = true;
-        }
-      }
+      queuedPowerWatts = watts;
+      queuedAtMs = millis();
     }
-  }
-
-  if (ok) {
-    appLogger.log(String("[INVERTER-MONITOR] Power set to ") + watts + "W (immediate)");
-    return true;
   }
   appLogger.log(String("[INVERTER-MONITOR] Power command queued: ") + watts + "W (WiFi unavailable)");
   return false;
@@ -373,57 +334,32 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
 bool InverterMonitor::isPowerCommandQueued() {
   ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
   if (!lock.acquired()) return false;
-  return powerCommandQueued;
+  return queuedPowerWatts >= 0;
 }
 
-int InverterMonitor::getDesiredPowerLimit() {
+int InverterMonitor::getCachedPowerLimit() {
   ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) return desiredPowerLimit;  // best-effort read
-  return desiredPowerLimit;
-}
-
-int InverterMonitor::getConfirmedPowerLimit() {
-  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) return confirmedPowerLimit;
-  return confirmedPowerLimit;
-}
-
-unsigned long InverterMonitor::getPowerLimitResetAtMs() {
-  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) return powerLimitResetAtMs;
-  return powerLimitResetAtMs;
+  if (!lock.acquired()) return cachedPowerLimit;  // best-effort
+  return cachedPowerLimit;
 }
 
 void InverterMonitor::applyPendingPowerCommand() {
   // --- Snapshot under lock ---
   int targetWatts;
-  bool isTimerTriggered;
-  bool shouldExpire = false;
   {
     ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
     if (!lock.acquired()) return;
-    if (!powerCommandQueued) return;
+    if (queuedPowerWatts < 0) return;  // nothing queued
 
-    // Check 5-minute expiry for user-initiated commands (not timer resets).
-    if (!timerTriggeredReset && POWER_COMMAND_EXPIRY_MS > 0 &&
-        millis() - desiredPowerSetAtMs > POWER_COMMAND_EXPIRY_MS) {
-      shouldExpire = true;
-      targetWatts = desiredPowerLimit;  // for logging
-    } else {
-      targetWatts = desiredPowerLimit;
-      isTimerTriggered = timerTriggeredReset;
+    // Check 5-minute expiry for queued commands.
+    if (POWER_COMMAND_EXPIRY_MS > 0 &&
+        millis() - queuedAtMs > POWER_COMMAND_EXPIRY_MS) {
+      appLogger.log(String("[INVERTER-MONITOR] Queued power command expired (") +
+                    queuedPowerWatts + "W)");
+      queuedPowerWatts = -1;
+      return;
     }
-  }
-
-  if (shouldExpire) {
-    appLogger.log(String("[INVERTER-MONITOR] Queued power command expired (") +
-                  targetWatts + "W)");
-    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-    if (lock.acquired() && powerCommandQueued && !timerTriggeredReset) {
-      powerCommandQueued = false;
-      desiredPowerLimit = confirmedPowerLimit;
-    }
-    return;
+    targetWatts = queuedPowerWatts;
   }
 
   // --- HTTP call outside the lock ---
@@ -432,114 +368,68 @@ void InverterMonitor::applyPendingPowerCommand() {
   String payload = String(targetWatts);
   bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, false);
 
-  // --- Commit result under lock ---
   if (ok) {
-    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-    if (lock.acquired()) {
-      // Only commit if desired didn't change while we were sending.
-      if (desiredPowerLimit == targetWatts) {
-        confirmedPowerLimit = targetWatts;
-        powerCommandQueued = false;
-        if (isTimerTriggered && targetWatts == INVERTER_MAX_POWER_WATTS) {
-          powerLimitResetAtMs = 0;
-          timerTriggeredReset = false;
+    {
+      ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+      if (lock.acquired()) {
+        // Only clear if it hasn't been replaced by a newer command.
+        if (queuedPowerWatts == targetWatts) {
+          queuedPowerWatts = -1;
         }
       }
     }
     appLogger.log(String("[INVERTER-MONITOR] Queued power command delivered: ") +
                   targetWatts + "W");
+    refreshPowerLimit();
   } else {
     appLogger.log(String("[INVERTER-MONITOR] Retry power command failed: ") + errorMessage);
   }
 }
 
-void InverterMonitor::checkPowerLimitResetTimer() {
-  // The timer arms a pending command; the actual send happens via
-  // applyPendingPowerCommand. This avoids a race where the timer's HTTP
-  // could fire AFTER a concurrent setPower(N<MAX) and leave the inverter
-  // at MAX while our state thinks it's at N.
-  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) return;
-  if (powerLimitResetAtMs == 0 || millis() < powerLimitResetAtMs) return;
-
-  // Timer fired.
-  if (confirmedPowerLimit == INVERTER_MAX_POWER_WATTS &&
-      desiredPowerLimit == INVERTER_MAX_POWER_WATTS) {
-    // Already at max — just clear the timer.
-    powerLimitResetAtMs = 0;
-    return;
+void InverterMonitor::refreshPowerLimit() {
+  String errorMessage;
+  int watts = fetchPowerLimit(errorMessage);
+  if (watts >= 0) {
+    ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+    if (lock.acquired()) {
+      cachedPowerLimit = watts;
+    }
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-MONITOR] Power limit read: ") + watts + "W");
+    }
+  } else {
+    appLogger.log(String("[INVERTER-MONITOR] Failed to read power limit: ") + errorMessage);
   }
-
-  appLogger.log(String("[INVERTER-MONITOR] Power limit timer expired. Queuing reset to ") +
-                INVERTER_MAX_POWER_WATTS + "W");
-
-  desiredPowerLimit = INVERTER_MAX_POWER_WATTS;
-  desiredPowerSetAtMs = millis();
-  timerTriggeredReset = true;
-  powerCommandQueued = true;
-  // applyPendingPowerCommand runs immediately after this in the polling loop
-  // and will send the actual POST /power.
-}
-
-void InverterMonitor::queueMaxPowerAfterLongDisconnect(uint32_t streakMs) {
-  ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
-  if (!lock.acquired()) return;
-
-  // If a user-initiated command is currently queued (e.g. someone POSTed
-  // /api/power while we were disconnected), respect it; the user's intent
-  // wins over the defensive max-reset.
-  if (powerCommandQueued && !timerTriggeredReset) {
-    appLogger.log(String("[INVERTER-MONITOR] Recovery after ") + (streakMs / 1000) +
-                  "s: user power command still queued, not overriding with MAX");
-    return;
-  }
-
-  // Already known to be at MAX with no pending change — nothing to do.
-  if (confirmedPowerLimit == INVERTER_MAX_POWER_WATTS &&
-      desiredPowerLimit == INVERTER_MAX_POWER_WATTS &&
-      !powerCommandQueued) {
-    return;
-  }
-
-  appLogger.log(String("[INVERTER-MONITOR] Recovery after ") + (streakMs / 1000) +
-                "s: queuing MAX power reset (inverter state unknown)");
-
-  desiredPowerLimit = INVERTER_MAX_POWER_WATTS;
-  desiredPowerSetAtMs = millis();
-  timerTriggeredReset = true;   // exempt from POWER_COMMAND_EXPIRY_MS so it keeps retrying
-  powerCommandQueued = true;
-  powerLimitResetAtMs = 0;      // clear any pending auto-reset; we're resetting now
 }
 
 void InverterMonitor::onLinkStateTransition(InverterLinkState from,
                                             InverterLinkState to,
                                             uint32_t streakMs) {
-  // Single dispatch point for every link-state transition. Add new bindings
-  // here; the polling loop and any callers stay untouched.
-  //
-  // Recovery from an extended outage: the inverter may have rebooted or its
-  // power-limit reset timer may have elapsed while we were unreachable, and
-  // there is no read-back endpoint for the current limit. Defensively force
-  // a MAX-power reset; applyPendingPowerCommand() delivers it on this
-  // iteration and the queued command persists across polls until accepted.
-  const bool wasOutage =
-      (from == InverterLinkState::BACKOFF || from == InverterLinkState::DORMANT);
-  if (to == InverterLinkState::ONLINE && wasOutage) {
-    queueMaxPowerAfterLongDisconnect(streakMs);
-    applyPendingPowerCommand();
-    return;
+  if (to == InverterLinkState::ONLINE) {
+    if (from == InverterLinkState::STARTING) {
+      // First ever successful poll — read the real power limit from inverter.
+      refreshPowerLimit();
+    } else if (from == InverterLinkState::BACKOFF || from == InverterLinkState::DORMANT) {
+      // Recovery after extended outage — re-read power limit (may have changed
+      // if inverter rebooted) and deliver any queued user command.
+      refreshPowerLimit();
+      applyPendingPowerCommand();
+    }
   }
-
-  // STARTING -> ONLINE, ONLINE -> RETRYING, RETRYING -> BACKOFF,
-  // BACKOFF -> DORMANT: no bound action today. The transition is logged
-  // (when debugMode is on) by runPollingTask() before calling this method.
 }
 
-bool InverterMonitor::fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage) {
-  if (path.length() == 0 || path[0] != '/') {
-    errorMessage = "path must start with '/'";
-    return false;
+int InverterMonitor::fetchPowerLimit(String& errorMessage) {
+  String responseBody;
+  int httpCode = 0;
+  bool ok = fetchInverterData("GET", "/power", "", responseBody, httpCode, errorMessage, false);
+  if (!ok) {
+    return -1;
   }
-
-  return fetchInverterData("GET", path, "", responseBody, httpCode, errorMessage, false);
+  responseBody.trim();
+  int watts = responseBody.toInt();
+  if (watts <= 0 && responseBody != "0") {
+    errorMessage = "invalid /power response: " + responseBody;
+    return -1;
+  }
+  return watts;
 }

@@ -2,6 +2,7 @@
 #define WIFI_BRIDGE_H
 
 #include <Arduino.h>
+#include <freertos/semphr.h>
 
 /**
  * Public WiFi Bridge API - Provides WiFi connectivity and generic HTTP request utilities.
@@ -16,8 +17,8 @@
  *   generous timeout so concurrent requests queue rather than fail.
  */
 
-// HTTP status code from the last inverter request (defined in settings.cpp)
-extern int lastInverterStatusCode;
+// WiFi operation mutex - shared with inverter_fetch.cpp for page fetches.
+extern SemaphoreHandle_t wifiOperationMutex;
 
 // Initialize WiFi bridge: configure GPIO, create mutexes, start connection worker task.
 void wifiBridgeInit();

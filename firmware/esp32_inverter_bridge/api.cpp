@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "wifi_bridge.h"
+#include "inverter_fetch.h"
 #include "inverter_monitor.h"
 #include "inverter_data.h"
 #include "api_helper.h"
@@ -233,6 +234,7 @@ void handleApiClient(EthernetClient& client) {
 
   if (method == "POST" && path == "/api/inverter/fetch") {
     // Parse inverter URL from JSON request body (e.g. {"url":"/home"})
+    // Optional: "method" (default GET), "body" (for POST requests)
     String inverterPath;
     if (!parseFetchUrlFromBody(body, inverterPath)) {
       sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain JSON url field, e.g. {\"url\":\"/home\"}"));
@@ -245,18 +247,19 @@ void handleApiClient(EthernetClient& client) {
       return;
     }
 
-    // Fetch the inverter endpoint and return raw response
-    String inverterBody;
+    // Use raw HTTP/1.0 fetch which works for all inverter endpoints
+    // (data + HTML/JS/CSS files) without needing session priming.
+    String responseBody;
     String err;
     int code = 0;
-    bool ok = InverterMonitor::getInstance().fetchPath(inverterPath, inverterBody, code, err);
+    bool ok = fetchInverterPage(inverterPath, responseBody, code, err, true);
     if (!ok) {
       // Inverter communication failed
       sendHttpResponse(client, 502, "application/json", buildErrorJson(err));
       return;
     }
 
-    sendHttpResponse(client, 200, "text/plain", inverterBody);
+    sendHttpResponse(client, 200, "text/plain", responseBody);
     return;
   }
 
