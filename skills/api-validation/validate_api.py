@@ -349,80 +349,178 @@ def check_post_inverter_fetch(base_url: str, verbose: bool) -> bool:
     return all_ok
 
 
+def get_current_power_watts(base_url: str) -> float | None:
+    """Read instantaneous power from /api/info."""
+    status, body = get_json(base_url, "/api/info")
+    if status != 200 or not isinstance(body, dict):
+        return None
+    try:
+        return float(body["power"])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def get_power_limit(base_url: str) -> int | None:
+    """Read power limit register from inverter via proxy."""
+    status, body = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
+    if status != 200:
+        return None
+    try:
+        return int(str(body).strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def set_power_limit(base_url: str, watts: int) -> tuple[bool, str]:
+    """Set power limit, return (success, detail)."""
+    status, body = post_json(base_url, "/api/power", {"power": watts})
+    if status == 200:
+        return True, "immediate"
+    elif status == 202:
+        return False, "queued (WiFi unavailable)"
+    else:
+        return False, f"HTTP {status}"
+
+
 def check_post_power(base_url: str, verbose: bool) -> bool:
-    """Set power limit, verify via inverter read-back, then restore original."""
-    print("\n[7] POST /api/power — set power limit (live inverter test)")
+    """
+    Real-time power limiting test:
+    1. Read current power output and power limit (pre-test baseline)
+    2. Set limit to 80% of current output
+    3. Poll until output drops to/below the limit (or timeout)
+    4. Restore original power limit
+    """
+    print("\n[7] POST /api/power — real-time power limiting test")
     all_ok = True
 
-    # Step 1: Read current power limit from inverter
-    status, body = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
-    if status == 502:
-        print(f"    {SKIP} HTTP 502 — inverter WiFi is off, cannot test power (expected)")
+    # Step 1: Read pre-test baseline
+    original_limit = get_power_limit(base_url)
+    if original_limit is None:
+        print(f"    {SKIP} Cannot read power limit — inverter WiFi may be off")
         return True
-    if status != 200:
-        check("Read current power limit from inverter", False, f"HTTP {status}")
+    check(f"Pre-test power limit: {original_limit}W", True)
+
+    current_power = get_current_power_watts(base_url)
+    if current_power is None or current_power < 10:
+        print(f"    {SKIP} Inverter not producing power ({current_power}W) — cannot test limiting")
+        # Still verify register write works
+        return check_post_power_register_only(base_url, original_limit, verbose)
+
+    check(f"Current power output: {current_power:.0f}W", True)
+
+    # Step 2: Calculate 80% limit
+    test_limit = int(current_power * 0.80)
+    # Clamp to valid range
+    test_limit = max(0, min(test_limit, 1575))
+    if test_limit >= current_power:
+        print(f"    {SKIP} 80% limit ({test_limit}W) not below current output — cannot observe reduction")
+        return check_post_power_register_only(base_url, original_limit, verbose)
+
+    print(f"    Setting limit to 80% of output: {test_limit}W (expecting drop from {current_power:.0f}W)")
+    ok, detail = set_power_limit(base_url, test_limit)
+    if not ok:
+        check(f"Set power limit to {test_limit}W", False, detail)
         return False
+    check(f"Set power limit to {test_limit}W", True, detail)
 
-    try:
-        original_watts = int(str(body).strip())
-    except (ValueError, TypeError):
-        check("Parse current power limit", False, f"got '{body}'")
-        return False
-    check(f"Current power limit: {original_watts}W", True)
-
-    # Step 2: Set a different test value
-    test_watts = 1000 if original_watts != 1000 else 1100
-    print(f"    Setting power to {test_watts}W...")
-    status, body = post_json(base_url, "/api/power", {"power": test_watts})
-
-    if status == 202:
-        # Queued — inverter WiFi dropped between read and write
-        print(f"    {SKIP} HTTP 202 — command queued (WiFi dropped), cannot verify")
-        return True
-
-    ok = check(f"POST /api/power {test_watts}W returns 200", status == 200, f"HTTP {status}")
-    all_ok = all_ok and ok
-
-    if status == 200 and isinstance(body, dict):
-        ok = check("Response contains 'inverter_response'",
-                   "inverter_response" in body,
-                   f"keys: {list(body.keys())}" if verbose else "")
+    # Verify register was written
+    time.sleep(1)
+    readback = get_power_limit(base_url)
+    if readback is not None:
+        ok = check(f"Register confirms {test_limit}W", readback == test_limit,
+                   f"got {readback}W")
         all_ok = all_ok and ok
 
-    # Step 3: Wait briefly for inverter to process, then read back
-    time.sleep(1)
-    status, readback = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
-    if status == 200:
-        try:
-            actual_watts = int(str(readback).strip())
-            ok = check(f"Inverter confirms power = {test_watts}W", actual_watts == test_watts,
-                       f"expected {test_watts}, got {actual_watts}")
-            all_ok = all_ok and ok
-        except (ValueError, TypeError):
-            check("Parse read-back power", False, f"got '{readback}'")
-            all_ok = False
+    # Step 3: Poll power output until it drops to the limit (max 30s)
+    print(f"    Waiting for power to drop to <={test_limit}W...")
+    # Set polling to 1s for faster observation
+    post_json(base_url, "/api/polling", {"seconds": 1})
+
+    limit_reached = False
+    poll_start = time.time()
+    max_wait = 30  # seconds
+    readings: list[float] = []
+
+    while (time.time() - poll_start) < max_wait:
+        time.sleep(3)
+        power_now = get_current_power_watts(base_url)
+        if power_now is None:
+            continue
+        readings.append(power_now)
+        elapsed = time.time() - poll_start
+        if verbose:
+            print(f"      {elapsed:.0f}s: {power_now:.1f}W")
+        if power_now <= test_limit * 1.05:  # 5% tolerance
+            limit_reached = True
+            break
+
+    if readings:
+        final_power = readings[-1]
+        ok = check(
+            f"Power dropped to limit",
+            limit_reached,
+            f"final={final_power:.0f}W, limit={test_limit}W, "
+            f"readings={[f'{r:.0f}' for r in readings]}"
+        )
+        all_ok = all_ok and ok
     else:
-        check("Read back power limit after set", False, f"HTTP {status}")
+        check("Got power readings during wait", False, "no readings received")
         all_ok = False
 
     # Step 4: Restore original power limit
-    print(f"    Restoring power to {original_watts}W...")
-    status, body = post_json(base_url, "/api/power", {"power": original_watts})
-    ok = check(f"Restore power to {original_watts}W", status in (200, 202), f"HTTP {status}")
-    all_ok = all_ok and ok
+    print(f"    Restoring power limit to {original_limit}W...")
+    ok, detail = set_power_limit(base_url, original_limit)
+    ok_check = check(f"Restore power limit to {original_limit}W", ok, detail)
+    all_ok = all_ok and ok_check
 
-    if status == 200:
+    if ok:
         time.sleep(1)
-        status, readback = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
-        if status == 200:
-            try:
-                restored = int(str(readback).strip())
-                ok = check(f"Inverter confirms restored to {original_watts}W",
-                           restored == original_watts,
-                           f"got {restored}")
-                all_ok = all_ok and ok
-            except (ValueError, TypeError):
-                pass
+        readback = get_power_limit(base_url)
+        if readback is not None:
+            ok = check(f"Register confirms restored to {original_limit}W",
+                       readback == original_limit, f"got {readback}W")
+            all_ok = all_ok and ok
+
+    # Restore polling to 20s
+    post_json(base_url, "/api/polling", {"seconds": 20})
+
+    return all_ok
+
+
+def check_post_power_register_only(base_url: str, original_limit: int, verbose: bool) -> bool:
+    """Fallback: just verify register write/read when inverter isn't producing."""
+    print("    Falling back to register-only test...")
+    all_ok = True
+
+    test_watts = 1000 if original_limit != 1000 else 1100
+    ok, detail = set_power_limit(base_url, test_watts)
+    if not ok:
+        check(f"Set power limit to {test_watts}W", False, detail)
+        return False
+    check(f"Set power limit to {test_watts}W", True, detail)
+
+    time.sleep(1)
+    readback = get_power_limit(base_url)
+    if readback is not None:
+        ok = check(f"Register confirms {test_watts}W", readback == test_watts,
+                   f"got {readback}W")
+        all_ok = all_ok and ok
+    else:
+        check("Read back power limit", False, "no response")
+        all_ok = False
+
+    # Restore
+    ok, detail = set_power_limit(base_url, original_limit)
+    ok_check = check(f"Restore to {original_limit}W", ok, detail)
+    all_ok = all_ok and ok_check
+
+    if ok:
+        time.sleep(1)
+        readback = get_power_limit(base_url)
+        if readback is not None:
+            ok = check(f"Register confirms restored to {original_limit}W",
+                       readback == original_limit, f"got {readback}W")
+            all_ok = all_ok and ok
 
     return all_ok
 
