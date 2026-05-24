@@ -108,7 +108,7 @@ static bool nbnsNameMatches(const uint8_t* packet, int offset, int len) {
   if (packet[offset] != 0x20) return false;  // label length must be 32
 
   uint8_t ourEncoded[32];
-  encodeNetbiosName(MDNS_HOSTNAME, ourEncoded);
+  encodeNetbiosName(NBNS_NAME, ourEncoded);
 
   // Compare (case-insensitive already handled by encoding)
   return memcmp(packet + offset + 1, ourEncoded, 32) == 0;
@@ -132,7 +132,7 @@ void mdnsBegin() {
   // Start NBNS responder
   if (nbnsUdp.begin(NBNS_PORT)) {
     nbnsStarted = true;
-    appLogger.log(String("[NBNS] Listening on UDP port 137, name=") + MDNS_HOSTNAME);
+    appLogger.log(String("[NBNS] Listening on UDP port 137, name=") + NBNS_NAME);
   } else {
     appLogger.log("[NBNS] ERROR: Failed to bind UDP port 137");
   }
@@ -234,7 +234,7 @@ void mdnsProcess() {
             // Answer name (same format as query)
             resp[rLen++] = 0x20;  // label length = 32
             uint8_t ourEncoded[32];
-            encodeNetbiosName(MDNS_HOSTNAME, ourEncoded);
+            encodeNetbiosName(NBNS_NAME, ourEncoded);
             memcpy(resp + rLen, ourEncoded, 32);
             rLen += 32;
             resp[rLen++] = 0x00;  // name terminator

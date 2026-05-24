@@ -13,8 +13,9 @@ const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL_COUNT = sizeof(INVERTER_WIFI_AP_HINT
 const uint8_t INVERTER_WIFI_AP_HINT_BSSID[6] = {0x00, 0x06, 0x66, 0x9D, 0xE0, 0x36};
 
 const char* INVERTER_HOST = "10.0.0.1";
-const char* FIRMWARE_VERSION = "fw-20260524-120449-e9f0ee6";
+const char* FIRMWARE_VERSION = "fw-20260524-120757-3bb0e88";
 const char* MDNS_HOSTNAME = "mastervolt-bridge";
+const char* NBNS_NAME = "mv-bridge";
 
 const uint16_t API_PORT = 8080;
 

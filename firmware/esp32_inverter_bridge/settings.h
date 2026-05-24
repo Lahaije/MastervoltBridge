@@ -44,6 +44,9 @@ extern const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS;
 // mDNS hostname (advertised as <hostname>.local)
 extern const char* MDNS_HOSTNAME;
 
+// NetBIOS name for Windows discovery (max 15 characters)
+extern const char* NBNS_NAME;
+
 // Power management
 extern const uint32_t MAIN_LOOP_SLEEP_MS;
 extern const uint16_t INVERTER_MAX_POWER_WATTS;
