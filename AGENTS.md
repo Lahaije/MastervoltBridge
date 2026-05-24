@@ -154,14 +154,14 @@ Synchronization:
 
 ## Build and Upload
 
-```powershell
-# Recommended (auto COM detection):
-.venv\Scripts\python skills/firmware-upload/upload_firmware.py
+**Always use the upload script** — never call `arduino-cli` directly (it skips version stamping):
 
-# Direct arduino-cli:
-arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc firmware/esp32_inverter_bridge
-arduino-cli upload  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc --port COM9 firmware/esp32_inverter_bridge
+```powershell
+.venv\Scripts\python skills/firmware-upload/upload_firmware.py
 ```
+
+The script automatically: stamps `FIRMWARE_VERSION` with timestamp + git SHA, detects
+the COM port, compiles, uploads, and commits the version change to git.
 
 ## Python Environment
 

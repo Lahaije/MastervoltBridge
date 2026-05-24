@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <UIPEthernet.h>
+#include "utility/Enc28J60Network.h"
 
 #include "settings.h"
 #include "logger.h"
@@ -72,12 +73,13 @@ static bool matchesOurName(const uint8_t* packet, int offset, int packetLen) {
 void mdnsBegin() {
   if (mdnsStarted) return;
 
-  // UIPEthernet (ENC28J60) does not have a public enableMulticast() API.
-  // We rely on the network switch flooding multicast to all ports (common for
-  // link-local multicast 224.0.0.x) or the ENC28J60 passing frames through.
+  // Enable multicast frame reception on ENC28J60 hardware filter (ERXFCON_MCEN).
+  // Without this, the chip silently drops all multicast frames including mDNS.
+  Enc28J60Network::enableMulticast();
+
   if (mdnsUdp.begin(MDNS_PORT)) {
     mdnsStarted = true;
-    appLogger.log(String("[MDNS] Listening on UDP port 5353, hostname=") + MDNS_HOSTNAME + ".local");
+    appLogger.log(String("[MDNS] Listening on UDP port 5353, hostname=") + MDNS_HOSTNAME + ".local (multicast enabled)");
   } else {
     appLogger.log("[MDNS] ERROR: Failed to bind UDP port 5353");
   }

@@ -1,9 +1,24 @@
 ---
 name: firmware-upload
-description: Compile and upload ESP32 inverter bridge firmware. Detects whether the ESP32 is connected on the expected COM port before attempting upload and reports clearly if the device cannot be found.
+description: "ALWAYS use upload_firmware.py for ANY firmware flash — never call arduino-cli directly. The script auto-stamps FIRMWARE_VERSION, detects the COM port, compiles, uploads, and commits. Calling arduino-cli manually skips version stamping and produces untraceable firmware."
 ---
 
 # Firmware Upload Skill
+
+## RULE: Never Flash Manually
+
+**Always use `upload_firmware.py` for compiling and flashing firmware.**
+Do NOT call `arduino-cli compile` or `arduino-cli upload` directly.
+
+The script handles critical steps that manual commands skip:
+- Stamps `FIRMWARE_VERSION` with timestamp + git SHA (without this, the ESP reports a stale version)
+- Detects device presence before upload (clear error if ESP not connected)
+- Commits the version change to git (every flash is traceable)
+
+```powershell
+# THE ONE COMMAND TO FLASH FIRMWARE:
+python skills/firmware-upload/upload_firmware.py
+```
 
 ## Purpose
 Compile the inverter bridge firmware and upload it to the ESP32 over USB serial.
@@ -69,6 +84,12 @@ python skills/firmware-upload/upload_firmware.py --skip-git-trace
 4. **Upload**: Runs `arduino-cli upload` to flash the compiled binary.
 5. **Git trace**: Runs `git add -A`, `git commit`, and `git push` so every flashed
   version is traceable in remote history. Skipped with `--skip-git-trace`.
+
+## Why Not `arduino-cli` Directly?
+
+Calling `arduino-cli compile` + `arduino-cli upload` directly **skips version stamping**.
+The result: `/api/version` reports an old commit hash, making it impossible to know
+what code is actually running on the device. Always use the upload script.
 
 ## Example Output — Device Not Connected
 ```
