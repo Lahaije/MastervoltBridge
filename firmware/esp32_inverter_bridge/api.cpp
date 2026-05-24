@@ -16,7 +16,10 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (runtime-configurable poll interval)"},
   {"POST", "/api/polling", "Set monitor polling interval in seconds: JSON body with seconds field, e.g. {\"seconds\":3} (1 <= seconds <= 3600)"},
   {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
-  {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
+  {"POST", "/api/shadow", "Set shadow function: {\"enabled\":true} or {\"enabled\":false}"},
+  {"GET", "/api/shadow", "Read current shadow function state from inverter"},
+  {"GET", "/api/ha", "Home Assistant integration: numeric power (W), total/daily yield (kWh), power limit (W)"},
+  {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"}, 
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
   {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"}
@@ -228,6 +231,84 @@ void handleApiClient(EthernetClient& client) {
       .addNumber("inverter_http_status", String(inverterHttpCode))
       .addString("inverter_response", inverterResponse)
       .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "POST" && path == "/api/shadow") {
+    // Set shadow function: {"enabled": true} or {"enabled": false}
+    InverterMonitor& monitor = InverterMonitor::getInstance();
+
+    String enabledStr = getJsonValueByKey(body, "enabled");
+    if (enabledStr.length() == 0) {
+      sendHttpResponse(client, 400, "application/json",
+        buildErrorJson("body must contain enabled field, e.g. {\"enabled\":true}"));
+      return;
+    }
+    bool enabled = (enabledStr == "true");
+
+    String inverterResponse;
+    int inverterHttpCode = 0;
+    String errorMsg;
+    bool ok = monitor.setShadow(enabled, inverterResponse, inverterHttpCode, errorMsg);
+
+    if (!ok) {
+      sendHttpResponse(client, 502, "application/json", buildErrorJson(errorMsg));
+      return;
+    }
+
+    // Read back shadow state to confirm
+    int state = monitor.fetchShadowState(errorMsg);
+
+    String response = JsonBuilder()
+      .addBool("enabled", enabled)
+      .addNumber("inverter_http_status", String(inverterHttpCode))
+      .addString("inverter_response", inverterResponse)
+      .addString("shadow_readback", state == 1 ? "on" : (state == 0 ? "off" : "unknown"))
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "GET" && path == "/api/shadow") {
+    // Read current shadow state from inverter
+    InverterMonitor& monitor = InverterMonitor::getInstance();
+    String errorMsg;
+    int state = monitor.fetchShadowState(errorMsg);
+
+    if (state < 0) {
+      sendHttpResponse(client, 502, "application/json", buildErrorJson(errorMsg));
+      return;
+    }
+
+    String response = JsonBuilder()
+      .addBool("enabled", state == 1)
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "GET" && path == "/api/ha") {
+    // Home Assistant optimized endpoint: all values numeric, minimal payload.
+    InverterMonitor& monitor = InverterMonitor::getInstance();
+    HomeData data;
+    bool valid = monitor.getLatestHomeData(data);
+    int powerLimit = monitor.getCachedPowerLimit();
+
+    // Build response with proper numeric types for HA templates.
+    String response = "{";
+    response += "\"power\":";
+    response += valid ? data.instantaneousPower : "null";
+    response += ",\"total_yield\":";
+    response += valid ? data.lifetimeEnergy : "null";
+    response += ",\"daily_yield\":";
+    response += valid ? data.dailySessionEnergy : "null";
+    response += ",\"power_limit\":";
+    response += (powerLimit >= 0) ? String(powerLimit) : "null";
+    response += ",\"available\":";
+    response += valid ? "true" : "false";
+    response += "}";
+
     sendHttpResponse(client, 200, "application/json", response);
     return;
   }

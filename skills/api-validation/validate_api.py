@@ -50,6 +50,9 @@ DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/api/info"),
     ("POST", "/api/polling"),
     ("POST", "/api/power"),
+    ("POST", "/api/shadow"),
+    ("GET",  "/api/shadow"),
+    ("GET",  "/api/ha"),
     ("POST", "/api/inverter/fetch"),
     ("POST", "/wifi/off"),
     ("GET",  "/pulse"),
@@ -88,6 +91,12 @@ GET_CHECKS: list[dict[str, Any]] = [
         "description": "Inverter telemetry (may be 502 if inverter WiFi is off)",
         "required_keys": ["firmware_version", "poll_interval_seconds", "poll_interval_ms", "power", "total_yield", "daily_yield", "power_limit"],
         "allow_502": True,
+    },
+    {
+        "path": "/api/ha",
+        "description": "Home Assistant integration (numeric values)",
+        "required_keys": ["power", "total_yield", "daily_yield", "power_limit", "available"],
+        "allow_502": False,
     },
     # Intentionally do not call /pulse in routine validation because it
     # actively perturbs WiFi state (forced reconnect), which can skew other

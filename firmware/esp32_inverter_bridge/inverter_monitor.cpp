@@ -309,7 +309,8 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
   }
 
   // --- HTTP call (no lock held) ---
-  String payload = String(watts);
+  // Build key=value pairs for /postoptions multipart form.
+  String payload = String("enable_mxpower=on\nmaxpower=") + watts;
   bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, false);
 
   if (ok) {
@@ -432,4 +433,44 @@ int InverterMonitor::fetchPowerLimit(String& errorMessage) {
     return -1;
   }
   return watts;
+}
+
+bool InverterMonitor::setShadow(bool enabled, String& responseBody, int& httpCode, String& errorMessage) {
+  // Build key=value payload for /postoptions.
+  // When enabled: include enShadow=on. When disabled: omit it (checkbox absent = off).
+  // Include a dummy maxpower field so the POST body is never empty.
+  String payload;
+  if (enabled) {
+    payload = "enShadow=on";
+  } else {
+    // Checkbox absent = off. Send maxpower with current cached value to have a valid form.
+    int currentLimit = getCachedPowerLimit();
+    if (currentLimit < 0) currentLimit = INVERTER_MAX_POWER_WATTS;
+    payload = String("enable_mxpower=on\nmaxpower=") + currentLimit;
+  }
+
+  bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, false);
+  if (ok) {
+    appLogger.log(String("[INVERTER-MONITOR] Shadow function set to ") + (enabled ? "ON" : "OFF"));
+  }
+  return ok;
+}
+
+int InverterMonitor::fetchShadowState(String& errorMessage) {
+  String responseBody;
+  int httpCode = 0;
+  bool ok = fetchInverterData("GET", "/shadow", "", responseBody, httpCode, errorMessage, false);
+  if (!ok) {
+    return -1;
+  }
+  responseBody.trim();
+  // Response is "0\n30" or "1\n30" — first line is enabled (1) or disabled (0).
+  int nl = responseBody.indexOf('\n');
+  String firstLine = (nl > 0) ? responseBody.substring(0, nl) : responseBody;
+  int val = firstLine.toInt();
+  if (val != 0 && val != 1) {
+    errorMessage = "invalid /shadow response: " + responseBody;
+    return -1;
+  }
+  return val;
 }

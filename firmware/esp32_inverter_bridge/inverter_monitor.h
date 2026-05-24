@@ -110,6 +110,18 @@ public:
   int fetchPowerLimit(String& errorMessage);
 
   /**
+   * Set the shadow function on or off.
+   * Posts to /postoptions with enShadow=on (or absent for off).
+   */
+  bool setShadow(bool enabled, String& responseBody, int& httpCode, String& errorMessage);
+
+  /**
+   * Read the shadow function state from the inverter's /shadow endpoint.
+   * Returns 1 (enabled), 0 (disabled), or -1 on failure.
+   */
+  int fetchShadowState(String& errorMessage);
+
+  /**
    * Current link state and how long the bridge has been failing to reach
    * the inverter. failure_streak_ms == 0 when state is ONLINE or STARTING.
    * retry_interval_ms is the interval the polling loop will wait until the

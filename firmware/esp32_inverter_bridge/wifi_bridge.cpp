@@ -620,20 +620,36 @@ bool fetchInverterData(const String& method, const String& path, const String& b
       return true;
     };
 
-    // For /postoptions, build multipart form with enable_mxpower + maxpower fields.
+    // For /postoptions, build multipart form from newline-delimited key=value pairs in body.
+    // e.g. body = "enable_mxpower=on\nmaxpower=1000"
     if (path == "/postoptions") {
       String boundary = String("----mvb") + String(millis(), HEX);
       String multipartBody;
       multipartBody.reserve(256 + body.length());
+
+      // Parse body as newline-separated key=value pairs and build multipart parts.
+      int start = 0;
+      while (start < (int)body.length()) {
+        int nl = body.indexOf('\n', start);
+        if (nl < 0) nl = body.length();
+        String line = body.substring(start, nl);
+        line.trim();
+        start = nl + 1;
+        if (line.length() == 0) continue;
+        int eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        String key = line.substring(0, eq);
+        String val = line.substring(eq + 1);
+
+        multipartBody += "--";
+        multipartBody += boundary;
+        multipartBody += "\r\nContent-Disposition: form-data; name=\"";
+        multipartBody += key;
+        multipartBody += "\"\r\n\r\n";
+        multipartBody += val;
+        multipartBody += "\r\n";
+      }
       multipartBody += "--";
-      multipartBody += boundary;
-      multipartBody += "\r\nContent-Disposition: form-data; name=\"enable_mxpower\"\r\n\r\n";
-      multipartBody += "on";
-      multipartBody += "\r\n--";
-      multipartBody += boundary;
-      multipartBody += "\r\nContent-Disposition: form-data; name=\"maxpower\"\r\n\r\n";
-      multipartBody += body;
-      multipartBody += "\r\n--";
       multipartBody += boundary;
       multipartBody += "--\r\n";
 
