@@ -314,6 +314,13 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
   bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, false);
 
   if (ok) {
+    // Clear any previously queued command — the immediate delivery supersedes it.
+    {
+      ScopedPowerStateLock lock(powerStateMutex, POWER_STATE_LOCK_TIMEOUT_MS);
+      if (lock.acquired()) {
+        queuedPowerWatts = -1;
+      }
+    }
     appLogger.log(String("[INVERTER-MONITOR] Power set to ") + watts + "W (immediate)");
     // Re-read the actual value from the inverter to confirm.
     refreshPowerLimit();
@@ -366,11 +373,12 @@ void InverterMonitor::applyPendingPowerCommand() {
   // --- HTTP call outside the lock ---
   String responseBody, errorMessage;
   int httpCode = 0;
-  String payload = String(targetWatts);
+  // Must use same endpoint and payload format as setPower().
+  String payload = String("enable_mxpower=on\nmaxpower=") + targetWatts;
   // Use waitForConnection=true: the poll just succeeded so WiFi is likely
   // still up, but if it dropped in the meantime we want to reconnect rather
   // than silently failing and leaving the command stuck in the queue.
-  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, true);
+  bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, true);
 
   if (ok) {
     {
