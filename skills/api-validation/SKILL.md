@@ -66,10 +66,20 @@ This script captures original settings, applies an 80% power limit based on meas
 | Endpoint | Expected keys |
 |---|---|
 | `GET /` | `endpoints` |
+| `GET /api/version` | `firmware_version` |
 | `GET /api/health` | `wifi_connected`, `ethernet_ip` |
 | `GET /api/logs` | `entries` |
-| `GET /api/info` | `ready`, `power`, `total_yield`, `daily_yield`, `power_limit` |
-| `GET /pulse` | `reconnected` |
+| `GET /api/info` | `firmware_version`, `poll_interval_seconds`, `poll_interval_ms`, `power`, `total_yield`, `daily_yield`, `power_limit` |
+| `GET /api/ha` | `power`, `total_yield`, `daily_yield`, `power_limit`, `available` |
+
+Note: `GET /pulse` is intentionally excluded from routine validation because it actively perturbs WiFi state.
+
+**4. POST endpoint behavioral tests** — The script automatically tests POST endpoints:
+- `POST /api/debug` — toggles debug mode on/off and verifies state changes
+- `POST /api/polling` — changes polling interval and verifies response
+- `POST /api/inverter/fetch` — proxies a request to the inverter
+- `POST /api/power` — sets power limit and verifies delivery (skip with `--skip-power`)
+- `GET /pulse` — triggers reconnect sequence
 </validation_checks>
 
 <interpreting_results>
@@ -104,11 +114,20 @@ This script captures original settings, applies an 80% power limit based on meas
 </fixing_mismatches>
 
 <post_endpoints>
-The script does not call POST endpoints automatically (they mutate inverter state). Manual verification:
+The script tests POST endpoints automatically as part of its validation run. Use `--skip-power` to skip the power limit test (which mutates inverter state):
+
+```powershell
+python skills/api-validation/validate_api.py --skip-power
+```
+
+Manual verification examples:
 
 ```powershell
 # Set inverter power (inverter WiFi must be on)
 curl -X POST http://192.168.1.48:8080/api/power -H "Content-Type: application/json" -d "{\"power\":500}"
+
+# Set shadow function
+curl -X POST http://192.168.1.48:8080/api/shadow -H "Content-Type: application/json" -d "{\"enabled\":true}"
 
 # Fetch inverter path
 curl -X POST http://192.168.1.48:8080/api/inverter/fetch -H "Content-Type: application/json" -d "{\"url\":\"/home\"}"

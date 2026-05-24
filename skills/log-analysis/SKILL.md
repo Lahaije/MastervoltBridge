@@ -12,7 +12,7 @@ The bridge firmware alternates between two connect paths on every connect attemp
 
 Both paths log structured start/complete entries tagged with path name and duration, enabling A/B comparison directly from live logs.
 
-Scripts in this folder: `analyze_and_plot.py` (one-pass fast path), `analyze_bridge_logs.py` (full analysis), `analyze_logs_snapshot.py` (snapshot comparison), `plot_power.py` (power chart), `show_all.py` (chronological dump).
+Scripts in this folder: `analyze_and_plot.py` (one-pass fast path), `analyze_bridge_logs.py` (full analysis), `analyze_logs_snapshot.py` (snapshot comparison), `plot_power.py` (power chart), `show_all.py` (chronological dump), `fetch_yield.py` (yield data retrieval).
 </objective>
 
 <essential_principles>

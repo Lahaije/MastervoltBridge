@@ -168,14 +168,14 @@ private:
 
   // Polling interval runtime config.
   SemaphoreHandle_t pollingConfigMutex = nullptr;
-  uint32_t pollingIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+  uint32_t pollingIntervalMs = DEFAULT_POLL_INTERVAL_MS;
 
   // Link-state snapshot. Written only by the polling task; read by API
   // handlers. Reads/writes are protected by pollingConfigMutex (cheap
   // tiny-state lock; reuses an existing mutex to avoid adding another).
   InverterLinkState linkState = InverterLinkState::STARTING;
   uint32_t failureStartMs = 0;     // millis() when current streak began; 0 if none
-  uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+  uint32_t currentRetryIntervalMs = DEFAULT_POLL_INTERVAL_MS;
 
   // Power limit state. All fields below are protected by powerStateMutex.
   // Held briefly only to read/update fields (never across HTTP calls).

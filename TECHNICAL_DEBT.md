@@ -134,66 +134,40 @@ Other URLs referenced:
 
 ---
 
-## Dynamic IP Discovery (TODO)
+## Dynamic IP Discovery (PARTIALLY RESOLVED)
 
-**Priority**: Medium  
+**Priority**: Low  
 **Scope**: Network infrastructure, scripting, skills  
-**Status**: Not started
+**Status**: Hostname registered via DHCP; script discovery not yet implemented
 
-### Problem
-- All scripts, skills, and examples hardcode static IP: `192.168.1.48`
-- Device DHCP assignment may change if power-cycled or router reboots
-- Users must manually find bridge IP on network before running any tools
-- No automated discovery mechanism
+### Resolved
+- ✅ DHCP hostname `mv-bridge` sent to router (configured in `settings.cpp`)
+- ✅ Router registers device by hostname in its DHCP client table
+- ✅ UIPEthernet library patched to use `DHCP_HOSTNAME` from settings
+  (library file: `UIPEthernet/Dhcp.h` → `#define HOST_NAME DHCP_HOSTNAME`)
 
-### Solution Approach
-1. **Add hostname to firmware**
-   - Set mDNS hostname on boot (e.g., `mastervolt-bridge.local`)
-   - Allow runtime hostname configuration via API endpoint
-   - Requires: ESP32 mDNS library (already available in Arduino core)
+### Limitations Discovered
+- mDNS responder not feasible: UIPEthernet's uIP stack cannot receive IP multicast
+- NBNS responder not feasible: UIPEthernet's UDP outbound is unreliable (packets logged as sent but never arrive)
+- Router does not serve local DNS for DHCP hostnames (hostname visible in admin UI only)
+- Result: hostname is cosmetic in the router; clients still need the static IP
 
-2. **Update scripts and skills to support discovery**
-   - Add `--discover` flag to auto-find bridge on network (mDNS or ARP scan)
-   - Add `--host` / `--hostname` parameter (fallback to `mastervolt-bridge.local`)
-   - Affected files:
-     - `skills/firmware-upload/upload_firmware.py` (already has `--port` override)
-     - `skills/api-validation/validate_api.py`
-     - `skills/log-analysis/analyze_bridge_logs.py`
-     - `skills/log-analysis/show_all.py`
-     - `test_bridge.py`
+### Remaining
+- [ ] Update scripts to support `--host` parameter and env var `MASTERVOLT_BRIDGE_HOST`
+- [ ] Add hostname/IP to `/api/health` response for discoverability
+- [ ] Document the DHCP hostname in `docs/SETUP_README.md`
 
-3. **Configuration precedence**
-   - CLI argument (highest)
-   - Environment variable `MASTERVOLT_BRIDGE_HOST`
-   - mDNS hostname lookup (e.g., `mastervolt-bridge.local`)
-   - Static IP fallback `192.168.1.48` (lowest)
-
-4. **Documentation**
-   - Update `docs/SETUP_README.md` with discovery examples
-   - Add mDNS hostname to `AGENTS.md`
-   - Document `MASTERVOLT_BRIDGE_HOST` env var usage
-
-### Implementation Notes
-- **mDNS Library**: `ESPmDNS.h` (part of Arduino core for ESP32)
-- **Python Discovery**: Use `mdns` or `zeroconf` packages (add to `pyproject.toml`)
-- **Windows Compatibility**: May need fallback to ARP scan on networks without mDNS
-
-### Blocked By
-- None (can implement independently)
-
-### Related Issues
-- Static IP hardcoding in:
-  - `firmware/esp32_inverter_bridge/settings.cpp` (example uses)
-  - All Python scripts (see above)
-  - `README.md` examples
-  - Test scripts
+### Related
+- `firmware/esp32_inverter_bridge/settings.cpp` — `DHCP_HOSTNAME = "mv-bridge"`
+- `UIPEthernet/Dhcp.h` — patched to reference `DHCP_HOSTNAME`
+- `UIPEthernet/Dhcp.cpp` — patched to use dynamic hostname length without MAC suffix
 
 ---
 
 ## Future Enhancement Ideas
 
 - [ ] Web-based configuration dashboard (firmware side)
-- [ ] Home Assistant auto-discovery (mDNS + SSDP)
+- [ ] Home Assistant auto-discovery (DHCP hostname + static IP config)
 - [ ] TLS/HTTPS for API (requires certificate management)
 - [ ] Multiple inverter support (mesh/multi-unit coordination)
 - [ ] OTA firmware updates (with integrity checking)

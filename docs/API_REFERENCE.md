@@ -19,6 +19,9 @@ http://192.168.1.48:8080
 | GET | /api/info | Cached inverter /home telemetry |
 | POST | /api/polling | Set monitor polling interval in seconds |
 | POST | /api/power | Set inverter power |
+| POST | /api/shadow | Set shadow function |
+| GET | /api/shadow | Read shadow function state |
+| GET | /api/ha | Home Assistant integration (numeric values) |
 | POST | /api/inverter/fetch | Fetch inverter endpoint |
 | POST | /wifi/off | Single button press if WiFi is connected |
 | GET | /pulse | Recovery pulse + connection-time measurement |
@@ -164,6 +167,65 @@ Response:
 
 {"poll_interval_seconds":3,"poll_interval_ms":3000}
 
+## POST /api/shadow
+
+Sets the inverter shadow function (power curtailment mode).
+
+Body:
+
+{"enabled":true}
+
+or
+
+{"enabled":false}
+
+Responses:
+
+- 200 when command delivered and confirmed
+- 400 if `enabled` field missing
+- 502 if inverter WiFi is unavailable
+
+Successful response example:
+
+{"enabled":true,"inverter_http_status":200,"inverter_response":"ok","shadow_readback":"on"}
+
+The `shadow_readback` field is a read-back confirmation from the inverter: `"on"`, `"off"`, or `"unknown"`.
+
+## GET /api/shadow
+
+Reads the current shadow function state from the inverter.
+
+Responses:
+
+- 200 with current state
+- 502 if inverter WiFi is unavailable
+
+Response example:
+
+{"enabled":true}
+
+## GET /api/ha
+
+Home Assistant optimized endpoint. Returns all telemetry as numeric values (not strings) for direct use in HA templates. Always returns 200.
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `power` | number\|null | Current power in watts, null if unavailable |
+| `total_yield` | number\|null | Lifetime energy in kWh, null if unavailable |
+| `daily_yield` | number\|null | Daily energy in kWh, null if unavailable |
+| `power_limit` | number\|null | Cached power limit in watts, null if never read |
+| `available` | bool | `true` when valid telemetry is cached |
+
+Response example (inverter online):
+
+{"power":674.547,"total_yield":8566.628,"daily_yield":12.811,"power_limit":1575,"available":true}
+
+Response example (inverter offline):
+
+{"power":null,"total_yield":null,"daily_yield":null,"power_limit":null,"available":false}
+
 ## POST /api/inverter/fetch
 
 Body:
@@ -250,6 +312,8 @@ When inverter WiFi is not available:
 
 - GET /api/info -> 200 with `ready=false` if no poll has ever succeeded; otherwise 200 with the last cached telemetry (`ready=true`, but `last_update_ms` will be stale)
 - POST /api/power -> 202 (queued)
+- POST /api/shadow -> 502
+- GET /api/shadow -> 502
 - POST /api/inverter/fetch -> 502
 
 Still expected to respond:
@@ -258,5 +322,6 @@ Still expected to respond:
 - /api/version
 - /api/health
 - /api/logs
+- /api/ha (returns `available: false` with null values)
 - /wifi/off
 - /pulse

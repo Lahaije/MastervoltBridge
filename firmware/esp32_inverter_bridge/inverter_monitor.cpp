@@ -273,7 +273,7 @@ bool InverterMonitor::setPollingIntervalSeconds(uint32_t seconds, uint32_t& appl
 }
 
 uint32_t InverterMonitor::getPollingIntervalMs() {
-  if (pollingConfigMutex == nullptr) return WIFI_BRIDGE_POLL_INTERVAL_MS;
+  if (pollingConfigMutex == nullptr) return DEFAULT_POLL_INTERVAL_MS;
   ScopedPollingConfigLock lock(pollingConfigMutex, POLLING_CONFIG_LOCK_TIMEOUT_MS, "pollingConfigMutex");
   // Best-effort read if the lock is contended; pollingIntervalMs is a 32-bit
   // value whose torn read would just yield a slightly stale interval.
