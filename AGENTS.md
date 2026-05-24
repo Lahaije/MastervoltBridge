@@ -230,7 +230,7 @@ Documentation (`docs/`):
 - `MAX_POWER_BEHAVIOR.md`
 
 Skills (`skills/`):
-`firmware-upload/`, `firmware-optimization-loop/`, `log-analysis/`, `api-validation/`, `documentation-update/`
+`firmware-upload/`, `firmware-optimization-loop/`, `log-analysis/`, `api-validation/`, `documentation-update/`, `strategy-comparison/`, `create-agent-skills/`
 
 Root:
 `README.md`, `AGENTS.md`, `test_bridge.py`, `pyproject.toml`

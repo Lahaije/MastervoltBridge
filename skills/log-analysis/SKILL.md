@@ -98,6 +98,8 @@ python skills/log-analysis/analyze_logs_snapshot.py --snapshot-dir output --snap
 **show_all.py** — Total entries, boot time, last entry time, total uptime, chronological list with formatted timestamps (Xm SSs).
 
 **analyze_bridge_logs.py** — Session Summary (uptime, poll counts, power min/avg/max/last + trend arrow, disconnection episodes, backoff transitions) + Connection Analysis (total attempts, success/failure rate, per-path dwell vs auto breakdown with timing and channel distribution, per-attempt detail grouped by disconnection episode).
+
+**Auto-save (all scripts)** — Every call to `fetch_logs()` automatically appends fetched entries to `output/logs_accumulated.jsonl` (JSONL, one JSON object per line). This builds a historical archive across sessions for offline analysis without extra steps.
 </script_outputs>
 
 <log_patterns>
