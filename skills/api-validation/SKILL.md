@@ -1,136 +1,110 @@
-# Skill: API Validation
-
-## Purpose
-
-Validate that the live ESP32 bridge API matches the documentation in `docs/API_REFERENCE.md`.
-The skill includes a Python script that calls every GET endpoint, checks JSON response keys,
-and cross-checks the firmware's own discovery response against the documented endpoint list.
-
+---
+name: api-validation
+description: Validate that the live ESP32 bridge API matches documentation in docs/API_REFERENCE.md. Use after uploading new firmware, updating API docs, or adding new endpoints.
 ---
 
-## When to Use This Skill
+<objective>
+Validate that the live ESP32 bridge API matches the documentation in `docs/API_REFERENCE.md`. The skill includes a Python script that calls every GET endpoint, checks JSON response keys, and cross-checks the firmware's own discovery response against the documented endpoint list.
+</objective>
 
+<quick_start>
+```powershell
+# Activate venv (required once per terminal session)
+& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+
+# Run validation
+python skills/api-validation/validate_api.py
+
+# Verbose (shows response keys and full endpoint list)
+python skills/api-validation/validate_api.py --verbose
+```
+
+Exit code `0` = all checks passed. Exit code `1` = one or more failures.
+</quick_start>
+
+<when_to_use>
 - After uploading new firmware — confirm all endpoints still work as documented.
 - When `docs/API_REFERENCE.md` is updated — confirm the live bridge agrees.
 - When adding a new endpoint to `api.cpp` — confirm it appears in the discovery response and add it to the docs.
 - Periodically during development to catch documentation drift.
+</when_to_use>
 
----
+<commands>
+Run from the repository root. **The venv MUST be activated first in every terminal session.**
 
-## Primary Command
-
-Run from the repository root. **The venv MUST be activated first in every terminal session:**
-
-```powershell
-# Activate venv (required once per terminal session — always do this first)
-& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
-```
-
-After activation, use plain `python` for all commands below.
-
+**Standard validation:**
 ```powershell
 python skills/api-validation/validate_api.py
 ```
 
-With verbose output (shows response keys and full endpoint list):
-
+**Verbose output:**
 ```powershell
 python skills/api-validation/validate_api.py --verbose
 ```
 
-Custom bridge URL:
-
+**Custom bridge URL:**
 ```powershell
 python skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
 ```
 
-Exit code `0` = all checks passed. Exit code `1` = one or more failures.
-
-### Stateful inverter round-trip test
-
-Use this when you want a step-by-step live exercise of the polling and power-control path. It prints every action to the terminal, captures the original polling frequency and power limit, reads the current inverter power, applies an 80% limit based on that measured power, probes the read-only endpoints while the setting settles, then verifies the delivered limit and restores the original settings.
-
+**Stateful inverter round-trip test** (mutates power limit, use explicitly):
 ```powershell
 python skills/api-validation/test_inverter_endpoints.py
-```
-
-Custom bridge URL or longer wait:
-
-```powershell
 python skills/api-validation/test_inverter_endpoints.py --base-url http://192.168.1.48:8080 --wait-seconds 3
 ```
 
-This script is stateful and should be used when you explicitly want to mutate the inverter power limit during testing.
+This script captures original settings, applies an 80% power limit based on measured power, probes read-only endpoints while it settles, verifies delivery, then restores original settings.
+</commands>
 
----
+<validation_checks>
+**1. Bridge reachability** — Calls `GET /api/health`. If unreachable, stops immediately.
 
-## What the Script Checks
+**2. Discovery cross-check (`GET /`)** — Verifies every documented endpoint appears in firmware response and vice versa. Discrepancies indicate stale docs or firmware mismatch.
 
-### 1. Bridge reachability
-Calls `GET /api/health`. If unreachable, stops immediately with a clear error message.
-
-### 2. Discovery cross-check (`GET /`)
-- Calls the firmware's own discovery endpoint.
-- Verifies every **documented endpoint** appears in the firmware response.
-- Verifies every **firmware endpoint** appears in the documentation (catches silent additions).
-- Discrepancies indicate either stale docs or a firmware mismatch.
-
-### 3. GET endpoint response validation
-For each GET endpoint, checks:
-- HTTP status code is 200 (or expected documented status for inverter-dependent endpoints).
-- Response JSON contains the documented top-level keys.
+**3. GET endpoint response validation** — For each GET endpoint, checks HTTP status 200 and documented top-level JSON keys:
 
 | Endpoint | Expected keys |
 |---|---|
 | `GET /` | `endpoints` |
 | `GET /api/health` | `wifi_connected`, `ethernet_ip` |
 | `GET /api/logs` | `entries` |
-| `GET /api/info` | `ready`, `power`, `total_yield`, `daily_yield`, `power_limit` (telemetry empty when `ready=false`) |
+| `GET /api/info` | `ready`, `power`, `total_yield`, `daily_yield`, `power_limit` |
 | `GET /pulse` | `reconnected` |
+</validation_checks>
 
----
-
-## Interpreting Results
-
+<interpreting_results>
 | Result | Meaning | Action |
 |---|---|---|
 | `✓ All checks passed` | Live bridge matches documentation | No action needed |
-| Documented endpoint missing from firmware | `api.cpp` is missing the handler | Add endpoint to `api.cpp`, re-upload with firmware-upload skill |
-| Firmware endpoint missing from documentation | New endpoint was added without updating docs | Update `docs/API_REFERENCE.md` and `AGENTS.md` endpoint table |
+| Documented endpoint missing from firmware | `api.cpp` is missing the handler | Add endpoint to `api.cpp`, re-upload |
+| Firmware endpoint missing from documentation | New endpoint added without updating docs | Update `docs/API_REFERENCE.md` and `AGENTS.md` |
 | Response key missing | `api_helper.cpp` response changed, or docs are wrong | Align docs with firmware or restore the field |
-| `GET /api/info` returns `ready=false` | No cached telemetry yet (boot/inverter unavailable) | Expected — wait for successful poll or rerun daytime |
+| `GET /api/info` returns `ready=false` | No cached telemetry yet | Expected — wait for successful poll |
 | Bridge not reachable | Ethernet disconnected or wrong IP | Check hardware and bridge IP |
+</interpreting_results>
 
----
-
-## Fixing Mismatches
-
-### Firmware is missing a documented endpoint
-1. Add the handler in `api.cpp` (`handleApiClient()` function).
-2. Add the entry to `API_ENDPOINTS[]` in `api.cpp`.
-3. Upload firmware:
-   ```powershell
-   python skills/firmware-upload/upload_firmware.py
-   ```
+<fixing_mismatches>
+**Firmware is missing a documented endpoint:**
+1. Add handler in `api.cpp` (`handleApiClient()` function).
+2. Add entry to `API_ENDPOINTS[]` in `api.cpp`.
+3. Upload: `python skills/firmware-upload/upload_firmware.py`
 4. Re-run this skill to confirm.
 
-### Documentation is missing a firmware endpoint
+**Documentation is missing a firmware endpoint:**
 1. Update `docs/API_REFERENCE.md` — add method, path, description, request/response schema.
-2. Update the endpoint table in `README.md` and `AGENTS.md`.
-3. Add the endpoint to `DOCUMENTED_ENDPOINTS` in `validate_api.py`.
-4. Add a GET check entry to `GET_CHECKS` in `validate_api.py` (for GET endpoints).
+2. Update endpoint table in `README.md` and `AGENTS.md`.
+3. Add endpoint to `DOCUMENTED_ENDPOINTS` in `validate_api.py`.
+4. Add GET check entry to `GET_CHECKS` in `validate_api.py` (for GET endpoints).
 
-### Response key mismatch
-- Compare `api_helper.cpp` (the JSON builder functions) against `docs/API_REFERENCE.md`.
+**Response key mismatch:**
+- Compare `api_helper.cpp` (JSON builder functions) against `docs/API_REFERENCE.md`.
 - If firmware changed: update the docs.
 - If docs changed incorrectly: revert the doc change.
-- Update `GET_CHECKS` `required_keys` in `validate_api.py` to match the actual schema.
+- Update `GET_CHECKS` `required_keys` in `validate_api.py` to match actual schema.
+</fixing_mismatches>
 
----
-
-## POST Endpoints
-
-The script does not call POST endpoints automatically (they mutate inverter state). To verify POST endpoints manually:
+<post_endpoints>
+The script does not call POST endpoints automatically (they mutate inverter state). Manual verification:
 
 ```powershell
 # Set inverter power (inverter WiFi must be on)
@@ -143,14 +117,14 @@ curl -X POST http://192.168.1.48:8080/api/inverter/fetch -H "Content-Type: appli
 curl -X POST http://192.168.1.48:8080/wifi/off
 ```
 
-Expected responses are documented in `docs/API_REFERENCE.md`.
-
 Note: when inverter WiFi is down, `/api/power` may return `202` (queued) instead of failing.
+</post_endpoints>
 
----
-
-## Keeping This Skill in Sync
-
-The `DOCUMENTED_ENDPOINTS` and `GET_CHECKS` lists in `validate_api.py` are the source of truth for this skill.
-When endpoints change, update **both** the Python script and `docs/API_REFERENCE.md` together.
-See `skills/documentation-update/SKILL.md` for the full documentation update policy.
+<success_criteria>
+API validation is complete when:
+- [ ] Bridge reachable via `GET /api/health`
+- [ ] All documented endpoints appear in firmware discovery response
+- [ ] All firmware endpoints appear in documentation
+- [ ] GET endpoints return expected JSON keys
+- [ ] Exit code is `0`
+</success_criteria>

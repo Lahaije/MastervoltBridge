@@ -3,10 +3,19 @@ name: log-analysis
 description: Acquire bridge logs from /api/logs and analyze WiFi connection attempt outcomes, per-path (dwell vs auto) timing, disconnection episodes, power readings, and reliability patterns.
 ---
 
-# Log Analysis Skill
+<objective>
+Fetch bridge logs from the ESP API and analyze WiFi connection behavior without triggering any new activity.
 
-## Agent Behaviour — When to Run This Skill
+The bridge firmware alternates between two connect paths on every connect attempt:
+- **dwell**: short scan dwell (200 ms), uses configured AP hint as fallback.
+- **auto**: longer scan dwell (500 ms), auto-discovery only (no hint fallback).
 
+Both paths log structured start/complete entries tagged with path name and duration, enabling A/B comparison directly from live logs.
+
+Scripts in this folder: `analyze_and_plot.py` (one-pass fast path), `analyze_bridge_logs.py` (full analysis), `analyze_logs_snapshot.py` (snapshot comparison), `plot_power.py` (power chart), `show_all.py` (chronological dump).
+</objective>
+
+<essential_principles>
 **For generic requests involving logs, data, status, or power, prefer `analyze_and_plot.py` (single fetch, faster)** — e.g. "show me the logs", "analyse the logs", "how is the inverter doing?", "show me the power", "what's happening?".
 
 Default workflow for a generic log request:
@@ -18,164 +27,80 @@ Only skip the plot if:
 - The user makes a **specific** log request (e.g. "show me the WiFi connection attempts", "how many skipped polls?", "what is the reconnect time?") — answer with text only.
 - The user explicitly asks for text-only output.
 - matplotlib is not installed.
+</essential_principles>
 
----
-
-## Purpose
-Fetch bridge logs from the ESP API and analyze WiFi connection behavior without triggering any new activity.
-
-The bridge firmware alternates between two connect paths on every connect attempt:
-- **dwell**: short scan dwell (200 ms), uses configured AP hint as fallback.
-- **auto**: longer scan dwell (500 ms), auto-discovery only (no hint fallback).
-
-Both paths log structured start/complete entries tagged with path name and duration, enabling A/B comparison directly from live logs.
-
-This skill is self-contained in one folder:
-- SKILL.md: usage guide and expected outputs
-- analyze_and_plot.py: one-pass fetch + analyze + plot (fast path for generic requests)
-- analyze_bridge_logs.py: fetch + parse + summarize WiFi connection attempts, poll stats, power readings, and disconnection episodes
-- analyze_logs_snapshot.py: compare an archived pre-disconnect snapshot with current live logs
-- plot_power.py: fetch logs and save a power-vs-time PNG chart to `output/` (git-ignored)
-- show_all.py: convenience script to dump all entries in chronological order
-
-## Primary Commands
-
-Run from repository root. **The venv MUST be activated first in every terminal session:**
-
+<quick_start>
 ```powershell
-# Activate venv (required once per terminal session — always do this first)
+# Activate venv (required once per terminal session)
 & d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+
+# Fast path: analyze + plot in one pass
+python skills/log-analysis/analyze_and_plot.py
+
+# Full WiFi connection analysis
+python skills/log-analysis/analyze_bridge_logs.py
+
+# Power chart only
+python skills/log-analysis/plot_power.py
 ```
+</quick_start>
 
-After activation, use plain `python` for all commands below.
+<commands>
+Run from repository root. **The venv MUST be activated first in every terminal session.**
 
-### 1. Show All Log Entries (Chronological)
-Quick dump of every log entry since boot with formatted timestamps:
+**1. Show All Log Entries (Chronological)**
 ```powershell
 python skills/log-analysis/show_all.py
-```
-
-With custom bridge URL:
-```powershell
 python skills/log-analysis/show_all.py --base-url http://192.168.1.48:8080
-```
-
-Faster scoped views (recommended for large buffers):
-```powershell
 python skills/log-analysis/show_all.py --limit 200
 python skills/log-analysis/show_all.py --since-ms 300000
 ```
 
-### 2. Analyze + Plot (One Pass, Fast Path)
-Run analysis and generate the power plot from one `/api/logs` fetch:
+**2. Analyze + Plot (One Pass, Fast Path)**
 ```powershell
 python skills/log-analysis/analyze_and_plot.py
-```
-
-With filters (faster on busy systems):
-```powershell
 python skills/log-analysis/analyze_and_plot.py --limit 400
 python skills/log-analysis/analyze_and_plot.py --since-ms 300000
 ```
 
-### 3. Analyze WiFi Connection Attempts
-Full analysis including session summary, power stats, disconnection episodes, and A/B path breakdown:
+**3. Analyze WiFi Connection Attempts**
 ```powershell
 python skills/log-analysis/analyze_bridge_logs.py
-```
-
-Show all entries plus full analysis:
-```powershell
 python skills/log-analysis/analyze_bridge_logs.py --print-all
-```
-
-Custom bridge target and save raw logs to JSON:
-```powershell
 python skills/log-analysis/analyze_bridge_logs.py --base-url http://192.168.1.48:8080 --save-json logs/latest_bridge_logs.json
-```
-
-Filter entries since a specific millisecond offset (e.g., events after 5 minutes uptime):
-```powershell
 python skills/log-analysis/analyze_bridge_logs.py --since-ms 300000
 ```
 
-### 4. Plot Power Output
-Generate a PNG chart of power (W) vs elapsed time, with disconnection episodes shown as shaded bands and explicit backoff transition markers:
+**4. Plot Power Output**
 ```powershell
 python skills/log-analysis/plot_power.py
-```
-
-Open the plot window after saving:
-```powershell
 python skills/log-analysis/plot_power.py --show
-```
-
-Custom output path or bridge URL:
-```powershell
 python skills/log-analysis/plot_power.py --base-url http://192.168.1.48:8080 --out output/today.png
-```
-
-Filter to last N entries or a time window:
-```powershell
 python skills/log-analysis/plot_power.py --since-ms 300000
 python skills/log-analysis/plot_power.py --limit 200
 ```
 
-Output is saved to `output/powerplot.png` by default and overwritten each run. The `output/` folder is git-ignored.
+Output saved to `output/powerplot.png` by default (git-ignored). **Requires**: `matplotlib` — install with `uv pip install matplotlib`.
 
 Plot behavior notes:
-- Backoff transitions (link-state moves into `BACKOFF` -> 60s or `DORMANT` -> 600s)
-  are drawn as dashed vertical markers. Parsed from the firmware's
-  `[INVERTER-MONITOR] Link state: FROM -> TO (streak=..., interval=...)`
-  logs (debug-mode only).
-- In backoff mode, episode labels are simplified (no retry counts) to reduce clutter.
-- Post-backoff episode labels are thinned for readability in dense retry regions.
+- Backoff transitions drawn as dashed vertical markers (parsed from `[INVERTER-MONITOR] Link state:` logs, debug-mode only).
+- In backoff mode, episode labels are simplified; post-backoff labels thinned for readability.
 
-**Requires**: `matplotlib` — install once with `uv pip install matplotlib`.
-
-### 5. Compare an Archived Snapshot with Live Logs
-Use the newest archived `output/logs_before_disconnect_*.json` snapshot to compare a pre-disconnect log capture against the current live `/api/logs` buffer:
+**5. Compare Archived Snapshot with Live Logs**
 ```powershell
 python skills/log-analysis/analyze_logs_snapshot.py
-```
-
-Custom bridge URL or snapshot location:
-```powershell
 python skills/log-analysis/analyze_logs_snapshot.py --base-url http://192.168.1.48:8080
 python skills/log-analysis/analyze_logs_snapshot.py --snapshot-dir output --snapshot-glob logs_before_disconnect_*.json
 ```
+</commands>
 
-This is the best choice when you already have an archived snapshot and want to know whether the live buffer shows a reboot, gap, or crash-like reset pattern.
+<script_outputs>
+**show_all.py** — Total entries, boot time, last entry time, total uptime, chronological list with formatted timestamps (Xm SSs).
 
-## What The Scripts Report
+**analyze_bridge_logs.py** — Session Summary (uptime, poll counts, power min/avg/max/last + trend arrow, disconnection episodes, backoff transitions) + Connection Analysis (total attempts, success/failure rate, per-path dwell vs auto breakdown with timing and channel distribution, per-attempt detail grouped by disconnection episode).
+</script_outputs>
 
-### show_all.py
-- Total number of log entries
-- Boot time, last entry time, and total uptime
-- Chronological list of all entries with formatted timestamps (Xm SSs)
-
-### analyze_bridge_logs.py
-
-**Session Summary** (always shown):
-- Uptime span and duration
-- Total log entries
-- Poll counts: successful, total (the legacy `skipped` counter is always 0:
-  current firmware blocks on WiFi rather than logging per-iteration skips)
-- Power readings: min/avg/max/last + trend arrow (↑ ↓ →) with start-vs-end comparison
-- Disconnection episode count, average recovery time, average retries per episode
-- Backoff transition events (link-state moves into BACKOFF or DORMANT,
-  parsed from `[INVERTER-MONITOR] Link state: ...` logs) with latest and
-  recent switch points
-
-**Connection Analysis**:
-- Total attempts, overall success/failure rate and timing (min/avg/max/median)
-- Per-path breakdown (dwell vs auto): success rate, timing, channel distribution
-- Per-attempt detail grouped by **disconnection episode** — each episode shows its start timestamp and whether it was resolved
-
-## Known Log Message Patterns
-
-Use these as a fast-reference lookup when manually scanning `--print-all` output or raw JSON.
-
+<log_patterns>
 | Pattern | Source | Meaning |
 |---------|--------|---------|
 | `[INVERTER-MONITOR] Inverter monitor initialized` | inverter_monitor.cpp | Boot — monitor task started |
@@ -184,49 +109,35 @@ Use these as a fast-reference lookup when manually scanning `--print-all` output
 | `[WIFI-CONNECT] start path=auto ...` | wifi_bridge.cpp | Auto-path connect attempt starting (500ms scan) |
 | `[WIFI-CONNECT] complete ... result=success ...` | wifi_bridge.cpp | WiFi connected — note `channel=` and `duration_ms=` |
 | `[WIFI-CONNECT] complete ... result=timeout ...` | wifi_bridge.cpp | Connect timed out (~8s budget); note `final_status=` |
-| `[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW` | inverter_monitor.cpp | Successful inverter poll. Status=1 is normal. Power in watts. |
-| `[INVERTER-MONITOR] Link state: FROM -> TO (streak=Ns, interval=Ns)` | inverter_monitor.cpp | Link state changed (debug mode only). States: STARTING / ONLINE / RETRYING / BACKOFF / DORMANT. Backoff cadence = 60s; dormant cadence = 600s. |
-| `[INVERTER-MONITOR] Recovery after Ns: queuing MAX power reset (inverter state unknown)` | inverter_monitor.cpp | First successful poll after a long outage (BACKOFF or DORMANT -> ONLINE); defensive MAX-power reset queued. |
-| `[INVERTER-MONITOR] Recovery after Ns: user power command still queued, not overriding with MAX` | inverter_monitor.cpp | Same recovery transition, but a pending user `/api/power` command wins and the MAX reset is suppressed. |
-| `[INVERTER-MONITOR] Failed to fetch /home` | inverter_monitor.cpp | WiFi was up but HTTP request to inverter failed |
-| `[LOCK-HIERARCHY] VIOLATION ...` | lock_guard.cpp (via appLogger) | Lock-ordering rule violated; indicates a firmware bug. Include the bitmap and task name in any bug report. |
+| `[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW` | inverter_monitor.cpp | Successful inverter poll. Status=1 is normal. |
+| `[INVERTER-MONITOR] Link state: FROM -> TO (streak=Ns, interval=Ns)` | inverter_monitor.cpp | Link state changed (debug mode only). States: STARTING / ONLINE / RETRYING / BACKOFF / DORMANT. |
+| `[INVERTER-MONITOR] Recovery after Ns: queuing MAX power reset (inverter state unknown)` | inverter_monitor.cpp | First successful poll after long outage; defensive MAX-power reset queued. |
+| `[INVERTER-MONITOR] Recovery after Ns: user power command still queued, not overriding with MAX` | inverter_monitor.cpp | Recovery, but pending user `/api/power` command wins. |
+| `[INVERTER-MONITOR] Failed to fetch /home` | inverter_monitor.cpp | WiFi up but HTTP request to inverter failed |
+| `[LOCK-HIERARCHY] VIOLATION ...` | lock_guard.cpp | Lock-ordering rule violated; firmware bug. |
 | `[ETH] ENC28J60 hardware initialized. Waiting for cable...` | ethernet_bridge.cpp | Boot — Ethernet chip ready |
 | `[ETH] Cable detected. Attempting DHCP...` | ethernet_bridge.cpp | Physical Ethernet link came up |
-| `[ETH] DHCP OK. IP=192.168.1.48` | ethernet_bridge.cpp | LAN address assigned; API is reachable |
+| `[ETH] DHCP OK. IP=192.168.1.48` | ethernet_bridge.cpp | LAN address assigned; API reachable |
 | `[API] Listening on Ethernet port 8080 ...` | api.cpp | HTTP server started |
-| `[API] GET /api/logs` | api.cpp | External client fetched logs (you, Home Assistant, etc.) |
+| `[API] GET /api/logs` | api.cpp | External client fetched logs |
 | `[API] POST /api/power` | api.cpp | Power setpoint request received |
 | `[API] GET /pulse` | api.cpp | External caller triggered forced reconnect |
 | `[API] debug mode enabled` | api.cpp | Debug logging activated via `/api/debug` |
+</log_patterns>
 
-### Quick Interpretation Guide
+<interpretation_guide>
+- **Many TIMEOUTs at boot** — Normal. Inverter WiFi needs seconds after wake pulse. Expect 3 attempts → success.
+- **Episode resolved on first try** — Inverter WiFi was still broadcasting from previous session.
+- **3–4 TIMEOUTs before success** — Inverter had WiFi off; wake pulses turned it back on. ~80–90s downtime.
+- **Power trend ↓ with <15W** — Late afternoon/evening solar dropping. Single-digit W is normal near sunset.
+- **Power trend ↑ in first quarter** — Morning ramp-up from sunrise.
+- **`Failed to fetch /home` after WiFi connected** — Inverter HTTP unreachable. Check IP or reboot.
+- **Link state → DORMANT (interval=600s)** — Sustained unreachability; attempts now 10 min apart.
+- **BACKOFF/DORMANT → ONLINE** — Recovery from long outage. Look for `queuing MAX power reset` afterwards.
+</interpretation_guide>
 
-**"Why are there so many TIMEOUT attempts at boot?"**  
-Normal: the inverter WiFi radio needs a few seconds after the wake pulse before it's scannable. The first 1–2 attempts always time out. Expect 3 attempts → success on boot.
-
-**"Episode resolved on first try (single SUCCESS with no prior TIMEOUT)"**  
-The inverter WiFi was still broadcasting from a previous session. The bridge reconnected immediately without needing to wake it.
-
-**"Episode with 3–4 TIMEOUTs before success"**  
-The inverter had turned its WiFi off. The wake pulses on each attempt eventually caused it to turn back on. 4 attempts = ~80–90 seconds of downtime.
-
-**"Power trend ↓ with values <15W"**  
-Late afternoon / evening solar — production is dropping. Low-light noise (single-digit W readings) is normal near sunset.
-
-**"Power trend ↑ in first quarter"**  
-Morning ramp-up from sunrise.
-
-**"`Failed to fetch /home` after WiFi connected"**  
-WiFi up but inverter HTTP unreachable. Check if the inverter IP changed or if it rebooted mid-session.
-
-**"Link state: ... -> DORMANT (interval=600s)"**  
-Backoff escalation is active and reconnect attempts are now 10 minutes apart. This is explicitly logged by the firmware (debug-mode only) and usually indicates sustained unreachability. Earlier escalation: `-> BACKOFF (interval=60s)` after 5 minutes of failed polls.
-
-**"Link state: BACKOFF -> ONLINE (or DORMANT -> ONLINE)"**  
-Recovery from a long outage. Look immediately afterwards for `Recovery after Ns: queuing MAX power reset` — the bridge defensively reasserts MAX power because the inverter may have rebooted during the outage.
-
-## Expected Log Signals
-The scripts look for these log markers produced by `wifi_bridge.cpp`:
+<expected_log_signals>
+The scripts parse these markers from `wifi_bridge.cpp`:
 ```
 [WIFI-CONNECT] start path=dwell scan_dwell_ms=200 hint_fallback=1
 [WIFI-CONNECT] complete path=dwell duration_ms=5413 result=success channel=11 bssid=00:06:66:9D:E0:36 ip=10.0.0.42
@@ -244,30 +155,33 @@ Poll entries parsed for power stats:
 [INVERTER-MONITOR] Link state: DORMANT -> ONLINE (streak=2400s, interval=20s)
 ```
 
-## Timestamp Format
-Both scripts use a canonical timestamp format: `Xm SS.sss` (e.g. `4m 05.123`) representing minutes, seconds, and milliseconds since boot. This format is preferred when communicating about specific log entries across the project.
-
-A pulse is also logged when the manager wakes the inverter:
+Wake pulse marker:
 ```
 [WIFI-BRIDGE] Triggering inverter WiFi wake pulse sequence.
 ```
 
-## Optional Filtering
+Timestamp format: `Xm SS.sss` (e.g. `4m 05.123`) — minutes, seconds, milliseconds since boot.
+</expected_log_signals>
+
+<filtering>
 - Prefer `--limit` first for speed when the question is about recent behavior.
 - Use `--since-ms` to analyze only entries at or after a timestamp.
 - Use `--limit` to analyze only the last N entries.
+</filtering>
 
-## Troubleshooting
-- If fetch fails:
-  - Verify bridge Ethernet IP and that `/api/logs` is reachable.
-- If zero attempts are parsed:
-  - Confirm logs contain `[WIFI-CONNECT] start path=` markers.
-- If zero polls are shown in Session Summary:
-  - Confirm logs contain `[INVERTER-MONITOR] Poll #` markers (only present when `debugMode=true` or a poll completed).
-  - The log buffer holds 1000 entries. If it rolled over, run again sooner.
-  - Reduce filters (`--since-ms`, `--limit`).
-- If only one path appears:
-  - The bridge alternates paths only when WiFi is down. If WiFi stayed up
-    through all polling iterations, only the first boot connect is logged.
-- If JSON save path fails:
-  - Ensure parent directory exists and is writable.
+<troubleshooting>
+- **Fetch fails** — Verify bridge Ethernet IP and that `/api/logs` is reachable.
+- **Zero attempts parsed** — Confirm logs contain `[WIFI-CONNECT] start path=` markers.
+- **Zero polls shown** — Confirm logs contain `[INVERTER-MONITOR] Poll #` markers. Log buffer holds 1000 entries; if rolled over, run again sooner. Reduce filters.
+- **Only one path appears** — Bridge alternates paths only when WiFi is down. If WiFi stayed up, only boot connect is logged.
+- **JSON save path fails** — Ensure parent directory exists and is writable.
+</troubleshooting>
+
+<success_criteria>
+Log analysis is complete when:
+- [ ] Logs fetched successfully from bridge API
+- [ ] Session summary printed (uptime, poll counts, power stats)
+- [ ] Connection analysis shown (per-path breakdown with timing)
+- [ ] Key findings summarized in 4–6 bullet points
+- [ ] Power plot saved (when using analyze_and_plot.py or plot_power.py)
+</success_criteria>

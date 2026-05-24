@@ -1,14 +1,21 @@
-# Skill: Documentation Update
-
-## Purpose
-
-Guide agents and developers on **which documentation file to update, what it covers, and what change in the codebase or project triggers an update**. This prevents over-editing (updating files that do not need to change) and under-editing (missing a file that must stay in sync).
-
+---
+name: documentation-update
+description: Guide agents on which documentation file to update, what it covers, and what codebase changes trigger an update. Prevents over-editing and under-editing. Use when code changes require documentation sync.
 ---
 
-## Documentation File Map
+<objective>
+Guide agents and developers on **which documentation file to update, what it covers, and what change in the codebase or project triggers an update**. This prevents over-editing (updating files that do not need to change) and under-editing (missing a file that must stay in sync).
+</objective>
 
-Each documentation file has a dedicated resource describing what it covers, its source of truth in the codebase, and the exact conditions that require an update. Read the relevant resource file before editing any documentation.
+<quick_start>
+1. Identify what changed in the codebase.
+2. Check the quick decision guide below to find which docs need updating.
+3. Read the relevant resource file from `skills/documentation-update/resources/` before editing.
+4. Update all affected files in the same session.
+</quick_start>
+
+<documentation_file_map>
+Each documentation file has a dedicated resource describing what it covers, its source of truth, and exact trigger conditions. Read the relevant resource file before editing any documentation.
 
 | File(s) | Resource |
 |---|---|
@@ -23,11 +30,9 @@ Each documentation file has a dedicated resource describing what it covers, its 
 | `skills/strategy-comparison/SKILL.md` | `skills/documentation-update/resources/skill-strategy-comparison.md` |
 | `skills/firmware-upload/SKILL.md` | `skills/documentation-update/resources/skill-firmware-upload.md` |
 | `skills/firmware-optimization-loop/SKILL.md` | `skills/documentation-update/resources/skill-firmware-optimization.md` |
+</documentation_file_map>
 
----
-
-## Quick Decision Guide
-
+<quick_decision_guide>
 | Something changed in… | Files to update |
 |---|---|
 | GPIO pins or pulse timing in `settings.cpp` | `docs/WIRING_README.md`, `AGENTS.md` |
@@ -39,11 +44,9 @@ Each documentation file has a dedicated resource describing what it covers, its 
 | New documentation file added | `README.md` (index), `AGENTS.md` (file map), this skill's file map table |
 | Test procedure or troubleshooting knowledge changes | `docs/TEST_README.md` |
 | Hardware changes (board, Ethernet chip) | `docs/SETUP_README.md`, `docs/WIRING_README.md`, `README.md`, `AGENTS.md` |
+</quick_decision_guide>
 
----
-
-## Single-Source-of-Truth Map
-
+<single_source_of_truth>
 Each piece of information has exactly one canonical home. All other files must link to it rather than duplicate it.
 
 | Information | Canonical file |
@@ -57,13 +60,21 @@ Each piece of information has exactly one canonical home. All other files must l
 | Full API request/response schemas | `docs/API_REFERENCE.md` |
 | Post-flash validation and troubleshooting | `docs/TEST_README.md` |
 | Log analysis usage | `skills/log-analysis/SKILL.md` |
+</single_source_of_truth>
 
----
-
-## Rules for Agents
-
+<essential_principles>
 1. **Never update a documentation file speculatively.** Only update when its specific trigger conditions are met.
 2. **When a code change triggers a doc update**, update all files listed in the quick-decision table for that change type in the same session.
 3. **Never duplicate information.** If content belongs in a canonical file, put it there and add a brief summary + link in other files. Check the single-source-of-truth map before writing.
 4. **Preserve the dwell/auto strategy documentation** in `AGENTS.md` — these strategies are in active use for long-term real-world A/B performance measurement. Do not remove or summarize away this information until explicitly instructed.
 5. **Do not create new documentation files** unless explicitly asked. Prefer updating an existing file.
+</essential_principles>
+
+<success_criteria>
+Documentation update is complete when:
+- [ ] All affected files identified via quick decision guide
+- [ ] Relevant resource files read before editing
+- [ ] All affected files updated in the same session
+- [ ] No information duplicated across files (single source of truth respected)
+- [ ] No speculative changes made to unaffected files
+</success_criteria>
