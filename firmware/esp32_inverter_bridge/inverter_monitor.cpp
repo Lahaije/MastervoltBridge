@@ -367,7 +367,10 @@ void InverterMonitor::applyPendingPowerCommand() {
   String responseBody, errorMessage;
   int httpCode = 0;
   String payload = String(targetWatts);
-  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, false);
+  // Use waitForConnection=true: the poll just succeeded so WiFi is likely
+  // still up, but if it dropped in the meantime we want to reconnect rather
+  // than silently failing and leaving the command stuck in the queue.
+  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, true);
 
   if (ok) {
     {
