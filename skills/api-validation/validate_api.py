@@ -2,15 +2,21 @@
 """
 API Validation Script — ESP32 Inverter Bridge
 
-Calls every GET endpoint on the live bridge, validates that:
+Calls every endpoint on the live bridge and validates real-time behavior:
   - HTTP status codes match documentation
   - Response bodies contain the expected JSON keys
   - The discovery endpoint (GET /) lists all documented endpoints
+  - POST /api/power actually changes the inverter power limit (read-back verified)
+  - POST /api/polling changes the poll interval (verified via /api/info)
+  - POST /api/debug toggles debug mode
+  - POST /api/inverter/fetch can read inverter pages
+  - GET /pulse triggers reconnect
 
 Usage (from repo root):
     .venv/Scripts/python skills/api-validation/validate_api.py
     .venv/Scripts/python skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
     .venv/Scripts/python skills/api-validation/validate_api.py --verbose
+    .venv/Scripts/python skills/api-validation/validate_api.py --skip-power  (skip destructive power test)
 
 Exit code: 0 = all checks passed, 1 = one or more checks failed.
 """
@@ -18,6 +24,7 @@ Exit code: 0 = all checks passed, 1 = one or more checks failed.
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +117,22 @@ def get_json(base_url: str, path: str, timeout: int = 10) -> tuple[int, Any]:
         try:
             body = r.json()
         except Exception:
-            body = None
+            body = r.text
+        return r.status_code, body
+    except requests.exceptions.ConnectionError:
+        return -1, None
+    except requests.exceptions.Timeout:
+        return -2, None
+
+
+def post_json(base_url: str, path: str, payload: dict, timeout: int = 15) -> tuple[int, Any]:
+    """POST JSON payload, return (status_code, parsed_body_or_None)."""
+    try:
+        r = requests.post(f"{base_url}{path}", json=payload, timeout=timeout)
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text
         return r.status_code, body
     except requests.exceptions.ConnectionError:
         return -1, None
@@ -223,6 +245,204 @@ def check_get_endpoints(base_url: str, verbose: bool) -> bool:
     return all_ok
 
 
+# ---------------------------------------------------------------------------
+# POST endpoint behavioral tests
+# ---------------------------------------------------------------------------
+
+def check_post_debug(base_url: str, verbose: bool) -> bool:
+    """Toggle debug mode on and off, verify response."""
+    print("\n[4] POST /api/debug — toggle debug mode")
+    all_ok = True
+
+    # Enable debug
+    status, body = post_json(base_url, "/api/debug", {"debug": True})
+    ok = check("POST debug=true returns 200", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+    if status == 200 and isinstance(body, dict):
+        ok = check("response contains debug=true", body.get("debug") is True)
+        all_ok = all_ok and ok
+
+    # Disable debug
+    status, body = post_json(base_url, "/api/debug", {"debug": False})
+    ok = check("POST debug=false returns 200", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+    if status == 200 and isinstance(body, dict):
+        ok = check("response contains debug=false", body.get("debug") is False)
+        all_ok = all_ok and ok
+
+    return all_ok
+
+
+def check_post_polling(base_url: str, verbose: bool) -> bool:
+    """Change polling interval and verify via /api/info."""
+    print("\n[5] POST /api/polling — change poll interval")
+    all_ok = True
+
+    # Read current interval from /api/info
+    status, info = get_json(base_url, "/api/info")
+    if status != 200 or not isinstance(info, dict):
+        check("Read current poll interval from /api/info", False, f"HTTP {status}")
+        return False
+    original_interval = info.get("poll_interval_seconds", 20)
+    if verbose:
+        print(f"    Current poll interval: {original_interval}s")
+
+    # Set to a test value (different from current)
+    test_interval = 5 if original_interval != 5 else 10
+    status, body = post_json(base_url, "/api/polling", {"seconds": test_interval})
+    ok = check(f"POST polling={test_interval}s returns 200", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+
+    # Verify via /api/info
+    status, info = get_json(base_url, "/api/info")
+    if status == 200 and isinstance(info, dict):
+        actual = info.get("poll_interval_seconds")
+        ok = check(f"poll_interval_seconds == {test_interval}", actual == test_interval,
+                   f"got {actual}")
+        all_ok = all_ok and ok
+    else:
+        check("Read back poll interval", False, f"HTTP {status}")
+        all_ok = False
+
+    # Restore original
+    status, _ = post_json(base_url, "/api/polling", {"seconds": original_interval})
+    ok = check(f"Restore polling to {original_interval}s", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+
+    return all_ok
+
+
+def check_post_inverter_fetch(base_url: str, verbose: bool) -> bool:
+    """Fetch an inverter page via the bridge proxy."""
+    print("\n[6] POST /api/inverter/fetch — proxy inverter page")
+    all_ok = True
+
+    # Fetch /power (simple numeric endpoint)
+    status, body = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
+    if status == 502:
+        print(f"    {SKIP} HTTP 502 — inverter WiFi is off, skipping (expected)")
+        return True
+
+    ok = check("POST inverter/fetch /power returns 200", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+
+    if status == 200:
+        try:
+            watts = int(str(body).strip())
+            ok = check(f"Response is numeric power value", 0 <= watts <= 1575,
+                       f"got {watts}W")
+            all_ok = all_ok and ok
+        except (ValueError, TypeError):
+            check("Response is numeric power value", False, f"got '{body}'")
+            all_ok = False
+
+    # Fetch /home (inverter telemetry page — comma-separated values)
+    status, body = post_json(base_url, "/api/inverter/fetch", {"url": "/home"})
+    ok = check("POST inverter/fetch /home returns 200", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+    if status == 200:
+        body_str = str(body)
+        ok = check("/home contains data", len(body_str) > 5,
+                   f"body length={len(body_str)}")
+        all_ok = all_ok and ok
+
+    return all_ok
+
+
+def check_post_power(base_url: str, verbose: bool) -> bool:
+    """Set power limit, verify via inverter read-back, then restore original."""
+    print("\n[7] POST /api/power — set power limit (live inverter test)")
+    all_ok = True
+
+    # Step 1: Read current power limit from inverter
+    status, body = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
+    if status == 502:
+        print(f"    {SKIP} HTTP 502 — inverter WiFi is off, cannot test power (expected)")
+        return True
+    if status != 200:
+        check("Read current power limit from inverter", False, f"HTTP {status}")
+        return False
+
+    try:
+        original_watts = int(str(body).strip())
+    except (ValueError, TypeError):
+        check("Parse current power limit", False, f"got '{body}'")
+        return False
+    check(f"Current power limit: {original_watts}W", True)
+
+    # Step 2: Set a different test value
+    test_watts = 1000 if original_watts != 1000 else 1100
+    print(f"    Setting power to {test_watts}W...")
+    status, body = post_json(base_url, "/api/power", {"power": test_watts})
+
+    if status == 202:
+        # Queued — inverter WiFi dropped between read and write
+        print(f"    {SKIP} HTTP 202 — command queued (WiFi dropped), cannot verify")
+        return True
+
+    ok = check(f"POST /api/power {test_watts}W returns 200", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+
+    if status == 200 and isinstance(body, dict):
+        ok = check("Response contains 'inverter_response'",
+                   "inverter_response" in body,
+                   f"keys: {list(body.keys())}" if verbose else "")
+        all_ok = all_ok and ok
+
+    # Step 3: Wait briefly for inverter to process, then read back
+    time.sleep(1)
+    status, readback = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
+    if status == 200:
+        try:
+            actual_watts = int(str(readback).strip())
+            ok = check(f"Inverter confirms power = {test_watts}W", actual_watts == test_watts,
+                       f"expected {test_watts}, got {actual_watts}")
+            all_ok = all_ok and ok
+        except (ValueError, TypeError):
+            check("Parse read-back power", False, f"got '{readback}'")
+            all_ok = False
+    else:
+        check("Read back power limit after set", False, f"HTTP {status}")
+        all_ok = False
+
+    # Step 4: Restore original power limit
+    print(f"    Restoring power to {original_watts}W...")
+    status, body = post_json(base_url, "/api/power", {"power": original_watts})
+    ok = check(f"Restore power to {original_watts}W", status in (200, 202), f"HTTP {status}")
+    all_ok = all_ok and ok
+
+    if status == 200:
+        time.sleep(1)
+        status, readback = post_json(base_url, "/api/inverter/fetch", {"url": "/power"})
+        if status == 200:
+            try:
+                restored = int(str(readback).strip())
+                ok = check(f"Inverter confirms restored to {original_watts}W",
+                           restored == original_watts,
+                           f"got {restored}")
+                all_ok = all_ok and ok
+            except (ValueError, TypeError):
+                pass
+
+    return all_ok
+
+
+def check_pulse(base_url: str, verbose: bool) -> bool:
+    """GET /pulse — triggers reconnect, verify response shape."""
+    print("\n[8] GET /pulse — trigger reconnect")
+    all_ok = True
+
+    status, body = get_json(base_url, "/pulse", timeout=30)
+    ok = check("GET /pulse returns 200", status == 200, f"HTTP {status}")
+    all_ok = all_ok and ok
+
+    if status == 200 and isinstance(body, dict):
+        ok = check("Response contains 'reconnected'", "reconnected" in body)
+        all_ok = all_ok and ok
+
+    return all_ok
+
+
 def print_summary(results: dict[str, bool]) -> bool:
     print("\n" + "=" * 60)
     print("SUMMARY")
@@ -256,6 +476,8 @@ def main() -> int:
                         help=f"Base URL of the bridge (default: {BRIDGE_BASE_URL})")
     parser.add_argument("--verbose", action="store_true",
                         help="Print response keys and firmware endpoint list")
+    parser.add_argument("--skip-power", action="store_true",
+                        help="Skip the power limit test (avoids changing inverter state)")
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -277,6 +499,25 @@ def main() -> int:
 
     get_ok = check_get_endpoints(base_url, args.verbose)
     results["GET endpoint responses valid"] = get_ok
+
+    # POST behavioral tests
+    debug_ok = check_post_debug(base_url, args.verbose)
+    results["POST /api/debug toggles correctly"] = debug_ok
+
+    polling_ok = check_post_polling(base_url, args.verbose)
+    results["POST /api/polling changes interval"] = polling_ok
+
+    fetch_ok = check_post_inverter_fetch(base_url, args.verbose)
+    results["POST /api/inverter/fetch proxies inverter"] = fetch_ok
+
+    if not args.skip_power:
+        power_ok = check_post_power(base_url, args.verbose)
+        results["POST /api/power sets limit (verified)"] = power_ok
+    else:
+        print(f"\n[7] POST /api/power — SKIPPED (--skip-power)")
+
+    pulse_ok = check_pulse(base_url, args.verbose)
+    results["GET /pulse triggers reconnect"] = pulse_ok
 
     all_passed = print_summary(results)
     return 0 if all_passed else 1

@@ -310,7 +310,7 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
 
   // --- HTTP call (no lock held) ---
   String payload = String(watts);
-  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage, false);
+  bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, false);
 
   if (ok) {
     appLogger.log(String("[INVERTER-MONITOR] Power set to ") + watts + "W (immediate)");

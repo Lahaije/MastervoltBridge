@@ -259,6 +259,7 @@ void handleApiClient(EthernetClient& client) {
       return;
     }
 
+    responseBody.trim();
     sendHttpResponse(client, 200, "text/plain", responseBody);
     return;
   }

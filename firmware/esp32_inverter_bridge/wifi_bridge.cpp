@@ -620,14 +620,18 @@ bool fetchInverterData(const String& method, const String& path, const String& b
       return true;
     };
 
-    // For /power, first try browser-like multipart encoding.
-    if (path == "/power") {
+    // For /postoptions, build multipart form with enable_mxpower + maxpower fields.
+    if (path == "/postoptions") {
       String boundary = String("----mvb") + String(millis(), HEX);
       String multipartBody;
-      multipartBody.reserve(96 + body.length());
+      multipartBody.reserve(256 + body.length());
       multipartBody += "--";
       multipartBody += boundary;
-      multipartBody += "\r\nContent-Disposition: form-data; name=\"power\"\r\n\r\n";
+      multipartBody += "\r\nContent-Disposition: form-data; name=\"enable_mxpower\"\r\n\r\n";
+      multipartBody += "on";
+      multipartBody += "\r\n--";
+      multipartBody += boundary;
+      multipartBody += "\r\nContent-Disposition: form-data; name=\"maxpower\"\r\n\r\n";
       multipartBody += body;
       multipartBody += "\r\n--";
       multipartBody += boundary;
