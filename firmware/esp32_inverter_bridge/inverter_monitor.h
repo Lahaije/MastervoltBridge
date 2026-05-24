@@ -190,6 +190,20 @@ private:
 
   // Apply pending power command if queued (called from polling loop).
   void applyPendingPowerCommand();
+
+  // Send a power limit value to the inverter via POST /postoptions.
+  // Single point of truth for the endpoint and payload format.
+  bool sendPowerToInverter(int watts, String& responseBody, int& httpCode,
+                           String& errorMessage, bool waitForConnection);
+
+  // Send a shadow function setting to the inverter via POST /postoptions.
+  bool sendShadowToInverter(bool enabled, String& responseBody, int& httpCode,
+                            String& errorMessage, bool waitForConnection);
+
+  // Low-level: POST a form payload to the inverter's /postoptions endpoint.
+  // All inverter setting changes go through this single function.
+  bool postOptionsToInverter(const String& payload, String& responseBody, int& httpCode,
+                             String& errorMessage, bool waitForConnection);
 };
 
 #endif // INVERTER_MONITOR_H

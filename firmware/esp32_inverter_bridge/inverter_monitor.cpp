@@ -298,6 +298,32 @@ uint32_t InverterMonitor::getRetryIntervalMs() {
   return currentRetryIntervalMs;
 }
 
+bool InverterMonitor::postOptionsToInverter(const String& payload, String& responseBody,
+                                            int& httpCode, String& errorMessage,
+                                            bool waitForConnection) {
+  return fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, waitForConnection);
+}
+
+bool InverterMonitor::sendPowerToInverter(int watts, String& responseBody, int& httpCode,
+                                          String& errorMessage, bool waitForConnection) {
+  String payload = String("enable_mxpower=on\nmaxpower=") + watts;
+  return postOptionsToInverter(payload, responseBody, httpCode, errorMessage, waitForConnection);
+}
+
+bool InverterMonitor::sendShadowToInverter(bool enabled, String& responseBody, int& httpCode,
+                                           String& errorMessage, bool waitForConnection) {
+  String payload;
+  if (enabled) {
+    payload = "enShadow=on";
+  } else {
+    // Checkbox absent = off. Include maxpower with current cached value to have a valid form.
+    int currentLimit = getCachedPowerLimit();
+    if (currentLimit < 0) currentLimit = INVERTER_MAX_POWER_WATTS;
+    payload = String("enable_mxpower=on\nmaxpower=") + currentLimit;
+  }
+  return postOptionsToInverter(payload, responseBody, httpCode, errorMessage, waitForConnection);
+}
+
 bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, String& errorMessage) {
   // Safety check before inverter command: enforce hardware range
   if (watts < 0 || watts > INVERTER_MAX_POWER_WATTS) {
@@ -309,9 +335,7 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
   }
 
   // --- HTTP call (no lock held) ---
-  // Build key=value pairs for /postoptions multipart form.
-  String payload = String("enable_mxpower=on\nmaxpower=") + watts;
-  bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, false);
+  bool ok = sendPowerToInverter(watts, responseBody, httpCode, errorMessage, false);
 
   if (ok) {
     // Clear any previously queued command — the immediate delivery supersedes it.
@@ -373,12 +397,10 @@ void InverterMonitor::applyPendingPowerCommand() {
   // --- HTTP call outside the lock ---
   String responseBody, errorMessage;
   int httpCode = 0;
-  // Must use same endpoint and payload format as setPower().
-  String payload = String("enable_mxpower=on\nmaxpower=") + targetWatts;
   // Use waitForConnection=true: the poll just succeeded so WiFi is likely
   // still up, but if it dropped in the meantime we want to reconnect rather
   // than silently failing and leaving the command stuck in the queue.
-  bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, true);
+  bool ok = sendPowerToInverter(targetWatts, responseBody, httpCode, errorMessage, true);
 
   if (ok) {
     {
@@ -447,20 +469,7 @@ int InverterMonitor::fetchPowerLimit(String& errorMessage) {
 }
 
 bool InverterMonitor::setShadow(bool enabled, String& responseBody, int& httpCode, String& errorMessage) {
-  // Build key=value payload for /postoptions.
-  // When enabled: include enShadow=on. When disabled: omit it (checkbox absent = off).
-  // Include a dummy maxpower field so the POST body is never empty.
-  String payload;
-  if (enabled) {
-    payload = "enShadow=on";
-  } else {
-    // Checkbox absent = off. Send maxpower with current cached value to have a valid form.
-    int currentLimit = getCachedPowerLimit();
-    if (currentLimit < 0) currentLimit = INVERTER_MAX_POWER_WATTS;
-    payload = String("enable_mxpower=on\nmaxpower=") + currentLimit;
-  }
-
-  bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage, false);
+  bool ok = sendShadowToInverter(enabled, responseBody, httpCode, errorMessage, false);
   if (ok) {
     appLogger.log(String("[INVERTER-MONITOR] Shadow function set to ") + (enabled ? "ON" : "OFF"));
   }

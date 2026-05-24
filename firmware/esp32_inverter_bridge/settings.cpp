@@ -2,7 +2,7 @@
 #include "logger.h"
 
 // --- Firmware ---
-const char* FIRMWARE_VERSION = "fw-20260524-125753-2b7a1fe";
+const char* FIRMWARE_VERSION = "fw-20260524-130117-cdad80f";
 
 // --- Inverter WiFi connection ---
 const char* INVERTER_WIFI_SSID = "mastervolt-soladin-0103";
