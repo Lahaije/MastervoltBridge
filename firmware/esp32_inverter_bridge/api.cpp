@@ -296,18 +296,25 @@ void handleApiClient(EthernetClient& client) {
     int powerLimit = monitor.getCachedPowerLimit();
 
     // Build response with proper numeric types for HA templates.
-    String response = "{";
-    response += "\"power\":";
-    response += valid ? data.instantaneousPower : "null";
-    response += ",\"total_yield\":";
-    response += valid ? data.lifetimeEnergy : "null";
-    response += ",\"daily_yield\":";
-    response += valid ? data.dailySessionEnergy : "null";
-    response += ",\"power_limit\":";
-    response += (powerLimit >= 0) ? String(powerLimit) : "null";
-    response += ",\"available\":";
-    response += valid ? "true" : "false";
-    response += "}";
+    // Parse string values to float to strip leading zeros (inverter returns e.g. "08566.628").
+    String response;
+    if (valid) {
+      response = JsonBuilder()
+        .addNumber("power", String(data.instantaneousPower.toFloat(), 3))
+        .addNumber("total_yield", String(data.lifetimeEnergy.toFloat(), 3))
+        .addNumber("daily_yield", String(data.dailySessionEnergy.toFloat(), 3))
+        .addNumber("power_limit", (powerLimit >= 0) ? String(powerLimit) : "null")
+        .addBool("available", true)
+        .build();
+    } else {
+      response = JsonBuilder()
+        .addRaw("power", "null")
+        .addRaw("total_yield", "null")
+        .addRaw("daily_yield", "null")
+        .addNumber("power_limit", (powerLimit >= 0) ? String(powerLimit) : "null")
+        .addBool("available", false)
+        .build();
+    }
 
     sendHttpResponse(client, 200, "application/json", response);
     return;

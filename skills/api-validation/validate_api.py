@@ -14,9 +14,11 @@ Calls every endpoint on the live bridge and validates real-time behavior:
 
 Usage (from repo root):
     .venv/Scripts/python skills/api-validation/validate_api.py
-    .venv/Scripts/python skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
+    .venv/Scripts/python skills/api-validation/validate_api.py --base-url http://<ip>:8080
     .venv/Scripts/python skills/api-validation/validate_api.py --verbose
     .venv/Scripts/python skills/api-validation/validate_api.py --skip-power  (skip destructive power test)
+
+The bridge IP is auto-discovered via hostname/MAC. Override with --base-url if needed.
 
 Exit code: 0 = all checks passed, 1 = one or more checks failed.
 """

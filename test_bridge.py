@@ -1,25 +1,25 @@
 import requests
+from bridge_config import BRIDGE_BASE_URL
 
-IP = '192.168.1.48'
-r = requests.get(f"http://{IP}:8080/", timeout=15)
+r = requests.get(f"{BRIDGE_BASE_URL}/", timeout=15)
 for endpoint in r.json()['endpoints']:
     print(f"'{endpoint['path']}' , {endpoint['method']} : {endpoint['description']}")
 duration =  r.elapsed.microseconds / 1000
 
 """
 
-r = requests.get(f"http://{IP}:8080/api/health", timeout=15)
+r = requests.get(f"{BRIDGE_BASE_URL}/api/health", timeout=15)
 for key, value in r.json().items():
     print(f"{key}: {value}")
 
 
-r = requests.get(f"http://{IP}:8080/api/info", timeout=15)
+r = requests.get(f"{BRIDGE_BASE_URL}/api/info", timeout=15)
 print(r.text)
 """
 
 timer = ''
 try:
-    r = requests.get(f"http://{IP}:8080/api/logs", timeout=5)
+    r = requests.get(f"{BRIDGE_BASE_URL}/api/logs", timeout=5)
     for entry in r.json()['entries']:
         timer = int(entry['timestamp_ms'])
         minutes = timer // 60000  # 1 minute = 60,000 ms

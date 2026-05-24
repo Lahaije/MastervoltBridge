@@ -7,7 +7,9 @@ total yield, then prints a summary.
 
 Usage (from repository root):
     .venv\\Scripts\\python skills/log-analysis/fetch_yield.py
-    .venv\\Scripts\\python skills/log-analysis/fetch_yield.py --base-url http://192.168.1.48:8080
+    .venv\\Scripts\\python skills/log-analysis/fetch_yield.py --base-url http://<ip>:8080
+
+The bridge IP is auto-discovered via hostname/MAC. Override with --base-url if needed.
 """
 
 from __future__ import annotations
