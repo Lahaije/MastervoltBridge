@@ -20,6 +20,7 @@ constexpr const char* NVS_KEY_SHADOW_KN = "shadow_kn";
 constexpr const char* NVS_KEY_SHADOW = "shadow_on";
 constexpr const char* NVS_KEY_PWR_KN = "pwr_kn";
 constexpr const char* NVS_KEY_PWR = "pwr_w";
+constexpr const char* NVS_KEY_POLL_MS = "poll_ms";
 
 // ---------------------------------------------------------------------------
 // Stepped retry backoff for inverter unavailability (e.g. overnight).
@@ -34,20 +35,27 @@ struct BackoffStage {
 };
 
 static const BackoffStage BACKOFF_STAGES[] = {
-  {           0,  20000u },  //  0 –  5 min : every 20 s   (normal rate, matches WIFI_BRIDGE_POLL_INTERVAL_MS)
+  // Stage 0 interval_ms is a placeholder: it is overridden at runtime by the
+  // user-configured base polling interval (getPollingIntervalMs()). Later
+  // stages keep their fixed retry cadence so the log buffer and GPIO wake
+  // pulse stay quiet overnight when the inverter is unreachable.
+  {           0,  20000u },  //  0 –  5 min : base poll interval (overridden)
   {  5 * 60000u,  60000u },  //  5 – 20 min : every  1 min
   { 20 * 60000u, 600000u },  // 20+    min  : every 10 min
 };
 static constexpr size_t BACKOFF_STAGE_COUNT = sizeof(BACKOFF_STAGES) / sizeof(BACKOFF_STAGES[0]);
 
-static uint32_t getBackoffIntervalMs(uint32_t failedForMs) {
+static uint32_t getBackoffIntervalMs(uint32_t failedForMs, uint32_t baseMs) {
   // Walk stages in reverse; return the interval of the last threshold reached.
+  // Stage 0 returns the runtime base interval so a user-configured poll rate
+  // (e.g. 1 s during the day) is honoured for the first 5 minutes of a
+  // failure streak, before relaxing to the fixed long-term stages.
   for (int i = static_cast<int>(BACKOFF_STAGE_COUNT) - 1; i >= 0; i--) {
     if (failedForMs >= BACKOFF_STAGES[i].after_failure_ms) {
-      return BACKOFF_STAGES[i].interval_ms;
+      return (i == 0) ? baseMs : BACKOFF_STAGES[i].interval_ms;
     }
   }
-  return BACKOFF_STAGES[0].interval_ms;
+  return baseMs;
 }
 
 }  // namespace
@@ -66,6 +74,10 @@ void InverterMonitor::initialize() {
 
   if (dataMutex == nullptr) {
     dataMutex = xSemaphoreCreateMutex();
+  }
+
+  if (pollingConfigMutex == nullptr) {
+    pollingConfigMutex = xSemaphoreCreateMutex();
   }
 
   loadCachedSettingsFromNvs();
@@ -101,6 +113,11 @@ void InverterMonitor::shutdown() {
     dataMutex = nullptr;
   }
 
+  if (pollingConfigMutex != nullptr) {
+    vSemaphoreDelete(pollingConfigMutex);
+    pollingConfigMutex = nullptr;
+  }
+
   isInitialized = false;
   appLogger.log("[INVERTER-MONITOR] Inverter monitor shut down");
 }
@@ -126,7 +143,7 @@ bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
 
 void InverterMonitor::runPollingTask() {
   uint32_t failureStartMs = 0;  // millis() when current failure streak began; 0 = no streak
-  uint32_t lastIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+  uint32_t lastIntervalMs = getPollingIntervalMs();
 
   while (true) {
     bool iterationOk = false;
@@ -178,13 +195,14 @@ void InverterMonitor::runPollingTask() {
       if (failureStartMs != 0) {
         appLogger.log("[INVERTER-MONITOR] Inverter recovered; resuming normal poll interval");
         failureStartMs = 0;
-        lastIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
       }
+      // Always pick up any runtime change to the interval on a successful poll.
+      lastIntervalMs = getPollingIntervalMs();
     } else {
       if (failureStartMs == 0) {
         failureStartMs = millis();
       }
-      uint32_t nextIntervalMs = getBackoffIntervalMs(millis() - failureStartMs);
+      uint32_t nextIntervalMs = getBackoffIntervalMs(millis() - failureStartMs, getPollingIntervalMs());
       if (nextIntervalMs != lastIntervalMs) {
         appLogger.log(String("[INVERTER-MONITOR] Backoff: retry interval -> ") +
                       (nextIntervalMs / 1000) + "s");
@@ -242,7 +260,10 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
   }
 
   String payload = String(watts);
-  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage);
+  // The inverter's /power endpoint is read-only; writes go to /postoptions
+  // which wifi_bridge.cpp encodes as a multipart form with the
+  // enable_mxpower=on + maxpower=<watts> fields the firmware expects.
+  bool ok = fetchInverterData("POST", "/postoptions", payload, responseBody, httpCode, errorMessage);
   if (ok && httpCode == 200) {
     // Cache the commanded value and mirror it to MQTT so the HA Power Limit
     // number entity reflects what the bridge believes the inverter is set to.
@@ -295,13 +316,65 @@ void InverterMonitor::loadCachedSettingsFromNvs() {
   shadowOn_ = prefs.getBool(NVS_KEY_SHADOW, false);
   powerLimitKnown_ = prefs.getBool(NVS_KEY_PWR_KN, false);
   powerLimitW_ = prefs.getUShort(NVS_KEY_PWR, 0);
+  uint32_t storedPoll = prefs.getUInt(NVS_KEY_POLL_MS, 0);
   prefs.end();
+  if (storedPoll >= 1000UL && storedPoll <= 3600UL * 1000UL) {
+    pollingIntervalMs = storedPoll;
+    appLogger.log(String("[INVERTER-MONITOR] Restored poll interval: ") +
+                  (pollingIntervalMs / 1000) + "s");
+  }
   if (shadowKnown_ || powerLimitKnown_) {
     appLogger.log(String("[INVERTER-MONITOR] Restored cached settings: shadow=") +
                   (shadowKnown_ ? (shadowOn_ ? "ON" : "OFF") : "unknown") +
                   " power_limit=" +
                   (powerLimitKnown_ ? (String(powerLimitW_) + "W") : String("unknown")));
   }
+}
+
+bool InverterMonitor::setPollingIntervalSeconds(uint32_t seconds, uint32_t& appliedMs, String& errorMessage) {
+  if (seconds < 1 || seconds > 3600) {
+    errorMessage = "seconds must satisfy 1 <= seconds <= 3600";
+    return false;
+  }
+
+  if (pollingConfigMutex == nullptr) {
+    errorMessage = "polling config mutex not initialized";
+    return false;
+  }
+
+  if (xSemaphoreTake(pollingConfigMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    errorMessage = "polling config mutex busy";
+    return false;
+  }
+
+  pollingIntervalMs = seconds * 1000UL;
+  appliedMs = pollingIntervalMs;
+
+  xSemaphoreGive(pollingConfigMutex);
+
+  // Persist to NVS so the value survives reboots.
+  Preferences prefs;
+  prefs.begin(NVS_NS, false);
+  prefs.putUInt(NVS_KEY_POLL_MS, appliedMs);
+  prefs.end();
+
+  appLogger.log(String("[INVERTER-MONITOR] Poll interval updated to ") + seconds + "s");
+  return true;
+}
+
+uint32_t InverterMonitor::getPollingIntervalMs() {
+  if (pollingConfigMutex == nullptr) {
+    return WIFI_BRIDGE_POLL_INTERVAL_MS;
+  }
+
+  if (xSemaphoreTake(pollingConfigMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    // Best-effort fallback: return the last known value without locking.
+    return pollingIntervalMs;
+  }
+
+  uint32_t result = pollingIntervalMs;
+  xSemaphoreGive(pollingConfigMutex);
+  return result;
 }
 
 void InverterMonitor::persistShadow(bool enabled) {

@@ -7,12 +7,15 @@
 #include "inverter_data.h"
 #include "api_helper.h"
 #include "mqtt_bridge.h"
+#include "web_ui.h"
 
 const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
-  {"GET", "/", "API discovery and endpoint overview"},
+  {"GET", "/", "Web settings UI (HTML)"},
+  {"GET", "/api", "API discovery and endpoint overview"},
   {"GET", "/api/health", "Bridge connectivity state: WiFi, Ethernet, inverter host, IPs"},
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
-  {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
+  {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (runtime-configurable poll interval)"},
+  {"POST", "/api/polling", "Set monitor polling interval in seconds: JSON body with seconds field, e.g. {\"seconds\":3} (1 <= seconds <= 3600)"},
   {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
   {"POST", "/api/shadow", "Enable or disable inverter shadow function: {\"enabled\":true} or {\"enabled\":false}"},
   {"GET", "/api/shadow", "Read current shadow function state from inverter"},
@@ -90,6 +93,11 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/") {
+    sendHttpResponse(client, 200, "text/html; charset=utf-8", String(WEB_UI_HTML));
+    return;
+  }
+
+  if (method == "GET" && path == "/api") {
     sendHttpResponse(client, 200, "application/json", buildApiDiscoveryJson());
     return;
   }
@@ -136,21 +144,47 @@ void handleApiClient(EthernetClient& client) {
   }
   
   if (method == "GET" && path == "/api/info") {
-    // Retrieve latest cached inverter telemetry from polling task
+    // Always return 200 with whatever data the bridge has. Telemetry fields
+    // are empty strings if no successful poll has happened yet (e.g. inverter
+    // unreachable), while cached settings (power_limit, shadow, polling)
+    // remain available so the UI can still display them.
     HomeData inverterData = getInverterData();
-    if (!inverterData.isValid()) {
-      // Polling hasn't completed yet or WiFi connection failed
-      sendHttpResponse(client, 502, "application/json", buildErrorJson("No inverter telemetry data available yet"));
-      return;
-    }
-
+    bool dataValid = inverterData.isValid();
     unsigned long lastUpdateMs = InverterMonitor::getInstance().getLastUpdateMs();
-    sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs));
+    sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs, dataValid));
     return;
   }
 
-  if (method == "POST" && path == "/api/power") {
-    // Extract power value from JSON body
+  if (method == "POST" && path == "/api/polling") {
+    String rawSeconds = getJsonValueByKey(body, "seconds");
+    if (rawSeconds.length() == 0) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain seconds value"));
+      return;
+    }
+
+    int requestedSeconds = 0;
+    if (!parseStringToInt(rawSeconds, requestedSeconds)) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("seconds must be an integer value"));
+      return;
+    }
+
+    uint32_t appliedMs = 0;
+    String err;
+    bool ok = InverterMonitor::getInstance().setPollingIntervalSeconds((uint32_t)requestedSeconds, appliedMs, err);
+    if (!ok) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson(err));
+      return;
+    }
+
+    String response = JsonBuilder()
+      .addNumber("poll_interval_seconds", String(appliedMs / 1000UL))
+      .addNumber("poll_interval_ms", String(appliedMs))
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "POST" && path == "/api/power") {    // Extract power value from JSON body
     String rawPower = getJsonValueByKey(body, "power");
     if (rawPower.length() == 0) {
       sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain power value"));
@@ -267,6 +301,7 @@ void handleApiClient(EthernetClient& client) {
       return;
     }
 
+    inverterBody.trim();  // strip trailing newlines/whitespace the inverter appends
     sendHttpResponse(client, 200, "text/plain", inverterBody);
     return;
   }
@@ -282,6 +317,8 @@ void handleApiClient(EthernetClient& client) {
       .addBool("connected", mqtt.isConnected())
       .addBool("scanning", mqtt.isScanning())
       .addNumber("port", String(MQTT_PORT))
+      .addString("user", mqtt.getUser())
+      .addBool("has_credentials", mqtt.hasCredentials())
       .build();
     sendHttpResponse(client, 200, "application/json", response);
     return;
@@ -312,9 +349,21 @@ void handleApiClient(EthernetClient& client) {
       mqtt.setBrokerIp(IPAddress(0, 0, 0, 0));
     }
 
-    if (haStr.length() == 0 && brokerStr.length() == 0 && body.indexOf("\"broker\"") < 0) {
+    // Optional credentials. Each field is updated independently so the UI can
+    // change just the user without wiping the stored password (and vice versa).
+    bool userPresent = body.indexOf("\"user\"") >= 0;
+    bool passPresent = body.indexOf("\"password\"") >= 0;
+    if (userPresent) {
+      mqtt.setUser(getJsonValueByKey(body, "user"));
+    }
+    if (passPresent) {
+      mqtt.setPassword(getJsonValueByKey(body, "password"));
+    }
+
+    if (haStr.length() == 0 && brokerStr.length() == 0 &&
+        body.indexOf("\"broker\"") < 0 && !userPresent && !passPresent) {
       sendHttpResponse(client, 400, "application/json",
-        buildErrorJson("body must contain 'broker' and/or 'ha_enabled' field"));
+        buildErrorJson("body must contain 'broker', 'ha_enabled', 'user' and/or 'password' field"));
       return;
     }
 
@@ -323,6 +372,8 @@ void handleApiClient(EthernetClient& client) {
     String response = JsonBuilder()
       .addBool("ha_enabled", mqtt.isHaEnabled())
       .addString("broker", brokerSet ? ip.toString() : String(""))
+      .addString("user", mqtt.getUser())
+      .addBool("has_credentials", mqtt.hasCredentials())
       .addBool("saved", true)
       .build();
     sendHttpResponse(client, 200, "application/json", response);

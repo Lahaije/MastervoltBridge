@@ -37,7 +37,7 @@ const uint32_t ETHERNET_SERVICE_INTERVAL_MS = 2;
 byte ETH_MAC[6] = {0x02, 0xA1, 0x82, 0x32, 0x10, 0x42};
 
 // MQTT / Home Assistant
-const bool HA_MQTT_ENABLED_DEFAULT = false;
+const bool HA_MQTT_ENABLED_DEFAULT = true;
 const uint16_t MQTT_PORT = 1883;
 const char* MQTT_CLIENT_ID = "mv-bridge";
 const char* MQTT_DISCOVERY_PREFIX = "homeassistant";

@@ -17,6 +17,7 @@ Each documentation file has a dedicated resource describing what it covers, its 
 | `docs/ESP32_UPLOAD_README.md` | `skills/documentation-update/resources/upload.md` |
 | `docs/TEST_README.md` | `skills/documentation-update/resources/test-readme.md` |
 | `docs/API_REFERENCE.md` | `skills/documentation-update/resources/api-reference.md` |
+| `docs/HOME_ASSISTANT.md` | `skills/documentation-update/resources/home-assistant.md` |
 | `README.md` | `skills/documentation-update/resources/readme.md` |
 | `AGENTS.md` | `skills/documentation-update/resources/agents.md` |
 | `skills/log-analysis/SKILL.md` | `skills/documentation-update/resources/skill-log-analysis.md` |
@@ -39,6 +40,7 @@ Each documentation file has a dedicated resource describing what it covers, its 
 | New documentation file added | `README.md` (index), `AGENTS.md` (file map), this skill's file map table |
 | Test procedure or troubleshooting knowledge changes | `docs/TEST_README.md` |
 | Hardware changes (board, Ethernet chip) | `docs/SETUP_README.md`, `docs/WIRING_README.md`, `README.md`, `AGENTS.md` |
+| MQTT topic layout, HA Discovery payload, or dual-topic cache pattern | `docs/HOME_ASSISTANT.md`, `AGENTS.md` |
 
 ---
 
@@ -55,7 +57,8 @@ Each piece of information has exactly one canonical home. All other files must l
 | Software prerequisites and IDE setup | `docs/SETUP_README.md` |
 | Upload CLI commands (full procedure) | `docs/ESP32_UPLOAD_README.md` |
 | Full API request/response schemas | `docs/API_REFERENCE.md` |
-| Post-flash validation and troubleshooting | `docs/TEST_README.md` |
+| Post-flash validation and troubleshooting (the only place that lists which endpoints to hit after a flash and what they should return) | `docs/TEST_README.md` |
+| Home Assistant integration (MQTT Discovery + REST fallback, topic layout, dual-topic cache pattern) | `docs/HOME_ASSISTANT.md` |
 | Log analysis usage | `skills/log-analysis/SKILL.md` |
 
 ---

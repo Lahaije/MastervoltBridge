@@ -18,9 +18,9 @@ arduino-cli upload --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverte
 
 ## Verify Firmware Is Current
 
-1. GET / returns discovery including /wifi/off.
-2. POST /wifi/off returns JSON with pressed true/false (not 404).
-3. GET /pulse returns `{"reconnected": true/false}`.
+Use the post-flash validation checklist in
+[`docs/TEST_README.md`](TEST_README.md). It is the single source of truth
+for which endpoints to hit and what each should return.
 
 ## Inverter Availability Caveat
 

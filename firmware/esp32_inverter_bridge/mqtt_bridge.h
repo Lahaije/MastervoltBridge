@@ -60,6 +60,21 @@ public:
   void setHaEnabled(bool enabled);
 
   /**
+   * Set MQTT username/password (persisted to NVS). Empty strings clear them.
+   * If currently connected, the existing session is dropped so the new creds
+   * are used on the next reconnect.
+   */
+  void setCredentials(const String& user, const String& password);
+  void setUser(const String& user);
+  void setPassword(const String& password);
+
+  /** Returns the stored MQTT username (may be empty). */
+  String getUser() const { return user_; }
+
+  /** Returns true if a non-empty username is configured. */
+  bool hasCredentials() const { return user_.length() > 0; }
+
+  /**
    * Returns true if a broker discovery scan is currently in progress.
    */
   bool isScanning() const { return scanState_ != ScanState::Idle; }
@@ -115,6 +130,8 @@ private:
   static void messageCallback(char* topic, byte* payload, unsigned int length);
 
   IPAddress brokerIp_;
+  String user_;
+  String password_;
   bool haEnabled_ = false;
   bool configured_ = false;       // broker IP is non-zero
   bool discoveryPublished_ = false;
@@ -124,6 +141,7 @@ private:
   ScanState scanState_ = ScanState::Idle;
   uint8_t scanHostOctet_ = 0;     // next .X host to probe in /24 scan
   unsigned long scanStartedMs_ = 0;
+  uint8_t storedProbeAttempts_ = 0;  // retry counter for stored broker probe
 };
 
 #endif // MQTT_BRIDGE_H

@@ -358,8 +358,27 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   if (method == "GET") {
     code = http.GET();
   } else if (method == "POST") {
-    http.addHeader("Content-Type", "text/plain");
-    code = http.POST(body);
+    if (path == "/postoptions") {
+      // The inverter's /postoptions handler only accepts a browser-style
+      // multipart/form-data submission with the enable_mxpower + maxpower
+      // fields. Plain text/plain POSTs return HTTP 200 but do not apply
+      // the new power limit. `body` holds the watts value as a decimal
+      // string built by InverterMonitor::setPower().
+      String boundary = String("----mvb") + String(millis(), HEX);
+      String multipart;
+      multipart.reserve(256 + body.length());
+      multipart += "--"; multipart += boundary;
+      multipart += "\r\nContent-Disposition: form-data; name=\"enable_mxpower\"\r\n\r\non";
+      multipart += "\r\n--"; multipart += boundary;
+      multipart += "\r\nContent-Disposition: form-data; name=\"maxpower\"\r\n\r\n";
+      multipart += body;
+      multipart += "\r\n--"; multipart += boundary; multipart += "--\r\n";
+      http.addHeader("Content-Type", String("multipart/form-data; boundary=") + boundary);
+      code = http.POST(multipart);
+    } else {
+      http.addHeader("Content-Type", "text/plain");
+      code = http.POST(body);
+    }
   } else {
     errorMessage = String("Unsupported HTTP method: ") + method;
     http.end();

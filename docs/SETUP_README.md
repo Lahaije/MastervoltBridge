@@ -103,19 +103,10 @@ For full options see [`skills/firmware-upload/SKILL.md`](../skills/firmware-uplo
 
 ## 6. Verify the Bridge Is Running
 
-After flashing, with the Ethernet cable plugged in:
+After flashing, with the Ethernet cable plugged in, follow the post-flash
+validation checklist in [`docs/TEST_README.md`](TEST_README.md). That document
+is the single source of truth for which endpoints to hit and what they should
+return.
 
-```powershell
-curl http://192.168.1.48:8080/api/health
-```
-
-Expected response:
-
-```json
-{"wifi_connected": false, "ethernet_ip": "192.168.1.48", ...}
-```
-
-`wifi_connected` will be `false` until the bridge polls the inverter (~20 s after boot). Wait and call `/api/info` to confirm telemetry is flowing.
-
-Full endpoint reference: [`docs/API_REFERENCE.md`](API_REFERENCE.md).  
-Post-flash validation checklist: [`docs/TEST_README.md`](TEST_README.md).
+For the full endpoint reference (request/response schemas), see
+[`docs/API_REFERENCE.md`](API_REFERENCE.md).

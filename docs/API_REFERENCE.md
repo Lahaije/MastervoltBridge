@@ -12,10 +12,12 @@ http://192.168.1.48:8080
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | / | API discovery |
+| GET | / | Web settings UI (HTML) |
+| GET | /api | API discovery (JSON list of endpoints) |
 | GET | /api/health | Bridge network/inverter/MQTT status |
 | GET | /api/logs | Log buffer (up to 1000 entries) |
 | GET | /api/info | Cached inverter `/home` telemetry + cached settings |
+| POST | /api/polling | Set monitor polling interval (1–3600 s) |
 | POST | /api/power | Set inverter power limit |
 | POST | /api/shadow | Enable/disable inverter shadow function |
 | GET | /api/shadow | Read current shadow state from inverter |
@@ -24,9 +26,15 @@ http://192.168.1.48:8080
 | GET | /pulse | Recovery pulse + forced WiFi reconnect |
 | POST | /api/debug | Enable or disable verbose HTTP 200 success logging |
 | GET | /api/mqtt | MQTT broker config and HA integration status |
-| POST | /api/mqtt | Set MQTT broker IP and/or HA enable flag |
+| POST | /api/mqtt | Set MQTT broker IP, HA enable flag, and optional credentials |
 
 ## GET /
+
+Returns the bundled HTML/CSS/JS settings page (about 11 KB). All assets are
+inline so the ENC28J60 only serves one request per visit. The page talks to
+the other `/api/*` endpoints over the same origin.
+
+## GET /api
 
 Returns discovery JSON containing all current endpoints.
 

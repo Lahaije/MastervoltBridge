@@ -134,18 +134,9 @@ automation:
 
 Use this if you don't have or don't want an MQTT broker. The bridge will
 still serve telemetry and commands over HTTP, and HA can poll/post via its
-`rest` and `rest_command` platforms.
-
-### Endpoints used
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/info` | GET | Telemetry + cached power_limit/shadow |
-| `/api/health` | GET | Bridge link state, MQTT status |
-| `/api/power` | POST | Set power limit (0–1575 W) |
-| `/api/shadow` | POST | Enable/disable shadow function |
-| `/pulse` | GET | Wake inverter WiFi (GPIO double-press) |
-| `/wifi/off` | POST | Turn inverter WiFi off (single press) |
+`rest` and `rest_command` platforms. See
+[`docs/API_REFERENCE.md`](API_REFERENCE.md) for the full schemas of every
+endpoint referenced below.
 
 ### Minimal package file
 

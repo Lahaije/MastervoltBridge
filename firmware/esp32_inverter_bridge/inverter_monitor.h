@@ -7,6 +7,7 @@
 #include <freertos/semphr.h>
 
 #include "inverter_data.h"
+#include "settings.h"
 
 /**
  * InverterMonitor: Manages polling of the inverter's /home endpoint,
@@ -80,6 +81,18 @@ public:
    */
   bool getCachedPowerLimit(uint16_t& wattsOut) const;
 
+  /**
+   * Set polling interval in seconds for the monitor loop.
+   * Valid range: 1..3600 seconds. Persisted to NVS so the value survives
+   * reboots. On success, *appliedMs* receives the new interval in ms.
+   */
+  bool setPollingIntervalSeconds(uint32_t seconds, uint32_t& appliedMs, String& errorMessage);
+
+  /**
+   * Get current polling interval in milliseconds.
+   */
+  uint32_t getPollingIntervalMs();
+
 private:
   InverterMonitor();
   ~InverterMonitor();
@@ -106,6 +119,11 @@ private:
   uint32_t successfulPolls = 0;
   uint32_t failedPolls = 0;
   bool isInitialized = false;
+
+  // Polling interval runtime config. Protected by pollingConfigMutex.
+  // Persisted to NVS so user-set value survives reboots.
+  SemaphoreHandle_t pollingConfigMutex = nullptr;
+  uint32_t pollingIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 
   // Cached "shadow" values for HA cache+dual-topic pattern. These reflect the
   // last successfully commanded value (NOT a readback from the inverter -

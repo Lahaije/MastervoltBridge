@@ -27,6 +27,8 @@ const String CMD_SHADOW_TOPIC = String("mastervolt/") + MQTT_DEVICE_ID + "/cmd/s
 const char* NVS_NAMESPACE = "mqtt";
 const char* NVS_KEY_BROKER = "broker_ip";
 const char* NVS_KEY_HA_EN = "ha_en";
+const char* NVS_KEY_USER = "user";
+const char* NVS_KEY_PASS = "pass";
 
 // Per-host probe socket (reused for stored-broker check and /24 scan)
 EthernetClient probeClient;
@@ -70,6 +72,8 @@ void MqttBridge::initialize() {
   prefs.begin(NVS_NAMESPACE, true);
   uint32_t stored = prefs.getUInt(NVS_KEY_BROKER, 0);
   haEnabled_ = prefs.getBool(NVS_KEY_HA_EN, HA_MQTT_ENABLED_DEFAULT);
+  user_ = prefs.getString(NVS_KEY_USER, "");
+  password_ = prefs.getString(NVS_KEY_PASS, "");
   prefs.end();
 
   if (stored != 0) {
@@ -78,11 +82,16 @@ void MqttBridge::initialize() {
   }
 
   appLogger.log(String("[MQTT] init ha_enabled=") + (haEnabled_ ? "true" : "false") +
-                " broker=" + (configured_ ? brokerIp_.toString() : String("<unset>")));
+                " broker=" + (configured_ ? brokerIp_.toString() : String("<unset>")) +
+                " user=" + (user_.length() ? user_ : String("<none>")) +
+                " pass_len=" + password_.length());
 
   mqttClient.setCallback(messageCallback);
-  mqttClient.setBufferSize(512);
-  mqttClient.setSocketTimeout(1);  // keep blocking calls short
+  // Buffer must hold the largest single discovery payload + topic.
+  // power_limit discovery JSON is ~510 bytes; topic ~60 bytes; with MQTT header overhead
+  // we need >=600. Use 1024 for safety and to allow future fields.
+  mqttClient.setBufferSize(1024);
+  mqttClient.setSocketTimeout(5);  // seconds; 1s was too aggressive and starved I/O
 }
 
 void MqttBridge::persistBrokerIp(const IPAddress& ip) {
@@ -137,6 +146,54 @@ IPAddress MqttBridge::getBrokerIp() const {
   return brokerIp_;
 }
 
+void MqttBridge::setCredentials(const String& user, const String& password) {
+  user_ = user;
+  password_ = password;
+
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putString(NVS_KEY_USER, user);
+  prefs.putString(NVS_KEY_PASS, password);
+  prefs.end();
+
+  appLogger.log(String("[MQTT] credentials updated user=") +
+                (user.length() ? user : String("<none>")) +
+                " pass_len=" + password.length());
+
+  // Drop any active session so the new creds are used on the next reconnect.
+  if (mqttClient.connected()) {
+    mqttClient.disconnect();
+  }
+  lastConnectAttemptMs_ = 0;  // trigger immediate retry
+}
+
+void MqttBridge::setUser(const String& user) {
+  user_ = user;
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putString(NVS_KEY_USER, user);
+  prefs.end();
+  appLogger.log(String("[MQTT] user updated user=") +
+                (user.length() ? user : String("<none>")));
+  if (mqttClient.connected()) {
+    mqttClient.disconnect();
+  }
+  lastConnectAttemptMs_ = 0;
+}
+
+void MqttBridge::setPassword(const String& password) {
+  password_ = password;
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putString(NVS_KEY_PASS, password);
+  prefs.end();
+  appLogger.log(String("[MQTT] password updated pass_len=") + password.length());
+  if (mqttClient.connected()) {
+    mqttClient.disconnect();
+  }
+  lastConnectAttemptMs_ = 0;
+}
+
 bool MqttBridge::isConnected() const {
   return mqttClient.connected();
 }
@@ -177,14 +234,25 @@ bool MqttBridge::probeBroker(const IPAddress& ip) {
 }
 
 void MqttBridge::onIpAcquired() {
-  if (!haEnabled_) return;
+  if (!haEnabled_) {
+    appLogger.log("[MQTT] IP acquired; HA disabled, no scan");
+    return;
+  }
 
   scanStartedMs_ = millis();
+  storedProbeAttempts_ = 0;
   if (configured_) {
-    appLogger.log(String("[MQTT] IP acquired; probing stored broker ") + brokerIp_.toString());
-    scanState_ = ScanState::ProbeStored;
+    // Skip the TCP probe entirely for stored brokers. probeClient.stop() was
+    // observed to corrupt UIPEthernet's socket table and crash the next
+    // Ethernet.maintain() (StoreProhibited in UIPEthernetClass::tick()).
+    // Let mqttClient.connect() itself act as the reachability test; its
+    // retry cadence is governed by MQTT_RECONNECT_INTERVAL_MS.
+    appLogger.log(String("[MQTT] IP acquired; will connect directly to stored broker ") +
+                  brokerIp_.toString());
+    scanState_ = ScanState::Idle;
+    lastConnectAttemptMs_ = 0;  // trigger immediate MQTT connect
   } else {
-    appLogger.log("[MQTT] IP acquired; no broker stored, starting /24 scan");
+    appLogger.log("[MQTT] IP acquired; HA enabled but no broker stored - starting /24 scan");
     scanState_ = ScanState::ScanRunning;
     scanHostOctet_ = 1;
   }
@@ -199,13 +267,28 @@ void MqttBridge::serviceScan() {
   }
 
   if (scanState_ == ScanState::ProbeStored) {
+    storedProbeAttempts_++;
+    appLogger.log(String("[MQTT] Probe attempt ") + storedProbeAttempts_ + "/5 to stored broker " +
+                  brokerIp_.toString());
     if (probeBroker(brokerIp_)) {
-      appLogger.log("[MQTT] Stored broker reachable; keeping it.");
+      appLogger.log(String("[MQTT] Stored broker reachable on attempt ") + storedProbeAttempts_ +
+                    "; keeping it.");
       scanState_ = ScanState::Idle;
-      lastConnectAttemptMs_ = 0;  // trigger immediate MQTT connect
+      // Force a short cool-down before the real MQTT CONNECT so UIPEthernet
+      // can fully release the probe socket (closing it requires processing
+      // a few RX packets). Otherwise the subsequent connect races with the
+      // FIN_WAIT/TIME_WAIT cleanup and can crash PubSubClient.
+      lastConnectAttemptMs_ = millis() - (MQTT_RECONNECT_INTERVAL_MS - 500);  // ~500ms cool-down
       return;
     }
-    appLogger.log("[MQTT] Stored broker unreachable; starting /24 scan");
+    // First TCP connect after a fresh DHCP lease often fails (ARP not warm,
+    // UIPEthernet quirks). Retry several times before falling back to /24 scan.
+    if (storedProbeAttempts_ < 5) {
+      appLogger.log(String("[MQTT] Stored broker probe failed (attempt ") + storedProbeAttempts_ +
+                    "/5); will retry next loop iteration");
+      return;  // stay in ProbeStored state
+    }
+    appLogger.log("[MQTT] Stored broker unreachable after 5 attempts; starting /24 scan");
     scanState_ = ScanState::ScanRunning;
     scanHostOctet_ = 1;
     return;
@@ -228,6 +311,12 @@ void MqttBridge::serviceScan() {
   }
 
   IPAddress candidate(myIp[0], myIp[1], myIp[2], scanHostOctet_);
+  // Per-iteration progress log so scan is clearly visible in /api/logs and serial.
+  {
+    unsigned long elapsed = millis() - scanStartedMs_;
+    appLogger.log(String("[MQTT] /24 scan: probing ") + candidate.toString() +
+                  " (" + scanHostOctet_ + "/254, " + elapsed + "ms elapsed)");
+  }
   if (probeBroker(candidate)) {
     unsigned long elapsed = millis() - scanStartedMs_;
     appLogger.log(String("[MQTT] Broker discovered at ") + candidate.toString() +
@@ -244,30 +333,41 @@ void MqttBridge::serviceScan() {
 }
 
 void MqttBridge::connect() {
+  appLogger.log(String("[MQTT] connect() -> ") + brokerIp_.toString() + ":" + MQTT_PORT +
+                " user=" + (user_.length() ? user_ : String("<anon>")));
   mqttClient.setServer(brokerIp_, MQTT_PORT);
 
   String willTopic = AVAIL_TOPIC;
+  const char* userPtr = user_.length() ? user_.c_str() : nullptr;
+  const char* passPtr = (user_.length() && password_.length()) ? password_.c_str() : nullptr;
   bool connected = mqttClient.connect(
     MQTT_CLIENT_ID,
+    userPtr,            // username (nullptr => anonymous)
+    passPtr,            // password
     willTopic.c_str(),  // LWT topic
     0,                  // QoS
     true,               // retain
     "offline"           // LWT payload
   );
+  appLogger.log(String("[MQTT] connect() returned connected=") + (connected ? "true" : "false") +
+                " state=" + mqttClient.state());
 
   if (connected) {
     appLogger.log("[MQTT] Connected to broker");
     publishAvailability(true);
+    appLogger.log("[MQTT] availability sent");
 
     if (!discoveryPublished_) {
       publishDiscovery();
       discoveryPublished_ = true;
+      appLogger.log("[MQTT] discovery sent");
     }
 
     // Subscribe to command topics
     mqttClient.subscribe(CMD_POWER_TOPIC.c_str());
     mqttClient.subscribe(CMD_POLLING_TOPIC.c_str());
     mqttClient.subscribe(CMD_SHADOW_TOPIC.c_str());
+    appLogger.log("[MQTT] subscriptions sent");
 
     // Publish initial state + cached shadow/power_limit mirrors so HA picks
     // up the bridge's view of these write-only inverter settings immediately
@@ -275,6 +375,7 @@ void MqttBridge::connect() {
     publishState();
     publishPowerLimit();
     publishShadow();
+    appLogger.log("[MQTT] initial publishes done");
   } else {
     appLogger.log(String("[MQTT] Connect failed, rc=") + mqttClient.state());
   }
@@ -330,6 +431,17 @@ void MqttBridge::publishDiscovery() {
   String dev = deviceJson();
   String avty = availabilityJson();
   String stTopic = STATE_TOPIC;
+  // Helper lambda: publish + log + return ok flag. Bail on first failure so a
+  // crash trace clearly identifies the offending entity.
+  auto pub = [&](const char* label, const String& topic, const String& cfg) {
+    appLogger.log(String("[MQTT] discovery ") + label + " topic_len=" + topic.length() +
+                  " cfg_len=" + cfg.length());
+    bool ok = mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!ok) {
+      appLogger.log(String("[MQTT] discovery ") + label + " PUBLISH FAILED (buffer too small?)");
+    }
+    return ok;
+  };
 
   // --- Sensor: Power ---
   {
@@ -339,7 +451,7 @@ void MqttBridge::publishDiscovery() {
                  "\"val_tpl\":\"{{value_json.power}}\"," +
                  "\"dev_cla\":\"power\",\"stat_cla\":\"measurement\",\"unit_of_meas\":\"W\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("power", topic, cfg)) return;
   }
 
   // --- Sensor: Total Yield ---
@@ -350,7 +462,7 @@ void MqttBridge::publishDiscovery() {
                  "\"val_tpl\":\"{{value_json.total_yield}}\"," +
                  "\"dev_cla\":\"energy\",\"stat_cla\":\"total_increasing\",\"unit_of_meas\":\"kWh\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("total_yield", topic, cfg)) return;
   }
 
   // --- Sensor: Daily Yield ---
@@ -361,7 +473,7 @@ void MqttBridge::publishDiscovery() {
                  "\"val_tpl\":\"{{value_json.daily_yield}}\"," +
                  "\"dev_cla\":\"energy\",\"stat_cla\":\"total_increasing\",\"unit_of_meas\":\"kWh\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("daily_yield", topic, cfg)) return;
   }
 
   // --- Binary Sensor: WiFi Connected ---
@@ -372,7 +484,7 @@ void MqttBridge::publishDiscovery() {
                  "\"val_tpl\":\"{{value_json.wifi_connected}}\"," +
                  "\"dev_cla\":\"connectivity\",\"pl_on\":\"true\",\"pl_off\":\"false\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("wifi_connected", topic, cfg)) return;
   }
 
   // --- Number: Power Limit ---
@@ -387,7 +499,7 @@ void MqttBridge::publishDiscovery() {
                  "\"min\":0,\"max\":" + INVERTER_MAX_POWER_WATTS + ",\"step\":25," +
                  "\"unit_of_meas\":\"W\",\"icon\":\"mdi:solar-power\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("power_limit", topic, cfg)) return;
   }
 
   // --- Number: Polling Interval ---
@@ -398,7 +510,7 @@ void MqttBridge::publishDiscovery() {
                  "\"min\":1,\"max\":300,\"step\":1," +
                  "\"unit_of_meas\":\"s\",\"icon\":\"mdi:timer-outline\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("polling_interval", topic, cfg)) return;
   }
 
   // --- Switch: Shadow Function ---
@@ -412,7 +524,7 @@ void MqttBridge::publishDiscovery() {
                  "\"stat_on\":\"ON\",\"stat_off\":\"OFF\"," +
                  "\"icon\":\"mdi:weather-partly-cloudy\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("shadow", topic, cfg)) return;
   }
 
   // --- Button: Wake Pulse ---
@@ -423,7 +535,7 @@ void MqttBridge::publishDiscovery() {
                  "\"cmd_t\":\"" + cmdTopic + "\"," +
                  "\"icon\":\"mdi:pulse\"," +
                  avty + "," + dev + "}";
-    mqttClient.publish(topic.c_str(), cfg.c_str(), true);
+    if (!pub("wake_pulse", topic, cfg)) return;
     mqttClient.subscribe(cmdTopic.c_str());
   }
 
@@ -450,8 +562,15 @@ void MqttBridge::onMessage(const char* topic, byte* payload, unsigned int length
   } else if (topicStr == CMD_POLLING_TOPIC) {
     int seconds = value.toInt();
     if (seconds >= 1 && seconds <= 3600) {
-      // TODO: wire to InverterMonitor::setPollingInterval when available
-      appLogger.log(String("[MQTT] Polling interval requested: ") + seconds + "s");
+      uint32_t appliedMs = 0;
+      String err;
+      bool ok = InverterMonitor::getInstance().setPollingIntervalSeconds(
+        (uint32_t)seconds, appliedMs, err);
+      if (!ok) {
+        appLogger.log(String("[MQTT] setPollingIntervalSeconds failed: ") + err);
+      }
+    } else {
+      appLogger.log(String("[MQTT] Polling interval out of range (1..3600): ") + seconds);
     }
   } else if (topicStr == CMD_SHADOW_TOPIC) {
     bool enabled = (value == "ON" || value == "on" || value == "true" || value == "1");

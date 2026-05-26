@@ -129,7 +129,7 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
   return urlOut.length() > 0;
 }
 
-String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
+String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs, bool dataValid) {
   // Pull the bridge's cached "shadow" / "power_limit" values (HA cache +
   // dual-topic pattern; inverter does not report these via /home).
   InverterMonitor& mon = InverterMonitor::getInstance();
@@ -139,15 +139,16 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
   bool shadowKnown = mon.getCachedShadow(shadowOn);
 
   return JsonBuilder()
+    .addBool("telemetry_valid", dataValid)
     .addNumber("last_update_ms", String(lastUpdateMs))
-    .addString("operating_status", data.operatingStatus)
-    .addString("error_alarm_code", data.errorAlarmCode)
-    .addString("operating_mode", data.operatingMode)
-    .addString("inverter_model", data.inverterModel)
-    .addString("inverter_mac_address", data.inverterMacAddress)
-    .addString("power", data.instantaneousPower)        // Current power output (via get_Power())
-    .addString("total_yield", data.lifetimeEnergy)      // Total lifetime yield (via get_Total_Yield())
-    .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
+    .addString("operating_status", dataValid ? data.operatingStatus : String(""))
+    .addString("error_alarm_code", dataValid ? data.errorAlarmCode : String(""))
+    .addString("operating_mode", dataValid ? data.operatingMode : String(""))
+    .addString("inverter_model", dataValid ? data.inverterModel : String(""))
+    .addString("inverter_mac_address", dataValid ? data.inverterMacAddress : String(""))
+    .addString("power", dataValid ? data.instantaneousPower : String(""))
+    .addString("total_yield", dataValid ? data.lifetimeEnergy : String(""))
+    .addString("daily_yield", dataValid ? data.dailySessionEnergy : String(""))
     // Cached write-only settings. *_known=false means the bridge has never
     // seen a successful set since the last NVS erase; the value field is
     // meaningless in that case.
@@ -155,6 +156,7 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     .addNumber("power_limit_watts", String(pwrLimitKnown ? pwrLimitW : 0))
     .addBool("shadow_known", shadowKnown)
     .addBool("shadow", shadowKnown && shadowOn)
+    .addNumber("polling_interval_s", String(mon.getPollingIntervalMs() / 1000UL))
     .build();
 }
 

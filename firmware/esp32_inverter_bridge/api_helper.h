@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 13;
+constexpr size_t API_ENDPOINT_COUNT = 15;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**
@@ -115,7 +115,7 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut);
  * Build JSON response for /api/info endpoint.
  * Includes latest cached inverter telemetry: status, mode, power, yields.
  */
-String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs);
+String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs, bool dataValid);
 
 /**
  * Build JSON response for /api/health endpoint.
