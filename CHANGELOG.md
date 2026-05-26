@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased] — Home Assistant MQTT integration
+
+### Added
+
+- **MQTT bridge module** (`mqtt_bridge.{h,cpp}`) — PubSubClient over UIPEthernet, persisted broker IP + HA-enable flag in NVS namespace `mqtt`.
+- **HA MQTT Discovery** — bridge announces itself as a single HA device "Mastervolt SOLADIN 1500" with retained discovery payloads under `homeassistant/<component>/mastervolt_soladin_1500/...`.
+- **Cache + dual-topic pattern** for write-only inverter settings:
+  - `InverterMonitor` now caches `power_limit` and `shadow` in RAM + NVS (namespace `invmon`) on every successful `POST /api/power` / `POST /api/shadow`.
+  - `MqttBridge` publishes the cache to retained `state/power_limit` and `state/shadow` topics so HA tiles repopulate after every restart.
+  - HA Discovery declares both `cmd_t` (writes) and `stat_t` (mirror) for the Power Limit number and Shadow switch entities.
+- **`POST /api/shadow`** and **`GET /api/shadow`** — toggle / read the inverter's shadow function.
+- **`GET /api/mqtt` / `POST /api/mqtt`** — runtime config of MQTT broker IP and HA-enable flag.
+- **`/24` broker auto-discovery** — on each Ethernet DHCP lease, the bridge probes its local subnet one host per main-loop iteration for TCP/1883 and persists the first hit.
+- **`/api/info` extensions** — exposes `power_limit_watts` + `power_limit_known` + `shadow` + `shadow_known` from the bridge cache.
+- **`/api/health` extensions** — adds `ha_mqtt_enabled`, `mqtt_broker`, `mqtt_connected`, `mqtt_scanning`.
+
+### Changed
+
+- API surface grew from 9 to **13 endpoints**.
+- `docs/HOME_ASSISTANT.md` rewritten: MQTT Discovery is now the recommended path; REST polling kept as fallback.
+- `docs/API_REFERENCE.md`, `docs/TEST_README.md`, `AGENTS.md`, and `skills/api-validation/validate_api.py` updated for the new endpoints and behaviour.
+
+### Fixed
+
+- `DHCP_HOSTNAME` defined in `settings.cpp` — UIPEthernet 2.0.12 declares it `extern` but provides no definition, which broke the link step.
+
 ## [0.1.0-alpha1] — May 19, 2026
 
 ### Initial Alpha Release

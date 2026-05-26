@@ -14,9 +14,11 @@ Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to 
 - **20-second live telemetry polling** with cached data for instant API responses
 - **Installer menu access** — read and control inverter settings not normally exposed
 - **Power output control** — limit or stop production in real time via `POST /api/power` (0–1575 W)
+- **Shadow function control** — toggle the inverter shadow mode via `POST /api/shadow`
 - **GPIO wake-pulse** to keep the inverter WiFi radio alive between polls
 - **Circular log buffer** (1000 entries) with millisecond timestamps
-- **Home Assistant compatible** — poll `/api/info` for power, yield, and status
+- **Home Assistant integration** — native MQTT Discovery device (sensors + controls), or REST polling of `/api/info` as a fallback
+- **MQTT broker auto-discovery** — scans the local /24 once Ethernet comes up; broker IP and HA-enable flag persisted in NVS, configurable via `POST /api/mqtt`
 - **A/B WiFi reconnect strategies** (dwell vs auto) with structured logging for passive performance analysis
 - **Built-in analysis tooling** — CLI scripts to analyze logs, plot power output, and validate the API
 
@@ -32,7 +34,7 @@ See [`docs/WIRING_README.md`](docs/WIRING_README.md) for the full pin table and 
 
 ## API
 
-9 REST endpoints covering health, live telemetry, power control, log access, and diagnostics. See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full reference.
+13 REST endpoints covering health, live telemetry, power & shadow control, MQTT/HA configuration, log access, and diagnostics. See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full reference.
 
 ## Build and Upload
 
@@ -68,6 +70,7 @@ The bridge logs WiFi events, inverter polls, and API calls to a circular buffer.
 - [`docs/WIRING_README.md`](docs/WIRING_README.md) — Pin table and electrical notes
 - [`docs/ESP32_UPLOAD_README.md`](docs/ESP32_UPLOAD_README.md) — Upload procedure and post-flash verification
 - [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — Full endpoint reference
+- [`docs/HOME_ASSISTANT.md`](docs/HOME_ASSISTANT.md) — Home Assistant integration (MQTT Discovery + REST fallback)
 - [`docs/TEST_README.md`](docs/TEST_README.md) — Validation checklist and troubleshooting
 - [`AGENTS.md`](AGENTS.md) — Architecture reference for agents and developers
 - [`TECHNICAL_DEBT.md`](TECHNICAL_DEBT.md) — Known limitations and future enhancements

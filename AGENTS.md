@@ -28,22 +28,34 @@ inverter_data.cpp/h (data model)
 inverter_monitor.cpp/h (business logic)
   ├── InverterMonitor singleton — FreeRTOS polling task (20s interval)
   ├── calls WifiConnectionManager::ensureConnected() before each poll
-  └── caches HomeData; exposes getLatestHomeData(), setPower(), fetchPath()
+  ├── caches HomeData + cached power_limit / shadow (NVS namespace "invmon")
+  └── exposes getLatestHomeData(), setPower(), setShadow(),
+      getCachedPowerLimit(), getCachedShadow(), fetchPath()
 
 ethernet_bridge.cpp/h (network layer)
-  └── ENC28J60 init + HTTP API server on port 8080
+  ├── ENC28J60 init + HTTP API server on port 8080
+  └── calls MqttBridge::onIpAcquired() after each DHCP lease event
+
+mqtt_bridge.cpp/h (HA integration)
+  ├── MqttBridge singleton (PubSubClient over UIPEthernet)
+  ├── NVS namespace "mqtt" (broker_ip, ha_en)
+  ├── /24 broker auto-scan one host per loop()
+  ├── HA MQTT Discovery (sensors + Power Limit number + Shadow switch)
+  └── dual-topic mirror for write-only settings
+      (cmd_t ← HA, stat_t ← bridge cache)
 
 api.cpp / api.h (request routing)
-  ├── handleApiClient() — 9 REST endpoints
-  └── deps: api_helper, InverterMonitor, inverter_data
+  ├── handleApiClient() — 13 REST endpoints
+  └── deps: api_helper, InverterMonitor, MqttBridge, inverter_data
 
 api_helper.cpp/h (HTTP/JSON utilities)
-  └── sendHttpResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
+  └── sendHttpResponse(), sendLogsResponse(), buildHealthJson(),
+      buildInfoJson() (includes MQTT + cached settings)
 
 esp32_inverter_bridge.ino (main entry)
   └── starts ethernetBridgeStartTask() + InverterMonitor::initialize()
 
-settings.cpp/h — all global constants
+settings.cpp/h — all global constants (incl. MQTT_* + DHCP_HOSTNAME)
 logger.h — 1000-entry circular log buffer with ms timestamps
 ```
 
@@ -74,14 +86,18 @@ Plot power vs time: `.venv\Scripts\python skills/log-analysis/plot_power.py` (sa
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/` | API discovery |
-| GET | `/api/health` | Bridge status (WiFi, Ethernet, IPs) |
+| GET | `/api/health` | Bridge status (WiFi, Ethernet, IPs, MQTT) |
 | GET | `/api/logs` | Log buffer (1000 entries) |
-| GET | `/api/info` | Latest cached inverter telemetry |
-| POST | `/api/power` | Set inverter power (0–1575 W) |
+| GET | `/api/info` | Latest cached telemetry + cached `power_limit` / `shadow` |
+| POST | `/api/power` | Set inverter power (0–1575 W); caches + publishes on success |
+| POST | `/api/shadow` | Enable/disable shadow function; caches + publishes on success |
+| GET | `/api/shadow` | Live shadow state from inverter |
 | POST | `/api/inverter/fetch` | Fetch arbitrary inverter path (raw response) |
 | POST | `/wifi/off` | Single press to turn inverter WiFi off if connected |
-| GET | `/pulse` | GPIO double-press wake + forced reconnect; returns `{"reconnected": bool}` |
-| POST | `/api/debug` | Enable/disable debug mode; returns `{"debug": bool}` |
+| GET | `/pulse` | GPIO double-press wake + forced reconnect |
+| POST | `/api/debug` | Enable/disable debug mode |
+| GET | `/api/mqtt` | MQTT broker config + HA-enable status |
+| POST | `/api/mqtt` | Set `broker_ip` and/or `ha_enabled` (persisted to NVS) |
 
 ## Data Model
 
@@ -111,9 +127,14 @@ void initialize();
 bool getLatestHomeData(HomeData& dataOut);
 unsigned long getLastUpdateMs();
 bool setPower(int watts, String& responseBody, int& httpCode, String& errorMessage);
+bool setShadow(bool enabled, String& responseBody, int& httpCode, String& errorMessage);
 bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
+// Cached write-only inverter settings (NVS-backed, source of truth for HA).
+bool getCachedPowerLimit(uint16_t& wattsOut);
+bool getCachedShadow(bool& enabledOut);
 ```
 `dataMutex` protects all cached data; all lock attempts timeout after 5 s.
+Cache getters perform unlocked reads (single primitives, set once per successful command).
 
 ## Configuration (settings.cpp)
 
@@ -129,6 +150,15 @@ bool fetchPath(const String& path, String& responseBody, int& httpCode, String& 
 | `WIFI_BRIDGE_POLL_INTERVAL_MS` | `20000` | Poll interval |
 | `WIFI_BRIDGE_HTTP_TIMEOUT_MS` | `3500` | HTTP request timeout |
 | `INVERTER_MAX_POWER_WATTS` | `1575` | Power set limit |
+| `HA_MQTT_ENABLED_DEFAULT` | `false` | Default HA-enable flag if NVS unset |
+| `MQTT_PORT` | `1883` | MQTT broker TCP port |
+| `MQTT_CLIENT_ID` | `"mv-bridge"` | Client ID + DHCP hostname |
+| `MQTT_DEVICE_ID` | `"mastervolt_soladin_1500"` | HA device + topic prefix |
+| `MQTT_DISCOVERY_PREFIX` | `"homeassistant"` | HA Discovery topic root |
+| `MQTT_PUBLISH_INTERVAL_MS` | `20000` | Reference only — publishing is poll-driven |
+| `MQTT_RECONNECT_INTERVAL_MS` | `10000` | Min interval between connect retries |
+| `MQTT_SCAN_TIMEOUT_MS` | `400` | Per-host probe budget during /24 scan |
+| `DHCP_HOSTNAME` | `"mv-bridge"` | Required by UIPEthernet 2.0.12 (extern) |
 
 ## Build & Upload
 
@@ -214,6 +244,10 @@ Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.m
 8. **CDCOnBoot=cdc resets on serial open**: Opening COM9 with DTR=true resets the ESP32. Use `dsrdtr=False, dtr=False` in pyserial to monitor without reset.
 9. **Changing FQBN flags triggers full rebuild**: Adding/removing flags like `CDCOnBoot=cdc` causes a ~5 min full core recompile. Same flags = fast incremental build (~20s).
 10. **Venv activation required**: Every new terminal needs `.venv\Scripts\Activate.ps1` before running Python scripts. Without it, `ModuleNotFoundError` for `requests`, `matplotlib`, `serial`, etc.
+11. **MQTT "dual-topic" pattern**: The inverter never reports `power_limit` or `shadow` via `/home`. The bridge is the source of truth between commands. On every successful `POST /api/power` or `POST /api/shadow`, `InverterMonitor` caches the value (RAM + NVS namespace `"invmon"`) and `MqttBridge` publishes it retained to `state/power_limit` / `state/shadow`. HA listens on those topics (`stat_t` in discovery), and sends writes to `cmd/power` / `cmd/shadow` (`cmd_t`). Without this, the HA tile would show "unknown" after every restart.
+12. **MQTT broker `/24` scan is slow** (UIPEthernet has ~3–6 s connect-fail). The scan runs one host per `loop()` iteration so it doesn't starve the API, but a full pass takes minutes. Prefer `POST /api/mqtt` with an explicit `broker_ip` in production.
+13. **PubSubClient buffer is 256 bytes by default** — the discovery JSON for the Power Limit + Shadow entities is sized to fit. If you add a field, verify with the MQTT broker that publishes still succeed.
+14. **UIPEthernet 2.0.12 `DHCP_HOSTNAME` undefined symbol**: the library declares `extern const char* DHCP_HOSTNAME` but provides no definition. We define it in `settings.cpp`. Removing that line breaks the link step.
 
 ## Performance
 
@@ -232,13 +266,14 @@ Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.m
 ## File Map
 
 **Firmware** (`firmware/esp32_inverter_bridge/`):
-`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_monitor.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `settings.{h,cpp}`, `logger.h`
+`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_monitor.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `mqtt_bridge.{h,cpp}`, `settings.{h,cpp}`, `logger.h`
 
 **Documentation** (`docs/`):
 - `SETUP_README.md` — Hardware assembly, wiring, prerequisites, flash instructions
 - `WIRING_README.md` — Pin table + electrical notes
 - `ESP32_UPLOAD_README.md` — Upload procedure + post-flash verification
-- `API_REFERENCE.md` — Full endpoint reference
+- `API_REFERENCE.md` — Full endpoint reference (13 endpoints)
+- `HOME_ASSISTANT.md` — Home Assistant integration (MQTT Discovery + REST fallback)
 - `TEST_README.md` — Validation checklist + troubleshooting
 
 **Skills** (`skills/`):

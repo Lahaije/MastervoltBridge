@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "api.h"
+#include "mqtt_bridge.h"
 
 namespace {
 TaskHandle_t ethernetTaskHandle = nullptr;
@@ -72,14 +73,21 @@ void ethernetBridgeTask(void* param) {
                       String(" (IP=") + Ethernet.localIP().toString() + String(")");
       appLogger.log(apiMsg);
       apiServerStarted = true;
+
+      // Initialize MQTT after Ethernet is ready and trigger broker probe/scan.
+      MqttBridge& mqtt = MqttBridge::getInstance();
+      mqtt.initialize();
+      mqtt.onIpAcquired();
     }
 
     int maintainCode = Ethernet.maintain();
     // DHCP renew/rebind status reporting.
     if (maintainCode == 1 || maintainCode == 3) {
       appLogger.log(String("[ETH] DHCP lease renewed. IP=") + Ethernet.localIP().toString());
+      MqttBridge::getInstance().onIpAcquired();
     } else if (maintainCode == 2 || maintainCode == 4) {
       appLogger.log(String("[ETH] DHCP lease rebind. IP=") + Ethernet.localIP().toString());
+      MqttBridge::getInstance().onIpAcquired();
     }
 
     // Process all available API clients without delay between them.
@@ -89,6 +97,9 @@ void ethernetBridgeTask(void* param) {
       handleApiClient(client);
       client.stop();
     }
+
+    // Service MQTT connection (connect/reconnect, publish, receive)
+    MqttBridge::getInstance().loop();
 
     vTaskDelay(pdMS_TO_TICKS(ETHERNET_SERVICE_INTERVAL_MS));
   }

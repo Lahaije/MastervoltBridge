@@ -54,6 +54,22 @@ extern const uint32_t ETHERNET_SERVICE_INTERVAL_MS;
 // Ethernet config
 extern byte ETH_MAC[6];
 
+// MQTT / Home Assistant configuration
+// HA_MQTT_ENABLED_DEFAULT controls the factory default; the live value is
+// persisted in NVS and can be toggled at runtime via POST /api/mqtt
+// {"ha_enabled":true|false}.
+extern const bool HA_MQTT_ENABLED_DEFAULT;
+extern const uint16_t MQTT_PORT;
+extern const char* MQTT_CLIENT_ID;
+extern const char* MQTT_DISCOVERY_PREFIX;
+extern const char* MQTT_DEVICE_ID;
+extern const uint32_t MQTT_RECONNECT_INTERVAL_MS;
+extern const uint32_t MQTT_PUBLISH_INTERVAL_MS;
+// TCP-connect timeout (ms) used when probing the stored broker or scanning
+// the local /24 subnet for an MQTT broker.
+extern const uint16_t MQTT_SCAN_TIMEOUT_MS;
+extern const char* FIRMWARE_VERSION;
+
 // Shared globals
 extern EthernetServer apiServer;
 extern Logger appLogger;

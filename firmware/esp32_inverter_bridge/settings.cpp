@@ -36,7 +36,24 @@ const uint32_t ETHERNET_SERVICE_INTERVAL_MS = 2;
 
 byte ETH_MAC[6] = {0x02, 0xA1, 0x82, 0x32, 0x10, 0x42};
 
+// MQTT / Home Assistant
+const bool HA_MQTT_ENABLED_DEFAULT = false;
+const uint16_t MQTT_PORT = 1883;
+const char* MQTT_CLIENT_ID = "mv-bridge";
+const char* MQTT_DISCOVERY_PREFIX = "homeassistant";
+const char* MQTT_DEVICE_ID = "mastervolt_soladin_1500";
+const uint32_t MQTT_RECONNECT_INTERVAL_MS = 10000;
+const uint32_t MQTT_PUBLISH_INTERVAL_MS = 20000;
+const uint16_t MQTT_SCAN_TIMEOUT_MS = 400;
+const char* FIRMWARE_VERSION = "1.0.0";
+
 EthernetServer apiServer(API_PORT);
+
+// UIPEthernet 2.0.12 declares `extern const char* DHCP_HOSTNAME` in Dhcp.h
+// but provides no definition — the library expects the user sketch to
+// supply one. Define it here so DHCP DISCOVER/REQUEST messages get a
+// proper host name and the link step resolves.
+const char* DHCP_HOSTNAME = "mv-bridge";
 Logger appLogger;
 int lastInverterStatusCode = -1;
 bool debugMode = true;

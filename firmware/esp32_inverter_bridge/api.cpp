@@ -6,6 +6,7 @@
 #include "inverter_monitor.h"
 #include "inverter_data.h"
 #include "api_helper.h"
+#include "mqtt_bridge.h"
 
 const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/", "API discovery and endpoint overview"},
@@ -13,10 +14,14 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
   {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
   {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
+  {"POST", "/api/shadow", "Enable or disable inverter shadow function: {\"enabled\":true} or {\"enabled\":false}"},
+  {"GET", "/api/shadow", "Read current shadow function state from inverter"},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
-  {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"}
+  {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"},
+  {"POST", "/api/mqtt", "Set MQTT broker IP and/or HA enable: {\"broker\":\"192.168.1.x\", \"ha_enabled\":true}. Pass empty broker to clear."},
+  {"GET", "/api/mqtt", "Get MQTT broker config, HA enable flag, and connection status"}
 };
 
 void handleApiClient(EthernetClient& client) {
@@ -185,6 +190,58 @@ void handleApiClient(EthernetClient& client) {
     return;
   }
 
+  if (method == "POST" && path == "/api/shadow") {
+    // Enable or disable the inverter shadow (MPPT shadow-tracking) function
+    String value = getJsonValueByKey(body, "enabled");
+    if (value != "true" && value != "false") {
+      sendHttpResponse(client, 400, "application/json",
+                       buildErrorJson("body must contain enabled field: {\"enabled\":true} or {\"enabled\":false}"));
+      return;
+    }
+    bool enabled = (value == "true");
+
+    String inverterResponse;
+    String errorMsg;
+    int inverterHttpCode = 0;
+    bool ok = InverterMonitor::getInstance().setShadow(enabled, inverterResponse, inverterHttpCode, errorMsg);
+    if (!ok) {
+      sendHttpResponse(client, 502, "application/json", buildErrorJson(errorMsg));
+      return;
+    }
+
+    String response = JsonBuilder()
+      .addBool("enabled", enabled)
+      .addNumber("inverter_http_status", String(inverterHttpCode))
+      .addString("inverter_response", inverterResponse)
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "GET" && path == "/api/shadow") {
+    // Query inverter for current shadow state. Response body format is
+    // "<enabled>\n<interval>" where <enabled> is '0' or '1'.
+    String inverterBody;
+    String err;
+    int code = 0;
+    bool ok = InverterMonitor::getInstance().fetchPath("/shadow", inverterBody, code, err);
+    if (!ok) {
+      sendHttpResponse(client, 502, "application/json", buildErrorJson(err));
+      return;
+    }
+
+    String trimmed = inverterBody;
+    trimmed.trim();
+    bool enabled = trimmed.length() > 0 && trimmed[0] == '1';
+    String response = JsonBuilder()
+      .addBool("enabled", enabled)
+      .addNumber("inverter_http_status", String(code))
+      .addString("inverter_response", inverterBody)
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
   if (method == "POST" && path == "/api/inverter/fetch") {
     // Parse inverter URL from JSON request body (e.g. {"url":"/home"})
     String inverterPath;
@@ -211,6 +268,64 @@ void handleApiClient(EthernetClient& client) {
     }
 
     sendHttpResponse(client, 200, "text/plain", inverterBody);
+    return;
+  }
+
+  // --- MQTT broker configuration ---
+  if (method == "GET" && path == "/api/mqtt") {
+    MqttBridge& mqtt = MqttBridge::getInstance();
+    IPAddress ip = mqtt.getBrokerIp();
+    bool brokerSet = !(ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0);
+    String response = JsonBuilder()
+      .addBool("ha_enabled", mqtt.isHaEnabled())
+      .addString("broker", brokerSet ? ip.toString() : String(""))
+      .addBool("connected", mqtt.isConnected())
+      .addBool("scanning", mqtt.isScanning())
+      .addNumber("port", String(MQTT_PORT))
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "POST" && path == "/api/mqtt") {
+    MqttBridge& mqtt = MqttBridge::getInstance();
+
+    // ha_enabled toggle (optional; processed first so a single POST can both enable HA and set broker)
+    String haStr = getJsonValueByKey(body, "ha_enabled");
+    if (haStr.length() > 0) {
+      bool enable = (haStr == "true" || haStr == "1");
+      mqtt.setHaEnabled(enable);
+    }
+
+    // broker IP (optional; empty string clears the stored IP)
+    String brokerStr = getJsonValueByKey(body, "broker");
+    if (brokerStr.length() > 0) {
+      IPAddress ip;
+      if (!ip.fromString(brokerStr)) {
+        sendHttpResponse(client, 400, "application/json",
+          buildErrorJson("invalid IP address format"));
+        return;
+      }
+      mqtt.setBrokerIp(ip);
+    } else if (body.indexOf("\"broker\"") >= 0) {
+      // Explicit empty broker field => clear
+      mqtt.setBrokerIp(IPAddress(0, 0, 0, 0));
+    }
+
+    if (haStr.length() == 0 && brokerStr.length() == 0 && body.indexOf("\"broker\"") < 0) {
+      sendHttpResponse(client, 400, "application/json",
+        buildErrorJson("body must contain 'broker' and/or 'ha_enabled' field"));
+      return;
+    }
+
+    IPAddress ip = mqtt.getBrokerIp();
+    bool brokerSet = !(ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0);
+    String response = JsonBuilder()
+      .addBool("ha_enabled", mqtt.isHaEnabled())
+      .addString("broker", brokerSet ? ip.toString() : String(""))
+      .addBool("saved", true)
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
     return;
   }
 

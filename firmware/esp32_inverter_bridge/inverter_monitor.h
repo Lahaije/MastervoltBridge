@@ -49,13 +49,36 @@ public:
 
   /**
    * Set the inverter power limit.
+   * On success (HTTP 200), the value is cached in NVS and a state update is
+   * pushed to MQTT for the HA "Power Limit" entity (cache + dual-topic).
    */
   bool setPower(int watts, String& responseBody, int& httpCode, String& errorMessage);
+
+  /**
+   * Enable or disable the inverter "shadow function" (MPPT shadow-tracking
+   * mode). On success the value is cached in NVS and a state update is
+   * pushed to MQTT for the HA "Shadow Function" entity.
+   * Inverter endpoint: POST /shadow with body "1" (on) or "0" (off).
+   */
+  bool setShadow(bool enabled, String& responseBody, int& httpCode, String& errorMessage);
 
   /**
    * Fetch a specific path from the inverter.
    */
   bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
+
+  /**
+   * Cached "shadow" value reflecting the last successful set. Returns true
+   * when a value is known (set since boot or restored from NVS), false when
+   * unknown. The actual on/off state is written to *enabledOut*.
+   */
+  bool getCachedShadow(bool& enabledOut) const;
+
+  /**
+   * Cached power-limit value reflecting the last successful set. Returns
+   * true when a value is known, false when unknown.
+   */
+  bool getCachedPowerLimit(uint16_t& wattsOut) const;
 
 private:
   InverterMonitor();
@@ -83,6 +106,19 @@ private:
   uint32_t successfulPolls = 0;
   uint32_t failedPolls = 0;
   bool isInitialized = false;
+
+  // Cached "shadow" values for HA cache+dual-topic pattern. These reflect the
+  // last successfully commanded value (NOT a readback from the inverter -
+  // /home does not report shadow/power_limit). Persisted to NVS so they
+  // survive reboots; published on every successful set and on MQTT reconnect.
+  bool shadowKnown_ = false;
+  bool shadowOn_ = false;
+  bool powerLimitKnown_ = false;
+  uint16_t powerLimitW_ = 0;
+
+  void loadCachedSettingsFromNvs();
+  void persistShadow(bool enabled);
+  void persistPowerLimit(uint16_t watts);
 };
 
 #endif // INVERTER_MONITOR_H

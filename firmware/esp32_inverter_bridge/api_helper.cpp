@@ -4,6 +4,8 @@
 #include "settings.h"
 #include "logger.h"
 #include "inverter_data.h"
+#include "inverter_monitor.h"
+#include "mqtt_bridge.h"
 
 String jsonEscape(const String& input) {
   String out;
@@ -128,6 +130,14 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
 }
 
 String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
+  // Pull the bridge's cached "shadow" / "power_limit" values (HA cache +
+  // dual-topic pattern; inverter does not report these via /home).
+  InverterMonitor& mon = InverterMonitor::getInstance();
+  uint16_t pwrLimitW = 0;
+  bool pwrLimitKnown = mon.getCachedPowerLimit(pwrLimitW);
+  bool shadowOn = false;
+  bool shadowKnown = mon.getCachedShadow(shadowOn);
+
   return JsonBuilder()
     .addNumber("last_update_ms", String(lastUpdateMs))
     .addString("operating_status", data.operatingStatus)
@@ -135,13 +145,23 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     .addString("operating_mode", data.operatingMode)
     .addString("inverter_model", data.inverterModel)
     .addString("inverter_mac_address", data.inverterMacAddress)
-    .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
-    .addString("total_yield", data.lifetimeEnergy)  // Total lifetime yield (via get_Total_Yield())
+    .addString("power", data.instantaneousPower)        // Current power output (via get_Power())
+    .addString("total_yield", data.lifetimeEnergy)      // Total lifetime yield (via get_Total_Yield())
     .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
+    // Cached write-only settings. *_known=false means the bridge has never
+    // seen a successful set since the last NVS erase; the value field is
+    // meaningless in that case.
+    .addBool("power_limit_known", pwrLimitKnown)
+    .addNumber("power_limit_watts", String(pwrLimitKnown ? pwrLimitW : 0))
+    .addBool("shadow_known", shadowKnown)
+    .addBool("shadow", shadowKnown && shadowOn)
     .build();
 }
 
 String buildHealthJson() {
+  MqttBridge& mqtt = MqttBridge::getInstance();
+  IPAddress broker = mqtt.getBrokerIp();
+  bool brokerSet = !(broker[0] == 0 && broker[1] == 0 && broker[2] == 0 && broker[3] == 0);
   return JsonBuilder()
     .addBool("wifi_connected", WiFi.status() == WL_CONNECTED)
     .addString("wifi_ssid", String(INVERTER_WIFI_SSID))
@@ -150,6 +170,10 @@ String buildHealthJson() {
     .addString("inverter_host", String(INVERTER_HOST))
     .addNumber("last_inverter_status", String(lastInverterStatusCode))
     .addBool("debug_mode", debugMode)
+    .addBool("ha_mqtt_enabled", mqtt.isHaEnabled())
+    .addString("mqtt_broker", brokerSet ? broker.toString() : String(""))
+    .addBool("mqtt_connected", mqtt.isConnected())
+    .addBool("mqtt_scanning", mqtt.isScanning())
     .build();
 }
 

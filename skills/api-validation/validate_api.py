@@ -37,10 +37,14 @@ DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/api/logs"),
     ("GET",  "/api/info"),
     ("POST", "/api/power"),
+    ("POST", "/api/shadow"),
+    ("GET",  "/api/shadow"),
     ("POST", "/api/inverter/fetch"),
     ("POST", "/wifi/off"),
     ("GET",  "/pulse"),
     ("POST", "/api/debug"),
+    ("GET",  "/api/mqtt"),
+    ("POST", "/api/mqtt"),
 ]
 
 # For GET endpoints: required top-level JSON keys expected in 200 responses.
@@ -69,6 +73,12 @@ GET_CHECKS: list[dict[str, Any]] = [
         "description": "Inverter telemetry (may be 502 if inverter WiFi is off)",
         "required_keys": ["power", "total_yield", "daily_yield"],
         "allow_502": True,
+    },
+    {
+        "path": "/api/mqtt",
+        "description": "MQTT broker config + HA enable",
+        "required_keys": ["ha_enabled", "broker_ip", "connected", "scanning"],
+        "allow_502": False,
     },
     {
         "path": "/pulse",

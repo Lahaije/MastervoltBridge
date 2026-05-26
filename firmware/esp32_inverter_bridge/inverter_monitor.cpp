@@ -1,13 +1,25 @@
 #include "inverter_monitor.h"
 
+#include <Preferences.h>
+
 #include "inverter_data.h"
 #include "settings.h"
 #include "logger.h"
 #include "wifi_bridge.h"
+#include "mqtt_bridge.h"
 
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
 constexpr bool ENABLE_INVERTER_POLLING = true;
+
+// NVS namespace + keys for the inverter "shadow" settings cache. These keep
+// the bridge's view of write-only inverter settings consistent across reboots
+// (HA cache + dual-topic pattern - the inverter does not report these back).
+constexpr const char* NVS_NS = "invmon";
+constexpr const char* NVS_KEY_SHADOW_KN = "shadow_kn";
+constexpr const char* NVS_KEY_SHADOW = "shadow_on";
+constexpr const char* NVS_KEY_PWR_KN = "pwr_kn";
+constexpr const char* NVS_KEY_PWR = "pwr_w";
 
 // ---------------------------------------------------------------------------
 // Stepped retry backoff for inverter unavailability (e.g. overnight).
@@ -55,6 +67,8 @@ void InverterMonitor::initialize() {
   if (dataMutex == nullptr) {
     dataMutex = xSemaphoreCreateMutex();
   }
+
+  loadCachedSettingsFromNvs();
 
   if (ENABLE_INVERTER_POLLING && pollingTaskHandle == nullptr) {
     xTaskCreatePinnedToCore(
@@ -146,6 +160,9 @@ void InverterMonitor::runPollingTask() {
                           " Power=" + parsedData.instantaneousPower + "W");
           }
           iterationOk = true;
+
+          // Publish latest state via MQTT immediately after successful poll
+          MqttBridge::getInstance().publishState();
         } else {
           incrementCounterLocked(failedPolls);
           appLogger.log("[INVERTER-MONITOR] Failed to parse /home response");
@@ -225,7 +242,82 @@ bool InverterMonitor::setPower(int watts, String& responseBody, int& httpCode, S
   }
 
   String payload = String(watts);
-  return fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage);
+  bool ok = fetchInverterData("POST", "/power", payload, responseBody, httpCode, errorMessage);
+  if (ok && httpCode == 200) {
+    // Cache the commanded value and mirror it to MQTT so the HA Power Limit
+    // number entity reflects what the bridge believes the inverter is set to.
+    if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      powerLimitW_ = static_cast<uint16_t>(watts);
+      powerLimitKnown_ = true;
+      xSemaphoreGive(dataMutex);
+    }
+    persistPowerLimit(static_cast<uint16_t>(watts));
+    appLogger.log(String("[INVERTER-MONITOR] Power limit cached: ") + watts + "W");
+    MqttBridge::getInstance().publishPowerLimit();
+  }
+  return ok;
+}
+
+bool InverterMonitor::setShadow(bool enabled, String& responseBody, int& httpCode, String& errorMessage) {
+  // Inverter accepts POST /shadow with body "1" (enable) or "0" (disable).
+  String payload = enabled ? "1" : "0";
+  bool ok = fetchInverterData("POST", "/shadow", payload, responseBody, httpCode, errorMessage);
+  if (ok && httpCode == 200) {
+    if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      shadowOn_ = enabled;
+      shadowKnown_ = true;
+      xSemaphoreGive(dataMutex);
+    }
+    persistShadow(enabled);
+    appLogger.log(String("[INVERTER-MONITOR] Shadow cached: ") + (enabled ? "ON" : "OFF"));
+    MqttBridge::getInstance().publishShadow();
+  }
+  return ok;
+}
+
+bool InverterMonitor::getCachedShadow(bool& enabledOut) const {
+  // No mutex: small primitive reads, worst case is one cycle of staleness.
+  if (!shadowKnown_) return false;
+  enabledOut = shadowOn_;
+  return true;
+}
+
+bool InverterMonitor::getCachedPowerLimit(uint16_t& wattsOut) const {
+  if (!powerLimitKnown_) return false;
+  wattsOut = powerLimitW_;
+  return true;
+}
+
+void InverterMonitor::loadCachedSettingsFromNvs() {
+  Preferences prefs;
+  prefs.begin(NVS_NS, true);  // read-only
+  shadowKnown_ = prefs.getBool(NVS_KEY_SHADOW_KN, false);
+  shadowOn_ = prefs.getBool(NVS_KEY_SHADOW, false);
+  powerLimitKnown_ = prefs.getBool(NVS_KEY_PWR_KN, false);
+  powerLimitW_ = prefs.getUShort(NVS_KEY_PWR, 0);
+  prefs.end();
+  if (shadowKnown_ || powerLimitKnown_) {
+    appLogger.log(String("[INVERTER-MONITOR] Restored cached settings: shadow=") +
+                  (shadowKnown_ ? (shadowOn_ ? "ON" : "OFF") : "unknown") +
+                  " power_limit=" +
+                  (powerLimitKnown_ ? (String(powerLimitW_) + "W") : String("unknown")));
+  }
+}
+
+void InverterMonitor::persistShadow(bool enabled) {
+  Preferences prefs;
+  prefs.begin(NVS_NS, false);
+  prefs.putBool(NVS_KEY_SHADOW_KN, true);
+  prefs.putBool(NVS_KEY_SHADOW, enabled);
+  prefs.end();
+}
+
+void InverterMonitor::persistPowerLimit(uint16_t watts) {
+  Preferences prefs;
+  prefs.begin(NVS_NS, false);
+  prefs.putBool(NVS_KEY_PWR_KN, true);
+  prefs.putUShort(NVS_KEY_PWR, watts);
+  prefs.end();
 }
 
 bool InverterMonitor::fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage) {
