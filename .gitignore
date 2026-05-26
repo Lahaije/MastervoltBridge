@@ -42,3 +42,9 @@ analyze_logs.py
 build/
 *.elf
 *.bin
+
+# Vendor web UI dump (mirror of the inverter's built-in web app; not source)
+docs/web-cache/
+
+# Local bridge IP / credentials placeholder
+bridge_config.py
