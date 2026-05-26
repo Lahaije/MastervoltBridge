@@ -1,0 +1,54 @@
+
+<!--07-->
+<h1 id="upg0">Firmware Upgrade</h1>
+<span id="FW1Page">
+<p id="upg1">Select a valid firmware file from your computer to upload to your inverter.</p>
+<hr>
+<label id="upg2">Device Info</label>
+<div class="device info">
+	<span id="upg3">Model</span>:&nbsp;
+		<span id="article_title"></span><br>
+	<span id="upg4">Article Number</span>:&nbsp;
+		<span id="article_no"></span><br>
+	<span id="upg5">Serial Number</span>:&nbsp;
+		<span id="serial_no"></span><br>
+
+	<div id="toggleupgrade" class="togglebox closed" onClick="ToggleFwBlock();">
+		<span id="handleupgrade" class="handle"><span id="upg6" onClick="ToggleFwBlock();">Currently installed firmware version</span>:&nbsp;
+			<span id="current_firmware_version"></span>
+		</span>
+		<div class="collapse">
+			<span id="upg7">AC mcu</span>:&nbsp;<span id="ac_mcu"></span><br>
+			<span id="upg8">DC mcu</span>:&nbsp;<span id="dc_mcu"></span><br>
+			<span id="upg9">Webpage version</span>:&nbsp;<span id="webpage_version"></span><br>
+			<span id="upg10">WIFI mcu</span>:&nbsp;<span id="wifi_mcu"></span>
+		</div>
+	</div>
+</div>
+<hr>
+<form name="SoftUpdate" method="post" enctype="multipart/form-data">
+	<input type="hidden"  name="Downgrade" value="0">
+		<label for="firmware"><span id="upg11">Firmware file </span><span class="sub">(.bin)</span></label><input type="file" name="firmware" id="firmware" onChange="CheckFile();"><br>
+	<input type="checkbox" id="DowngradeChk" name="DowngradeChk" value="1" class="sub_field"><label for="DowngradeChk" class="radiolabel"><span id="upg12">Allow downgrade</span></label>
+	<hr>
+	<input type="button" name="Start" id="InstlFW" value="Install firmware" disabled class="default right" onClick="Fun_Confirm();" >
+	<span class="UpgradeErrormsg" id="Upgradeerr"></span>
+</form>
+</span>
+
+<span id="FW2Page"  STYLE="display:none">
+<p id="upg13">Please wait while the new firmware is installing on your inverter. After the installation is complete, the inverter will reboot itself.</p>
+<hr>
+<img class="reboot_loader" src="ajax-loader-big.gif" alt="">
+<p class="progress_description">
+	<span class="progress_status" id="upg14">
+	Uploading firmware to the inverter...
+	</span>
+	<span class="progress_numbers" style="display: none;">
+	</span>
+</p>
+</span>
+
+<span id="FW3Page" STYLE="display:none">
+<p id="upg15">Your inverter is now rebooting.</p>
+</span>
