@@ -11,26 +11,6 @@
 
 namespace {
 
-constexpr uint32_t WIFI_CONNECT_POLL_MS = 250;
-constexpr uint32_t WIFI_LOCK_TIMEOUT_MS = 50;
-constexpr uint32_t CONNECT_TIMEOUT_MS = 7000;
-constexpr uint32_t SCAN_SETTLE_MS = 100;
-
-// Retry settings for ensureConnected(): pulse once, then try connecting up to
-// MAX_CONNECT_RETRIES times (alternating dwell/auto) before returning failure.
-// This avoids re-pulsing the inverter button on every attempt, which could
-// toggle the WiFi back OFF.
-constexpr int MAX_CONNECT_RETRIES = 3;
-constexpr uint32_t RETRY_PAUSE_MS = 500;
-
-// Dwell path: short scan dwell, hint fallback enabled.
-constexpr uint32_t DWELL_SCAN_DWELL_MS = 200;
-constexpr bool DWELL_USE_HINT_FALLBACK = true;
-
-// Auto path: longer scan dwell, no hint fallback (auto-discovery only).
-constexpr uint32_t AUTO_SCAN_DWELL_MS = 500;
-constexpr bool AUTO_USE_HINT_FALLBACK = false;
-
 SemaphoreHandle_t wifiOperationMutex = nullptr;
 
 // Discovered AP BSSID+channel from scan during the current connect attempt.

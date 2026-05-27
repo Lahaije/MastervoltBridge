@@ -40,18 +40,6 @@ enum class InverterLinkState : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
-// Failure-streak thresholds that trigger state transitions
-// ---------------------------------------------------------------------------
-static constexpr uint32_t LINK_RETRYING_TO_BACKOFF_MS =  5u * 60u * 1000u;  //  5 min
-static constexpr uint32_t LINK_BACKOFF_TO_DORMANT_MS  = 20u * 60u * 1000u;  // 20 min
-
-// ---------------------------------------------------------------------------
-// Per-state polling intervals (base interval supplied by caller for ONLINE/RETRYING/STARTING)
-// ---------------------------------------------------------------------------
-static constexpr uint32_t LINK_BACKOFF_INTERVAL_MS =  60u * 1000u;   //  1 min
-static constexpr uint32_t LINK_DORMANT_INTERVAL_MS = 600u * 1000u;   // 10 min
-
-// ---------------------------------------------------------------------------
 // Free functions
 // ---------------------------------------------------------------------------
 

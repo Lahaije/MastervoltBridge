@@ -13,7 +13,6 @@
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
 constexpr bool ENABLE_INVERTER_POLLING = true;
-constexpr uint32_t DATA_MUTEX_TIMEOUT_MS = 10;
 
 // Map streak duration to target state.
 static InverterLinkState desiredStateFromStreak(uint32_t streakMs) {
