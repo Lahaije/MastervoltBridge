@@ -1,0 +1,15 @@
+
+<!--07-->
+<h1 id="Stp1id0">Setup your Mastervolt inverter</h1>
+
+<p id="Stp1id1">If you setup the internet connection for your inverter, it can start securely sending data to the Mastervolt Solar Monitor. This will give you helpful insights in the currentstatus and output of your system, as well as future firmware upgrades.</p>
+
+<form name="ConnOrSkip" method="post" enctype="multipart/form-data" >
+	<hr>
+	<input type="radio" name="ConnOrNot" id="online" value="online" checked><label for="online" class="radiolabel" id="Stp1id2">I wish to manually connect this inverter to my Wi-Fi network.</label><br>
+	<input type="radio" name="ConnOrNot" id="wps" value="wps"><label for="wps" class="radiolabel" id="Stp1id3">I wish to connect this inverter with WPS.</label><br>
+	<input type="radio" name="ConnOrNot" id="offline" value="offline"><label for="offline" class="radiolabel" id="Stp1id4">Don't connect this inverter to the internet now.</label>
+	<hr>
+	<input type="button" value="Next" id="Stp1Next" class="default right" onClick="SubmitMode();">
+	<input type="button" value="Back"  id="Stp1Back" class="" onClick="GetMainData(0);">
+</form>

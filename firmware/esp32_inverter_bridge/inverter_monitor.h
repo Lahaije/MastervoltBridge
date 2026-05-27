@@ -94,10 +94,6 @@ private:
   // Returns false if the mutex could not be acquired within 5 s.
   bool incrementCounterLocked(uint32_t& counter);
 
-  // Set the inverter link state. Centralizes all state updates.
-  // Called from runPollingTask() only.
-  void setInverterState(InverterLinkState newState);
-
   // Fired on every link-state transition. All once-per-transition actions
   // are dispatched here. Called from the polling task only.
   //
@@ -120,9 +116,9 @@ private:
   uint32_t failedPolls = 0;
   bool isInitialized = false;
 
-  // Link-state machine. Written only by the polling task; linkState and
-  // failureStartMs are uint-sized so reads from other tasks are atomic on ESP32.
-  InverterLinkState linkState = InverterLinkState::STARTING;
+  // Link-state machine tracking. The actual state lives in inverter_link_state.cpp
+  // as globalInverterState, accessed via setInverterState() and getInverterState().
+  // failureStartMs is written only by the polling task; reads from other tasks are atomic.
   uint32_t failureStartMs = 0;          // millis() when current streak began; 0 if none
   uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 

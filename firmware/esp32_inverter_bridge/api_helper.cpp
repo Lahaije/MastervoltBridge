@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "inverter_data.h"
+#include "inverter_monitor.h"
 
 String jsonEscape(const String& input) {
   String out;
@@ -138,6 +139,8 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
     .addString("total_yield", data.lifetimeEnergy)  // Total lifetime yield (via get_Total_Yield())
     .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
+    .addString("inverter_link_state", String(toString(InverterMonitor::getInstance().getLinkState())))
+    .addNumber("failure_streak_s", String(InverterMonitor::getInstance().getFailureStreakMs() / 1000UL))
     .build();
 }
 

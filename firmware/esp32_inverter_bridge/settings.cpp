@@ -1,7 +1,8 @@
 #include "settings.h"
 #include "logger.h"
 
-// TODO: Support dynamic IP discovery via mDNS hostname instead of hardcoded static IPs.
+// UIPEthernet 2.0.12 declares this extern but never defines it.
+const char* DHCP_HOSTNAME = "mv-bridge";
 // See TECHNICAL_DEBT.md for details. Scripts should discover bridge at mastervolt-bridge.local
 // or scan network for mDNS service instead of using hardcoded 192.168.1.48 / 10.0.0.1.
 

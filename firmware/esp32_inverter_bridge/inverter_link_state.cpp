@@ -1,5 +1,21 @@
 #include "inverter_link_state.h"
 
+// ---------------------------------------------------------------------------
+// Global state variable
+// ---------------------------------------------------------------------------
+static InverterLinkState globalInverterState = InverterLinkState::STARTING;
+
+// ---------------------------------------------------------------------------
+// State getter and setter
+// ---------------------------------------------------------------------------
+InverterLinkState getInverterState() {
+  return globalInverterState;
+}
+
+void setInverterState(InverterLinkState newState) {
+  globalInverterState = newState;
+}
+
 // Hook registry
 namespace {
   constexpr size_t MAX_STATE_CHANGE_HOOKS = 8;
@@ -13,21 +29,6 @@ namespace {
   StateChangeBinding hooks[MAX_STATE_CHANGE_HOOKS];
   size_t hookCount = 0;
 }  // namespace
-
-InverterLinkState linkStateFromStreak(uint32_t streakMs) {
-  if (streakMs == 0)                           return InverterLinkState::ONLINE;
-  if (streakMs >= LINK_BACKOFF_TO_DORMANT_MS)  return InverterLinkState::DORMANT;
-  if (streakMs >= LINK_RETRYING_TO_BACKOFF_MS) return InverterLinkState::BACKOFF;
-  return InverterLinkState::RETRYING;
-}
-
-uint32_t intervalForState(InverterLinkState s, uint32_t baseMs) {
-  switch (s) {
-    case InverterLinkState::BACKOFF:  return LINK_BACKOFF_INTERVAL_MS;
-    case InverterLinkState::DORMANT:  return LINK_DORMANT_INTERVAL_MS;
-    default:                          return baseMs;
-  }
-}
 
 const char* toString(InverterLinkState s) {
   switch (s) {

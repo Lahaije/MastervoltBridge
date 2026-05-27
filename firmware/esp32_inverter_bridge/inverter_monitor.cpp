@@ -11,6 +11,23 @@
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
 constexpr bool ENABLE_INVERTER_POLLING = true;
+
+// Map failure-streak duration to InverterLinkState. Used by runPollingTask().
+static InverterLinkState linkStateFromStreak(uint32_t streakMs) {
+  if (streakMs == 0)                           return InverterLinkState::ONLINE;
+  if (streakMs >= LINK_BACKOFF_TO_DORMANT_MS)  return InverterLinkState::DORMANT;
+  if (streakMs >= LINK_RETRYING_TO_BACKOFF_MS) return InverterLinkState::BACKOFF;
+  return InverterLinkState::RETRYING;
+}
+
+// Return poll interval for a given state. Used by runPollingTask().
+static uint32_t intervalForState(InverterLinkState s, uint32_t baseMs) {
+  switch (s) {
+    case InverterLinkState::BACKOFF:  return LINK_BACKOFF_INTERVAL_MS;
+    case InverterLinkState::DORMANT:  return LINK_DORMANT_INTERVAL_MS;
+    default:                          return baseMs;
+  }
+}
 }  // namespace
 
 InverterMonitor::InverterMonitor() {
@@ -83,10 +100,6 @@ bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
   return true;
 }
 
-void InverterMonitor::setInverterState(InverterLinkState newState) {
-  linkState = newState;
-}
-
 void InverterMonitor::runPollingTask() {
   failureStartMs = 0;
   setInverterState(InverterLinkState::STARTING);
@@ -131,7 +144,7 @@ void InverterMonitor::runPollingTask() {
     // -------------------------------------------------------------------------
     // Link-state machine: evaluate next state from poll outcome
     // -------------------------------------------------------------------------
-    InverterLinkState prevState = linkState;
+    InverterLinkState prevState = getInverterState();
     InverterLinkState newState;
     uint32_t streakMs = 0;
 
@@ -200,7 +213,7 @@ unsigned long InverterMonitor::getLastUpdateMs() {
 }
 
 InverterLinkState InverterMonitor::getLinkState() {
-  return linkState;
+  return getInverterState();
 }
 
 uint32_t InverterMonitor::getFailureStreakMs() {

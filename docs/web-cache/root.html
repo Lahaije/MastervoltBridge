@@ -1,0 +1,94 @@
+
+<!DOCTYPE html>
+<!--[if lt IE 7 ]><html class="ie ie6" lang="en"> <![endif]-->
+<!--[if IE 7 ]><html class="ie ie7" lang="en"> <![endif]-->
+<!--[if IE 8 ]><html class="ie ie8" lang="en"> <![endif]-->
+<!--[if (gte IE 9)|!(IE)]><!--><html lang="en"> <!--<![endif]-->
+<head>
+
+	<!-- Basic Page Needs
+  ================================================== -->
+	<META HTTP-EQUIV="Pragma" CONTENT="no-cache">
+	<META HTTP-EQUIV="Expires" CONTENT="-1">
+	<title></title>
+	<meta name="description" content="Setup your Mastervolt solar inverter">
+	<meta name="author" content="">
+
+	<!-- Mobile Specific Metas
+  ================================================== -->
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+	<meta name="apple-mobile-web-app-title" content="My Soladin">
+
+	<!-- CSS
+  ================================================== -->
+	<link rel="stylesheet"  href="soladin.css">
+	<!-- Favicons
+	================================================== -->
+	<link rel="shortcut icon" href="favicon.ico">
+	<link rel="apple-touch-icon" href="apple-touch-icon.png">
+	<link rel="apple-touch-icon" sizes="72x72" href="apple-touch-icon-72x72.png">
+	<link rel="apple-touch-icon" sizes="114x114" href="apple-touch-icon-114x114.png">
+
+	<!-- Scripts
+	================================================== -->
+	<script type="text/javascript" src="Mastervolt.js"></script>
+</head>
+<body onload="FirstLoad();">
+
+
+	<!-- Template Layout
+	================================================== -->
+
+	<div id="site-wrapper">
+
+		<div id="header">
+			<a id="mv-logo" href="."></a>
+			<a id="mv-title" href=".">
+				<h1>This Product</h1>
+			</a>
+		</div><!-- header -->
+
+		<div id="page-wrapper">
+
+			<div id="sidebar">
+
+				<ul class="submenu" id="submenu">
+					<li id="SetupTab" class="advanced hide"><a href="#" onClick="GetMainData(0);"><span class="submenu-label" id="main0">Setup</span></a></li>
+					<li id="StatusTab" class="advanced hide"><a href="#" onClick="GetMainData(8);"><span class="submenu-label" id="main1">Status</span></a></li>
+					<li id="UpgradeTab" class="advanced hide"><a href="#" onClick="GetMainData(9);"><span class="submenu-label" id="main2">Upgrade</span></a></li>
+					<li id="OptionsTab" class="advanced hide"><a href="#" onClick="GetMainData(10);"><span class="submenu-label" id="main3">Options</span></a></li>
+					<li id="MonitorTab" class="advanced hide"><a href="#" onClick="GetMainData(11);"><span class="submenu-label" id="main4">Monitoring</span></a></li>
+					<li id="InstallerTab" class="advanced hide"><a href="#" onClick="GetMainData(12);"><span class="submenu-label" id="main5">Country Settings</span></a></li>
+					<li id="DiagnosticTab" class="advanced hide"><a href="#" onClick="GetMainData(13);"><span class="submenu-label" id="main6">Diagnostics</span></a></li>
+				</ul><!-- submenu -->
+
+			</div><!-- sidebar -->
+<div  id="content-wrapper">
+</div>
+		</div><!-- page-wrapper -->
+
+		<div id="footer">
+
+			<a id="login" class="" href="#" onClick="Getpassword();"><span id="main7">Advanced Settings<span></a>
+			<form name="frmLogin" method="post" enctype="multipart/form-data" >
+			<input type="hidden" name="password1"></input>
+			</form>
+			<hr>
+			<form name = "f1" method="post" enctype="multipart/form-data">
+			<input type="hidden" name="LanguageTrans"></input>
+			</form>
+			<select id="lang" name="lang" onChange="LangSubmit();">
+				<option value="0" selected id="enlan">English</option>
+				<option value="1" id="gerlan">Deutsch</option>
+				<option value="2" id="frnlan">Fran&ccedil;ais</option>
+				<option value="3" id="spnlan">Espa&ntilde;ol</option>
+				<option value="4" id="itllan">Italiano</option>
+				<option value="5" id="nedlan">Nederlands</option>
+			</select>
+		</div><!-- footer -->
+
+	</div><!-- site-wrapper -->
+<!-- End Document
+================================================== -->
+</body>
+</html>

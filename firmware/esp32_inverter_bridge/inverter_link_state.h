@@ -55,21 +55,21 @@ static constexpr uint32_t LINK_DORMANT_INTERVAL_MS = 600u * 1000u;   // 10 min
 // Free functions
 // ---------------------------------------------------------------------------
 
-/**
- * Map a failure-streak duration to the appropriate InverterLinkState.
- * streakMs == 0 means the last poll succeeded → ONLINE.
- */
-InverterLinkState linkStateFromStreak(uint32_t streakMs);
-
-/**
- * Return the poll interval for the given state.
- * baseMs is used for STARTING / ONLINE / RETRYING (states that stay at the
- * normal poll rate). BACKOFF and DORMANT have fixed intervals defined above.
- */
-uint32_t intervalForState(InverterLinkState s, uint32_t baseMs);
-
 /** Human-readable name of a state (e.g. "ONLINE"). Never returns nullptr. */
 const char* toString(InverterLinkState s);
+
+// Forward declaration to avoid circular include (inverter_monitor.h includes this file)
+class InverterMonitor;
+
+// ---------------------------------------------------------------------------
+// State getter and setter — global state management
+// ---------------------------------------------------------------------------
+
+/** Get the current inverter link state. */
+InverterLinkState getInverterState();
+
+/** Set the inverter link state. Centralizes all state mutations. */
+void setInverterState(InverterLinkState newState);
 
 // ---------------------------------------------------------------------------
 // State-change hooks — extensible callbacks for transitions.
