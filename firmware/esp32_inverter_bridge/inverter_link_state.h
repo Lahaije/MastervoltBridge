@@ -8,9 +8,9 @@
 //
 //  State      Poll interval      Entry condition
 //  ---------  -----------------  --------------------------------------------
-//  STARTING   base (15 s)        Boot; no successful poll has occurred yet
-//  ONLINE     base (15 s)        Last poll succeeded
-//  RETRYING   base (15 s)        Failure streak  < LINK_RETRYING_TO_BACKOFF_MS
+//  STARTING   base (20 s)        Boot; no successful poll has occurred yet
+//  ONLINE     base (20 s)        Last poll succeeded
+//  RETRYING   base (20 s)        Failure streak  < LINK_RETRYING_TO_BACKOFF_MS
 //  BACKOFF    LINK_BACKOFF (1 m) Failure streak  5 – 20 min
 //  DORMANT    LINK_DORMANT (10m) Failure streak >= LINK_BACKOFF_TO_DORMANT_MS
 //
@@ -68,22 +68,46 @@ class InverterMonitor;
 /** Get the current inverter link state. */
 InverterLinkState getInverterState();
 
-/** Set the inverter link state. Centralizes all state mutations. */
+/** Set the inverter link state and dispatch hooks if the state changed. */
 void setInverterState(InverterLinkState newState);
 
 // ---------------------------------------------------------------------------
 // State-change hooks — extensible callbacks for transitions.
-// Hooks allow external code to react to state changes without modifying
-// inverter_monitor.cpp. Each hook is called when transitioning from->to.
+// Two hook types are supported:
+//
+//  1. Transition hook  — fires only on a specific from -> to pair.
+//     Register with registerStateChangeHook(from, to, cb).
+//
+//  2. Entry hook       — fires whenever ANY transition enters a target state,
+//                        regardless of where it came from.
+//     Register with registerStateEntryHook(to, cb).
+//
+// Both types share the same callback signature. All registered hooks for a
+// given transition are dispatched by dispatchStateChangeHooks().
 // ---------------------------------------------------------------------------
 
-/** Hook function signature: called on matching state transition. */
-typedef void (*StateChangeHook)(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
+/** Shared callback signature for both hook types. */
+typedef void (*StateChangeHook)(InverterLinkState from, InverterLinkState to);
 
-/** Register a hook for a specific transition. Returns false if no more slots. */
-bool registerStateChangeHook(InverterLinkState from, InverterLinkState to, StateChangeHook callback);
+/** Register a hook for a specific from -> to transition. Returns false if no slots remain. */
+bool registerStateChangeHook(InverterLinkState from,
+                             InverterLinkState to,
+                             StateChangeHook callback,
+                             const char* hookName = nullptr);
 
-/** Dispatch all registered hooks for a transition. Called from inverter_monitor.cpp. */
-void dispatchStateChangeHooks(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
+/** Register a hook that fires on ANY transition into targetState. Returns false if no slots remain. */
+bool registerStateEntryHook(InverterLinkState targetState,
+                            StateChangeHook callback,
+                            const char* hookName = nullptr);
+
+/** Dispatch all matching hooks for a transition. Called from inverter_monitor.cpp. */
+void dispatchStateChangeHooks(InverterLinkState from, InverterLinkState to);
+
+// Compile-time helpers: function name is stringized at compile time.
+#define REGISTER_STATE_CHANGE_HOOK(fromState, toState, hookFn) \
+  registerStateChangeHook((fromState), (toState), (hookFn), #hookFn)
+
+#define REGISTER_STATE_ENTRY_HOOK(targetState, hookFn) \
+  registerStateEntryHook((targetState), (hookFn), #hookFn)
 
 #endif  // INVERTER_LINK_STATE_H

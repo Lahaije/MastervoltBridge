@@ -25,9 +25,17 @@ wifi_bridge.cpp/h (core network layer)
 inverter_data.cpp/h (data model)
   └── HomeData struct + getInverterData() factory
 
+inverter_link_state.cpp/h (link-state FSM)
+  ├── InverterLinkState enum: STARTING, ONLINE, RETRYING, BACKOFF, DORMANT
+  ├── setInverterState() — sets state + dispatches hooks
+  ├── Hook registry: registerStateChangeHook(), registerStateEntryHook()
+  └── Thresholds: 5 min → BACKOFF, 20 min → DORMANT
+
 inverter_monitor.cpp/h (business logic)
-  ├── InverterMonitor singleton — FreeRTOS polling task (20s interval)
+  ├── InverterMonitor singleton — FreeRTOS polling task (20s base interval)
   ├── calls WifiConnectionManager::ensureConnected() before each poll
+  ├── linkStateFromStreak() — reconciles FSM state from failure duration
+  ├── Hook callbacks: applyIntervalForState, loadSettingsOnBoot, updateAllInverterParam
   └── caches HomeData; exposes getLatestHomeData(), setPower(), fetchPath()
 
 ethernet_bridge.cpp/h (network layer)
@@ -45,6 +53,7 @@ esp32_inverter_bridge.ino (main entry)
 
 settings.cpp/h — all global constants
 logger.h — 1000-entry circular log buffer with ms timestamps
+mqtt_bridge.cpp/h — MQTT HA integration (not yet active in firmware)
 ```
 
 ### Key Design Pattern: WifiConnectionManager
@@ -108,12 +117,38 @@ Parsed from inverter `GET /home`: 8 newline-delimited fields.
 ```cpp
 static InverterMonitor& getInstance();
 void initialize();
+void shutdown();
 bool getLatestHomeData(HomeData& dataOut);
 unsigned long getLastUpdateMs();
 bool setPower(int watts, String& responseBody, int& httpCode, String& errorMessage);
 bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
+InverterLinkState getLinkState();
+uint32_t getFailureStreakMs();
+uint32_t getRetryIntervalMs();
 ```
-`dataMutex` protects all cached data; all lock attempts timeout after 5 s.
+`dataMutex` protects all cached data; all lock attempts timeout after 10 ms.
+
+### InverterLinkState FSM (inverter_link_state.h)
+
+Five-state FSM driven by the polling failure streak duration:
+
+| State | Poll Interval | Entry Condition |
+|---|---|---|
+| `STARTING` | 20 s (base) | Boot; no successful poll yet |
+| `ONLINE` | 20 s (base) | Last poll succeeded |
+| `RETRYING` | 20 s (base) | Failure streak < 5 min |
+| `BACKOFF` | 1 min | Failure streak 5–20 min |
+| `DORMANT` | 10 min | Failure streak >= 20 min |
+
+**Hook architecture** — all state-dependent behavior is driven by hooks registered in `InverterMonitor::initialize()`:
+- **Entry hooks** (`applyIntervalForState`) — adjust poll interval on any state entry.
+- **Transition hooks** — `STARTING→ONLINE` loads settings on first boot; `BACKOFF/DORMANT→ONLINE` refreshes cached settings after recovery.
+
+Register hooks at compile time using macros:
+```cpp
+REGISTER_STATE_ENTRY_HOOK(InverterLinkState::BACKOFF, applyIntervalForState);
+REGISTER_STATE_CHANGE_HOOK(InverterLinkState::STARTING, InverterLinkState::ONLINE, loadSettingsOnBoot);
+```
 
 ## Configuration (settings.cpp)
 
@@ -123,12 +158,16 @@ bool fetchPath(const String& path, String& responseBody, int& httpCode, String& 
 | `INVERTER_WIFI_PASSWORD` | `""` | Empty = open network |
 | `INVERTER_HOST` | `"10.0.0.1"` | Inverter IP |
 | `API_PORT` | `8080` | Ethernet API port |
+| `DHCP_HOSTNAME` | `"mv-bridge"` | Ethernet DHCP hostname |
 | `PIN_INVERTER_WIFI_WAKE` | `36` | GPIO for wake pulse |
 | `PULSE_HIGH_MS` | `50` | Pulse HIGH duration |
 | `PULSE_GAP_MS` | `50` | Gap between pulses |
-| `WIFI_BRIDGE_POLL_INTERVAL_MS` | `20000` | Poll interval |
+| `WIFI_BRIDGE_POLL_INTERVAL_MS` | `20000` | Base poll interval (ONLINE/RETRYING/STARTING) |
 | `WIFI_BRIDGE_HTTP_TIMEOUT_MS` | `3500` | HTTP request timeout |
 | `INVERTER_MAX_POWER_WATTS` | `1575` | Power set limit |
+| `API_CLIENT_TIMEOUT_MS` | `250` | Max time to read API request body |
+| `ETHERNET_INIT_RETRY_MS` | `5000` | Ethernet initialization retry interval |
+| `MAIN_LOOP_SLEEP_MS` | `5` | Main loop idle sleep |
 
 ## Build & Upload
 
@@ -174,8 +213,12 @@ python skills/firmware-upload/upload_firmware.py
 5. Update `docs/API_REFERENCE.md`, `README.md`, and `skills/api-validation/validate_api.py`
 
 ### Change Polling Interval
-Edit `WIFI_BRIDGE_POLL_INTERVAL_MS` in `settings.cpp` (normal rate, stage 0).  
-To adjust the overnight backoff schedule, edit `BACKOFF_STAGES[]` in `inverter_monitor.cpp`.
+Edit `WIFI_BRIDGE_POLL_INTERVAL_MS` in `settings.cpp` (base rate for ONLINE/RETRYING/STARTING states).  
+To adjust the backoff schedule, edit the thresholds in `inverter_link_state.h`:
+- `LINK_RETRYING_TO_BACKOFF_MS` — when to enter BACKOFF (default 5 min)
+- `LINK_BACKOFF_TO_DORMANT_MS` — when to enter DORMANT (default 20 min)
+- `LINK_BACKOFF_INTERVAL_MS` — poll interval during BACKOFF (default 1 min)
+- `LINK_DORMANT_INTERVAL_MS` — poll interval during DORMANT (default 10 min)
 
 ### Debug WiFi Issues
 Run the log analysis skill for a full breakdown (session summary, episode grouping, path A/B stats):
@@ -206,7 +249,7 @@ Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.m
 
 1. **Never call `WiFi.status()` directly** — use `WifiConnectionManager::getInstance().ensureConnected()`. It pulses and reconnects; `WiFi.status()` does neither.
 2. **Include order**: `inverter_monitor.cpp` needs `wifi_bridge.h` before `fetchInverterData()`.
-3. **Mutex timeouts**: Keep lock time short. Threads waiting >5 s will fail silently.
+3. **Mutex timeouts**: Keep lock time short. Threads waiting >10 ms will fail silently (`DATA_MUTEX_TIMEOUT_MS = 10` in `inverter_monitor.cpp`).
 4. **502 = WiFi not connected** (usually). Check `/api/health` first; `/api/info` also returns 502 for ~20 s after boot until first poll completes.
 5. **Pulse state machine**: single press toggles WiFi. `/wifi/off` = one press (OFF). `/pulse` = double-press (OFF→ON). Calling `/pulse` while connected will disconnect then reconnect.
 6. **Power limit**: `setPower()` validates 0–`INVERTER_MAX_POWER_WATTS` before the HTTP request.
@@ -232,7 +275,7 @@ Key log patterns (quick reference — full table in `skills/log-analysis/SKILL.m
 ## File Map
 
 **Firmware** (`firmware/esp32_inverter_bridge/`):
-`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_monitor.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `settings.{h,cpp}`, `logger.h`
+`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_link_state.{h,cpp}`, `inverter_monitor.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `settings.{h,cpp}`, `mqtt_bridge.{h,cpp}`, `logger.h`
 
 **Documentation** (`docs/`):
 - `SETUP_README.md` — Hardware assembly, wiring, prerequisites, flash instructions

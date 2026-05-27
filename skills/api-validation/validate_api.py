@@ -67,7 +67,7 @@ GET_CHECKS: list[dict[str, Any]] = [
     {
         "path": "/api/info",
         "description": "Inverter telemetry (may be 502 if inverter WiFi is off)",
-        "required_keys": ["power", "total_yield", "daily_yield"],
+        "required_keys": ["power", "total_yield", "daily_yield", "inverter_link_state", "failure_streak_s"],
         "allow_502": True,
     },
     {

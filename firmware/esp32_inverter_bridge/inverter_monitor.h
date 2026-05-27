@@ -78,7 +78,7 @@ public:
 
 private:
   InverterMonitor();
-  ~InverterMonitor();
+  ~InverterMonitor() = default;
 
   // Prevent copying
   InverterMonitor(const InverterMonitor&) = delete;
@@ -90,17 +90,22 @@ private:
   // Polling task implementation
   void runPollingTask();
 
+  // Reconcile global link state from streak duration.
+  // streakMs determines the target state and is used for transition logging.
+  // 0 forces ONLINE after successful reads.
+  void linkStateFromStreak(uint32_t streakMs);
+
   // Increment a counter (e.g. successfulPolls / failedPolls) under dataMutex.
-  // Returns false if the mutex could not be acquired within 5 s.
+  // Returns false if the mutex could not be acquired within the configured timeout.
   bool incrementCounterLocked(uint32_t& counter);
 
-  // Fired on every link-state transition. All once-per-transition actions
-  // are dispatched here. Called from the polling task only.
-  //
-  // Current bindings:
-  //   STARTING -> ONLINE           : fetchAndCacheSettings()
-  //   BACKOFF|DORMANT -> ONLINE    : fetchAndCacheSettings()
-  void onLinkStateTransition(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
+  // State-entry hook registered at initialize() time.
+  // Updates currentRetryIntervalMs whenever the FSM enters a new state.
+  static void applyIntervalForState(InverterLinkState from, InverterLinkState to);
+
+  // Hook callbacks for state-dependent side effects.
+  static void loadSettingsOnBoot(InverterLinkState from, InverterLinkState to);
+  static void updateAllInverterParam(InverterLinkState from, InverterLinkState to);
 
   // Fetch shadow state and power limit live from the inverter and update
   // the in-memory cache. Called on first-ever connection and after recovery

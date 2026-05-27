@@ -6,18 +6,26 @@
 #include "logger.h"
 #include "wifi_bridge.h"
 
-// linkStateFromStreak(), intervalForState(), toString() live in inverter_link_state.cpp
+// State-transition logic (linkStateFromStreak, intervalForState) lives here in
+// inverter_monitor.cpp — it is the monitor's decision-making, not state storage.
+// State storage, hook registry, and toString() live in inverter_link_state.cpp.
 
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
 constexpr bool ENABLE_INVERTER_POLLING = true;
+constexpr uint32_t DATA_MUTEX_TIMEOUT_MS = 10;
 
-// Map failure-streak duration to InverterLinkState. Used by runPollingTask().
-static InverterLinkState linkStateFromStreak(uint32_t streakMs) {
-  if (streakMs == 0)                           return InverterLinkState::ONLINE;
-  if (streakMs >= LINK_BACKOFF_TO_DORMANT_MS)  return InverterLinkState::DORMANT;
-  if (streakMs >= LINK_RETRYING_TO_BACKOFF_MS) return InverterLinkState::BACKOFF;
-  return InverterLinkState::RETRYING;
+// Map streak duration to target state.
+static InverterLinkState desiredStateFromStreak(uint32_t streakMs) {
+  InverterLinkState expectedState = InverterLinkState::RETRYING;
+  if (streakMs == 0) {
+    expectedState = InverterLinkState::ONLINE;
+  } else if (streakMs >= LINK_BACKOFF_TO_DORMANT_MS) {
+    expectedState = InverterLinkState::DORMANT;
+  } else if (streakMs >= LINK_RETRYING_TO_BACKOFF_MS) {
+    expectedState = InverterLinkState::BACKOFF;
+  }
+  return expectedState;
 }
 
 // Return poll interval for a given state. Used by runPollingTask().
@@ -31,10 +39,6 @@ static uint32_t intervalForState(InverterLinkState s, uint32_t baseMs) {
 }  // namespace
 
 InverterMonitor::InverterMonitor() {
-}
-
-InverterMonitor::~InverterMonitor() {
-  shutdown();
 }
 
 void InverterMonitor::initialize() {
@@ -57,6 +61,19 @@ void InverterMonitor::initialize() {
       0
     );
   }
+
+  // Register state-entry hook: updates currentRetryIntervalMs on every state change.
+  // Uses an entry hook (fires on ANY transition into the target state) so a single
+  // registration per interval tier covers all possible predecessor states.
+  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::BACKOFF,  applyIntervalForState);
+  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::DORMANT,  applyIntervalForState);
+  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::ONLINE,   applyIntervalForState);
+  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::RETRYING, applyIntervalForState);
+
+  // Register transition hooks for ONLINE side effects.
+  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::STARTING, InverterLinkState::ONLINE, loadSettingsOnBoot);
+  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::BACKOFF,  InverterLinkState::ONLINE, updateAllInverterParam);
+  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::DORMANT,  InverterLinkState::ONLINE, updateAllInverterParam);
 
   isInitialized = true;
   if (ENABLE_INVERTER_POLLING) {
@@ -92,7 +109,10 @@ bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
   if (dataMutex == nullptr) {
     return false;
   }
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) {
+    if (debugMode) {
+      appLogger.log("[INVERTER-MONITOR] dataMutex timeout in incrementCounterLocked");
+    }
     return false;
   }
   counter++;
@@ -100,10 +120,28 @@ bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
   return true;
 }
 
+void InverterMonitor::linkStateFromStreak(uint32_t streakMs) {
+  InverterLinkState currentState = getInverterState();
+  InverterLinkState expectedState = desiredStateFromStreak(streakMs);
+
+  if (currentState == expectedState) {
+    return;
+  }
+
+  if (debugMode) {
+    appLogger.log(String("[INVERTER-MONITOR] State: ") + toString(currentState) +
+                  " -> " + toString(expectedState) +
+                  "  streak=" + (streakMs / 1000) + "s" +
+                  "  interval=" + (currentRetryIntervalMs / 1000) + "s");
+  }
+  setInverterState(expectedState);
+}
+
 void InverterMonitor::runPollingTask() {
   failureStartMs = 0;
-  setInverterState(InverterLinkState::STARTING);
-  currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+  // globalInverterState is already STARTING at boot; set interval explicitly
+  // since no state transition fires at boot (STARTING -> STARTING is a no-op).
+  currentRetryIntervalMs = intervalForState(InverterLinkState::STARTING, WIFI_BRIDGE_POLL_INTERVAL_MS);
 
   while (true) {
     bool iterationOk = false;
@@ -120,7 +158,7 @@ void InverterMonitor::runPollingTask() {
       if (ok) {
         HomeData parsedData;
         if (parseHomeResponse(rawResponse, parsedData)) {
-          if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+          if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) == pdTRUE) {
             cachedData = parsedData;
             lastUpdateMs = millis();
             successfulPolls++;
@@ -129,6 +167,8 @@ void InverterMonitor::runPollingTask() {
             appLogger.log(String("[INVERTER-MONITOR] Poll #") + successfulPolls +
                           ": Status=" + parsedData.operatingStatus +
                           " Power=" + parsedData.instantaneousPower + "W");
+          } else if (dataMutex != nullptr && debugMode) {
+            appLogger.log("[INVERTER-MONITOR] dataMutex timeout while caching /home poll result");
           }
           iterationOk = true;
         } else {
@@ -141,41 +181,19 @@ void InverterMonitor::runPollingTask() {
       }
     }
 
-    // -------------------------------------------------------------------------
-    // Link-state machine: evaluate next state from poll outcome
-    // -------------------------------------------------------------------------
-    InverterLinkState prevState = getInverterState();
-    InverterLinkState newState;
-    uint32_t streakMs = 0;
-
     if (iterationOk) {
-      streakMs = (failureStartMs != 0) ? (millis() - failureStartMs) : 0;
-      newState = InverterLinkState::ONLINE;
+      // Poll succeeded — streak ends. Ensure state is ONLINE.
+      uint32_t streakMs = (failureStartMs != 0) ? (millis() - failureStartMs) : 0;
       failureStartMs = 0;
+      linkStateFromStreak(0);
     } else {
+      // Poll failed — accumulate streak and check thresholds.
       if (failureStartMs == 0) failureStartMs = millis();
-      streakMs = millis() - failureStartMs;
-      newState = linkStateFromStreak(streakMs);  // see inverter_link_state.h
+      uint32_t streakMs = millis() - failureStartMs;
+      linkStateFromStreak(streakMs);
     }
 
-    // ---- Apply polling-interval change on state change --------------------
-    // intervalForState() maps BACKOFF->1 min, DORMANT->10 min, else baseMs.
-    // This is the only place currentRetryIntervalMs is mutated.
-    uint32_t nextIntervalMs = intervalForState(newState, WIFI_BRIDGE_POLL_INTERVAL_MS);
-    currentRetryIntervalMs = nextIntervalMs;
-
-    if (newState != prevState) {
-      setInverterState(newState);
-      appLogger.log(String("[INVERTER-MONITOR] State: ") + toString(prevState) +
-                    " -> " + toString(newState) +
-                    "  streak=" + (streakMs / 1000) + "s" +
-                    "  interval=" + (nextIntervalMs / 1000) + "s");
-
-      // ---- Dispatch on-transition actions (see onLinkStateTransition) -----
-      onLinkStateTransition(prevState, newState, streakMs);
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(nextIntervalMs));
+    vTaskDelay(pdMS_TO_TICKS(currentRetryIntervalMs));
   }
 }
 
@@ -185,7 +203,7 @@ bool InverterMonitor::getLatestHomeData(HomeData& dataOut) {
     return false;
   }
 
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) {
     appLogger.log("[INVERTER-MONITOR] Failed to acquire data mutex");
     return false;
   }
@@ -204,7 +222,7 @@ unsigned long InverterMonitor::getLastUpdateMs() {
   if (dataMutex == nullptr) {
     return 0;
   }
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) {
     return 0;
   }
   unsigned long result = lastUpdateMs;
@@ -228,36 +246,37 @@ uint32_t InverterMonitor::getRetryIntervalMs() {
 }
 
 // -----------------------------------------------------------------------------
-// onLinkStateTransition — canonical list of all on-change side-effects.
+// applyIntervalForState — state-entry hook registered at initialize().
 //
-//  from         to         Action
-//  ----------   --------   ---------------------------------------------------
-//  STARTING  -> ONLINE   : fetchAndCacheSettings()  (first-ever connection)
-//  ONLINE    -> RETRYING : (none — first failure, wait and see)
-//  RETRYING  -> ONLINE   : (none — quick recovery; settings still valid)
-//  RETRYING  -> BACKOFF  : (none — interval change already applied above)
-//  BACKOFF   -> ONLINE   : fetchAndCacheSettings()  (recovery from outage)
-//  BACKOFF   -> DORMANT  : (none — interval change already applied above)
-//  DORMANT   -> ONLINE   : fetchAndCacheSettings()  (recovery from outage)
+// Fires on every state transition (entry hook: any -> targetState).
+// Updates currentRetryIntervalMs to the interval appropriate for the new state.
+// This is the ONLY place currentRetryIntervalMs is written after boot.
+//
+//  to          interval
+//  ---------   --------------------------
+//  BACKOFF     LINK_BACKOFF_INTERVAL_MS  (1 min)
+//  DORMANT     LINK_DORMANT_INTERVAL_MS  (10 min)
+//  other       WIFI_BRIDGE_POLL_INTERVAL_MS (base, 15 s)
 // -----------------------------------------------------------------------------
-void InverterMonitor::onLinkStateTransition(InverterLinkState from,
-                                            InverterLinkState to,
-                                            uint32_t streakMs) {
-  if (to == InverterLinkState::ONLINE) {
-    if (from == InverterLinkState::STARTING) {
-      appLogger.log("[INVERTER-MONITOR] First connection; fetching shadow + power limit");
-      fetchAndCacheSettings();
-    } else if (from == InverterLinkState::BACKOFF || from == InverterLinkState::DORMANT) {
-      appLogger.log(String("[INVERTER-MONITOR] Recovered after ") +
-                    (streakMs / 1000) + "s outage; refreshing shadow + power limit");
-      fetchAndCacheSettings();
-    }
-    // RETRYING -> ONLINE: quick recovery, no action needed
-  }
-  // All other transitions: interval change was already handled by intervalForState().
+void InverterMonitor::applyIntervalForState(InverterLinkState /*from*/,
+                                            InverterLinkState to) {
+  getInstance().currentRetryIntervalMs = intervalForState(to, WIFI_BRIDGE_POLL_INTERVAL_MS);
+}
 
-  // Dispatch registered hooks (optional; allows external code to react)
-  dispatchStateChangeHooks(from, to, streakMs);
+// -----------------------------------------------------------------------------
+// Transition hook: first-ever ONLINE after boot.
+void InverterMonitor::loadSettingsOnBoot(InverterLinkState /*from*/,
+                                         InverterLinkState /*to*/) {
+  appLogger.log("[INVERTER-MONITOR] First connection; fetching shadow + power limit");
+  getInstance().fetchAndCacheSettings();
+}
+
+// Transition hook: ONLINE recovery after prolonged outage.
+void InverterMonitor::updateAllInverterParam(InverterLinkState from,
+                                             InverterLinkState /*to*/) {
+  appLogger.log(String("[INVERTER-MONITOR] Recovered from ") + toString(from) +
+                "; refreshing shadow + power limit");
+  getInstance().fetchAndCacheSettings();
 }
 
 void InverterMonitor::fetchAndCacheSettings() {
@@ -268,10 +287,12 @@ void InverterMonitor::fetchAndCacheSettings() {
     if (fetchInverterData("GET", "/shadow", "", body, code, err) && code == 200) {
       body.trim();
       bool enabled = body.length() > 0 && body[0] == '1';
-      if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+      if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) == pdTRUE) {
         shadowOn_ = enabled;
         shadowKnown_ = true;
         xSemaphoreGive(dataMutex);
+      } else if (dataMutex != nullptr && debugMode) {
+        appLogger.log("[INVERTER-MONITOR] dataMutex timeout while caching /shadow state");
       }
       appLogger.log(String("[INVERTER-MONITOR] Shadow read: ") + (enabled ? "ON" : "OFF"));
     } else {
@@ -287,10 +308,12 @@ void InverterMonitor::fetchAndCacheSettings() {
       int watts = body.toInt();
       if (watts >= 0 && watts <= INVERTER_MAX_POWER_WATTS) {
         uint16_t w = static_cast<uint16_t>(watts);
-        if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) == pdTRUE) {
           powerLimitW_ = w;
           powerLimitKnown_ = true;
           xSemaphoreGive(dataMutex);
+        } else if (dataMutex != nullptr && debugMode) {
+          appLogger.log("[INVERTER-MONITOR] dataMutex timeout while caching /power limit");
         }
         appLogger.log(String("[INVERTER-MONITOR] Power limit read: ") + watts + "W");
       } else {
