@@ -12,11 +12,13 @@ http://192.168.1.48:8080
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | / | API discovery |
+| GET | / | API discovery (current) -> fixed HTML Web UI (planned) |
+| GET | /api | API discovery JSON (planned stable path) |
 | GET | /api/health | Bridge network/inverter status |
 | GET | /api/logs | Log buffer (up to 1000 entries) |
 | GET | /api/info | Cached inverter /home telemetry |
 | POST | /api/power | Set inverter power |
+| POST | /api/shadow | Enable/disable inverter shadow function |
 | POST | /api/inverter/fetch | Fetch inverter endpoint |
 | POST | /wifi/off | Single button press if WiFi is connected |
 | GET | /pulse | Recovery pulse + connection-time measurement |
@@ -25,6 +27,27 @@ http://192.168.1.48:8080
 ## GET /
 
 Returns discovery JSON containing all current endpoints.
+
+Planned requirement (documentation-first, not yet implemented):
+
+- GET / must return a fixed HTML dashboard page.
+- HTML must be stored as one compile-time constant blob (single raw string literal).
+- HTML response path must not build content dynamically with String concatenation.
+- Response must be served in bounded chunks with connection checks on each write.
+- Content-Length must be derived from compile-time size (`sizeof(WEB_UI_HTML) - 1`).
+- CSS and JS stay inline in the same HTML blob (single request, no external assets).
+
+Design intent:
+
+- Prevent heap fragmentation on long-running devices.
+- Keep ENC28J60/UIPEthernet socket usage predictable and stable.
+
+## GET /api
+
+Planned stable discovery endpoint for machine clients.
+
+- Returns discovery JSON containing all current endpoints.
+- This endpoint remains JSON even after GET / becomes HTML.
 
 ## GET /api/health
 
@@ -86,6 +109,48 @@ Validation:
 
 - integer only
 - range 0 to 1575
+
+Response (applied):
+
+{"requested_power_watts":1200,"applied":true,"inverter_http_status":200,"inverter_response":"...","readback_power_watts":1200}
+
+Response (deferred — inverter temporarily unreachable):
+
+HTTP 202
+
+{"deferred":true,"desired_power_watts":1200,"reason":"..."}
+
+The deferred value is queued and applied automatically on the next successful poll.
+
+If inverter WiFi is down, returns 502.
+
+## POST /api/shadow
+
+Enable or disable the inverter shadow function.
+
+Body:
+
+{"enabled":true}
+
+or
+
+{"enabled":false}
+
+Validation:
+
+- `enabled` field must be a boolean (true/false) or numeric (1/0)
+
+Response (applied):
+
+{"requested_shadow":true,"applied":true,"inverter_http_status":200,"inverter_response":"...","readback_shadow":true}
+
+Response (deferred — inverter temporarily unreachable):
+
+HTTP 202
+
+{"deferred":true,"desired_shadow":true,"reason":"..."}
+
+The deferred value is queued and applied automatically on the next successful poll.
 
 If inverter WiFi is down, returns 502.
 
@@ -166,11 +231,13 @@ When inverter WiFi is not available:
 
 - GET /api/info -> 502
 - POST /api/power -> 502
+- POST /api/shadow -> 502
 - POST /api/inverter/fetch -> 502
 
 Still expected to respond:
 
 - /
+- /api
 - /api/health
 - /api/logs
 - /wifi/off

@@ -53,7 +53,7 @@ extern const uint32_t LINK_BACKOFF_TO_DORMANT_MS;      // Streak duration to ent
 extern const uint32_t LINK_BACKOFF_INTERVAL_MS;        // Poll interval during BACKOFF (1 min)
 extern const uint32_t LINK_DORMANT_INTERVAL_MS;        // Poll interval during DORMANT (10 min)
 
-// Mutex timeout for InverterMonitor data access
+// Mutex timeout for InverterController data access
 extern const uint32_t DATA_MUTEX_TIMEOUT_MS;
 
 // =============================================================================
@@ -65,7 +65,9 @@ extern const uint8_t PIN_ETH_MISO;
 extern const uint8_t PIN_ETH_MOSI;
 extern const uint8_t PIN_ETH_CS;
 
-// Recovery pulse output pin (active HIGH)
+// Inverter WiFi wake pin: idles HIGH; driven LOW for each button-press pulse.
+// PULSE_HIGH_MS is the duration of the active-LOW pulse (i.e. how long the
+// pin is held LOW per press). PULSE_GAP_MS is the inter-press gap.
 extern const uint8_t PIN_INVERTER_WIFI_WAKE;
 extern const uint16_t PULSE_HIGH_MS;
 extern const uint16_t PULSE_GAP_MS;

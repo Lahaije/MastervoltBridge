@@ -59,6 +59,11 @@
 ## Future Enhancement Ideas
 
 - [ ] Web-based configuration dashboard (firmware side)
+   - Requirements documented first in docs/API_REFERENCE.md and docs/TEST_README.md
+   - Serve GET / as one fixed flash-backed HTML blob (no runtime HTML assembly)
+   - Keep GET /api as discovery JSON for machine clients
+   - Enforce bounded chunked writes + disconnect checks for memory safety
+   - Use compile-time Content-Length from `sizeof(WEB_UI_HTML) - 1`
 - [ ] Home Assistant auto-discovery (mDNS + SSDP)
 - [ ] TLS/HTTPS for API (requires certificate management)
 - [ ] Multiple inverter support (mesh/multi-unit coordination)

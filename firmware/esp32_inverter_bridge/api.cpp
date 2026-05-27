@@ -3,7 +3,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "wifi_bridge.h"
-#include "inverter_monitor.h"
+#include "inverter_controller.h"
 #include "inverter_data.h"
 #include "api_helper.h"
 
@@ -12,7 +12,8 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/api/health", "Bridge connectivity state: WiFi, Ethernet, inverter host, IPs"},
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
   {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
-  {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
+  {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W). Returns 202 if queued for delayed apply."},
+  {"POST", "/api/shadow", "Enable or disable inverter shadow function: {\"enabled\":true|false}. Returns 202 if queued for delayed apply."},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
@@ -139,7 +140,7 @@ void handleApiClient(EthernetClient& client) {
       return;
     }
 
-    unsigned long lastUpdateMs = InverterMonitor::getInstance().getLastUpdateMs();
+    unsigned long lastUpdateMs = InverterController::getInstance().getLastUpdateMs();
     sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs));
     return;
   }
@@ -165,23 +166,93 @@ void handleApiClient(EthernetClient& client) {
       return;
     }
 
-    // Send power command to inverter
+    // Send power command to inverter (combined /postoptions form).
     String inverterResponse;
     String errorMsg;
     int inverterHttpCode = 0;
-    bool ok = InverterMonitor::getInstance().setPower(requestedPower, inverterResponse, inverterHttpCode, errorMsg);
-    if (!ok) {
-      // Inverter communication failed (WiFi down or HTTP error)
-      sendHttpResponse(client, 502, "application/json", buildErrorJson(errorMsg));
+    InverterController::SetResult result = InverterController::getInstance().setPower(
+        requestedPower, inverterResponse, inverterHttpCode, errorMsg);
+
+    if (result == InverterController::SetResult::Rejected) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson(errorMsg));
+      return;
+    }
+    if (result == InverterController::SetResult::Deferred) {
+      String resp = JsonBuilder()
+        .addBool("deferred", true)
+        .addNumber("desired_power_watts", String(requestedPower))
+        .addString("reason", errorMsg)
+        .build();
+      sendHttpResponse(client, 202, "application/json", resp);
       return;
     }
 
-    String response = JsonBuilder()
-      .addNumber("requested_power_watts", String(requestedPower))
+    // Applied: include live read-back from the cache (refreshed inside setPower).
+    JsonBuilder rb;
+    rb.addNumber("requested_power_watts", String(requestedPower))
+      .addBool("applied", true)
       .addNumber("inverter_http_status", String(inverterHttpCode))
-      .addString("inverter_response", inverterResponse)
-      .build();
-    sendHttpResponse(client, 200, "application/json", response);
+      .addString("inverter_response", inverterResponse);
+    uint16_t readback = 0;
+    if (InverterController::getInstance().getPowerLimit(readback)) {
+      rb.addNumber("readback_power_watts", String(readback));
+    } else {
+      rb.addNull("readback_power_watts");
+    }
+    sendHttpResponse(client, 200, "application/json", rb.build());
+    return;
+  }
+
+  if (method == "POST" && path == "/api/shadow") {
+    // Extract enabled flag from JSON body
+    String rawEnabled = getJsonValueByKey(body, "enabled");
+    if (rawEnabled.length() == 0) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain enabled boolean"));
+      return;
+    }
+    rawEnabled.toLowerCase();
+    bool enabled;
+    if (rawEnabled == "true" || rawEnabled == "1") {
+      enabled = true;
+    } else if (rawEnabled == "false" || rawEnabled == "0") {
+      enabled = false;
+    } else {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("enabled must be a boolean"));
+      return;
+    }
+
+    String inverterResponse;
+    String errorMsg;
+    int inverterHttpCode = 0;
+    InverterController::SetResult result = InverterController::getInstance().setShadow(
+        enabled, inverterResponse, inverterHttpCode, errorMsg);
+
+    if (result == InverterController::SetResult::Rejected) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson(errorMsg));
+      return;
+    }
+    if (result == InverterController::SetResult::Deferred) {
+      String resp = JsonBuilder()
+        .addBool("deferred", true)
+        .addBool("desired_shadow", enabled)
+        .addString("reason", errorMsg)
+        .build();
+      sendHttpResponse(client, 202, "application/json", resp);
+      return;
+    }
+
+    JsonBuilder rb;
+    rb.addBool("requested_shadow", enabled)
+      .addBool("applied", true)
+      .addNumber("inverter_http_status", String(inverterHttpCode))
+      .addString("inverter_response", inverterResponse);
+    bool readback = false;
+    if (InverterController::getInstance().getShadow(readback)) {
+      rb.addBool("readback_shadow", readback);
+    } else {
+      rb.addNull("readback_shadow");
+    }
+    sendHttpResponse(client, 200, "application/json", rb.build());
     return;
   }
 
@@ -203,7 +274,7 @@ void handleApiClient(EthernetClient& client) {
     String inverterBody;
     String err;
     int code = 0;
-    bool ok = InverterMonitor::getInstance().fetchPath(inverterPath, inverterBody, code, err);
+    bool ok = InverterController::getInstance().fetchPath(inverterPath, inverterBody, code, err);
     if (!ok) {
       // Inverter communication failed
       sendHttpResponse(client, 502, "application/json", buildErrorJson(err));

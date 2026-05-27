@@ -34,6 +34,7 @@ from analyze_bridge_logs import (  # noqa: E402
     parse_attempts,
     parse_backoff_events,
     parse_polls,
+    parse_state_change_events,
 )
 
 import matplotlib
@@ -48,6 +49,8 @@ def build_plot(
     episodes,
     out_path: Path,
     backoff_events=None,
+    state_change_events=None,
+    state_label_mode: str = "major",
     show: bool = False,
 ) -> None:
     if not polls:
@@ -75,6 +78,23 @@ def build_plot(
         times_min.append(p.timestamp_ms / 60_000)
         powers_w.append(p.power_w)
 
+    # Keep annotation geometry readable even when all values are 0 W.
+    y_ref = max(max(powers_w), 1.0)
+
+    def is_major_transition(from_state: str, to_state: str) -> bool:
+        pair = (from_state, to_state)
+        if pair in {
+            ("STARTING", "ONLINE"),
+            ("ONLINE", "RETRYING"),
+            ("RETRYING", "ONLINE"),
+            ("RETRYING", "BACKOFF"),
+            ("BACKOFF", "DORMANT"),
+            ("DORMANT", "ONLINE"),
+            ("BACKOFF", "ONLINE"),
+        }:
+            return True
+        return to_state in {"BACKOFF", "DORMANT", "ONLINE"}
+
     # Keep image dimensions moderate so chat/image viewers do not clip wide renders.
     fig, ax = plt.subplots(figsize=(11, 5.5))
     fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.10)
@@ -92,7 +112,7 @@ def build_plot(
         ep_end_ts = last.timestamp_ms + (last.result_time_ms or 8000)
         band_end = (last.timestamp_ms + (last.result_time_ms or 8000)) / 60_000
         ax.axvspan(band_start, band_end, color="#ff6b6b", alpha=0.15, zorder=1)
-        label_y = max(powers_w) * 0.92
+        label_y = y_ref * 0.92
         retries = ep.retries_before_success
         rec_s = ep.recovery_duration_ms
         in_backoff_mode = first_backoff_ts is not None and ep_end_ts >= (first_backoff_ts - 20_000)
@@ -126,8 +146,8 @@ def build_plot(
 
     # --- Backoff transition markers ---
     if backoff_events:
-        y_top = max(powers_w) * 0.82
-        y_alt = max(powers_w) * 0.74
+        y_top = y_ref * 0.82
+        y_alt = y_ref * 0.74
         for idx, ev in enumerate(backoff_events):
             x_min = ev.timestamp_ms / 60_000
             ax.axvline(x_min, color="#ffd54f", linestyle="--", linewidth=0.8, alpha=0.8, zorder=4)
@@ -144,13 +164,46 @@ def build_plot(
                 zorder=5,
             )
 
+    # --- Inverter link-state transitions ---
+    if state_change_events:
+        y_top = y_ref * 0.66
+        y_alt = y_ref * 0.58
+        last_label_x = None
+        label_stride = 1 if state_label_mode in ("all", "none") else 2
+        for idx, ev in enumerate(state_change_events):
+            x_min = ev.timestamp_ms / 60_000
+            ax.axvline(x_min, color="#80cbc4", linestyle=":", linewidth=0.9, alpha=0.85, zorder=4)
+            if state_label_mode == "none":
+                continue
+            if state_label_mode == "major" and not is_major_transition(ev.from_state, ev.to_state):
+                continue
+            # Keep labels readable when transitions cluster tightly.
+            if last_label_x is not None and (x_min - last_label_x) < 1.8:
+                continue
+            if state_label_mode == "major" and (idx % label_stride) != 0:
+                continue
+            label_y = y_top if idx % 2 == 0 else y_alt
+            interval_text = f" ({ev.interval_seconds}s)" if ev.interval_seconds is not None else ""
+            ax.text(
+                x_min,
+                label_y,
+                f"{ev.from_state}->{ev.to_state}{interval_text}",
+                rotation=90,
+                va="top",
+                ha="left",
+                fontsize=6,
+                color="#b2dfdb",
+                zorder=5,
+            )
+            last_label_x = x_min
+
     # --- Peak annotation ---
     peak_w = max(powers_w)
     peak_idx = powers_w.index(peak_w)
     ax.annotate(
         f"Peak {peak_w:.0f} W",
         xy=(times_min[peak_idx], peak_w),
-        xytext=(times_min[peak_idx] + 0.5, peak_w * 1.04),
+        xytext=(times_min[peak_idx] + 0.5, peak_w + y_ref * 0.04),
         fontsize=7.5, color="#ffe082",
         arrowprops=dict(arrowstyle="->", color="#ffe082", lw=0.8),
     )
@@ -159,7 +212,7 @@ def build_plot(
     ax.annotate(
         f"Last {powers_w[-1]:.1f} W",
         xy=(times_min[-1], powers_w[-1]),
-        xytext=(times_min[-1] - 3, powers_w[-1] + peak_w * 0.06),
+        xytext=(times_min[-1] - 3, powers_w[-1] + y_ref * 0.06),
         fontsize=7.5, color="#a5d6a7",
         arrowprops=dict(arrowstyle="->", color="#a5d6a7", lw=0.8),
     )
@@ -183,8 +236,9 @@ def build_plot(
     # --- Legend ---
     ep_patch = mpatches.Patch(color="#ff6b6b", alpha=0.4, label="Disconnection episode")
     backoff_line = Line2D([0], [0], color="#ffd54f", linestyle="--", linewidth=1.0, label="Backoff transition")
+    state_line = Line2D([0], [0], color="#80cbc4", linestyle=":", linewidth=1.0, label="State transition")
     ax.legend(
-        handles=[ax.lines[0], ep_patch, backoff_line],
+        handles=[ax.lines[0], ep_patch, backoff_line, state_line],
         facecolor="#0f3460", edgecolor="#37474f",
         labelcolor="#eceff1", fontsize=8,
         loc="upper right",
@@ -211,6 +265,12 @@ def main() -> int:
         help="Output PNG path (default: output/powerplot.png; overwritten each run)",
     )
     parser.add_argument("--show", action="store_true", help="Open the plot in a window after saving")
+    parser.add_argument(
+        "--state-labels",
+        choices=["major", "all", "none"],
+        default="major",
+        help="State transition label density: major (default), all, or none",
+    )
     parser.add_argument("--since-ms", type=int, default=None, help="Only include entries at/after timestamp_ms")
     parser.add_argument("--limit", type=int, default=None, help="Only include last N entries")
     args = parser.parse_args()
@@ -230,6 +290,7 @@ def main() -> int:
     polls, skipped = parse_polls(entries)
     attempts = parse_attempts(entries)
     backoff_events = parse_backoff_events(entries)
+    state_change_events = parse_state_change_events(entries)
     episodes = group_into_episodes(attempts)
 
     print(f"Fetched {len(entries)} entries — {len(polls)} polls, {skipped} skipped, {len(episodes)} episodes")
@@ -240,7 +301,15 @@ def main() -> int:
 
     out_path = Path(args.out) if args.out else Path("output") / "powerplot.png"
 
-    build_plot(polls, episodes, out_path, backoff_events=backoff_events, show=args.show)
+    build_plot(
+        polls,
+        episodes,
+        out_path,
+        backoff_events=backoff_events,
+        state_change_events=state_change_events,
+        state_label_mode=args.state_labels,
+        show=args.show,
+    )
     return 0
 
 

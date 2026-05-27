@@ -303,7 +303,8 @@ void wifiBridgeInit() {
 }
 
 bool fetchInverterData(const String& method, const String& path, const String& body,
-                       String& responseBody, int& httpCode, String& errorMessage) {
+                       String& responseBody, int& httpCode, String& errorMessage,
+                       const char* contentType) {
   // Make sure WiFi is up before we try to talk to the inverter. The manager
   // releases the WiFi-operation lock once the (re)connect attempt completes,
   // so we can re-acquire it below for the HTTP exchange.
@@ -338,7 +339,7 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   if (method == "GET") {
     code = http.GET();
   } else if (method == "POST") {
-    http.addHeader("Content-Type", "text/plain");
+    http.addHeader("Content-Type", contentType);
     code = http.POST(body);
   } else {
     errorMessage = String("Unsupported HTTP method: ") + method;

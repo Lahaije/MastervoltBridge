@@ -1,6 +1,6 @@
 #include "inverter_data.h"
 
-#include "inverter_monitor.h"
+#include "inverter_controller.h"
 #include "logger.h"
 
 bool HomeData::isValid() const {
@@ -20,7 +20,7 @@ void HomeData::clear() {
 
 HomeData getInverterData() {
   HomeData data;
-  InverterMonitor::getInstance().getLatestHomeData(data);
+  InverterController::getInstance().getLatestHomeData(data);
   return data;
 }
 

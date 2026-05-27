@@ -28,7 +28,7 @@
 //
 // The poll-interval update is applied unconditionally by intervalForState()
 // on every state change. Side-effect actions (settings refresh, etc.) are
-// dispatched by InverterMonitor::onLinkStateTransition().
+// dispatched by InverterController::onLinkStateTransition().
 // =============================================================================
 
 enum class InverterLinkState : uint8_t {
@@ -46,8 +46,8 @@ enum class InverterLinkState : uint8_t {
 /** Human-readable name of a state (e.g. "ONLINE"). Never returns nullptr. */
 const char* toString(InverterLinkState s);
 
-// Forward declaration to avoid circular include (inverter_monitor.h includes this file)
-class InverterMonitor;
+// Forward declaration to avoid circular include (inverter_controller.h includes this file)
+class InverterController;
 
 // ---------------------------------------------------------------------------
 // State getter and setter — global state management
@@ -88,7 +88,7 @@ bool registerStateEntryHook(InverterLinkState targetState,
                             StateChangeHook callback,
                             const char* hookName = nullptr);
 
-/** Dispatch all matching hooks for a transition. Called from inverter_monitor.cpp. */
+/** Dispatch all matching hooks for a transition. Called from inverter_controller.cpp. */
 void dispatchStateChangeHooks(InverterLinkState from, InverterLinkState to);
 
 // Compile-time helpers: function name is stringized at compile time.

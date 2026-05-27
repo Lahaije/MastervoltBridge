@@ -32,7 +32,7 @@ See [`docs/WIRING_README.md`](docs/WIRING_README.md) for the full pin table and 
 
 ## API
 
-9 REST endpoints covering health, live telemetry, power control, log access, and diagnostics. See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full reference.
+REST API over Ethernet covering health, live telemetry, power control, shadow function, log access, and diagnostics. See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full endpoint reference.
 
 ## Build and Upload
 

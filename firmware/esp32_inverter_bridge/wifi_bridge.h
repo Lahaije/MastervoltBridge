@@ -45,8 +45,10 @@ private:
 
 // Generic method to fetch data from inverter (GET or POST).
 // Uses WifiConnectionManager to obtain a connection before issuing HTTP.
+// For POST requests, contentType sets the Content-Type header; defaults to text/plain.
 bool fetchInverterData(const String& method, const String& path, const String& body,
-                       String& responseBody, int& httpCode, String& errorMessage);
+                       String& responseBody, int& httpCode, String& errorMessage,
+                       const char* contentType = "text/plain");
 
 // If WiFi is connected, send a single button press to turn inverter WiFi off.
 // Returns true when a press was sent, false when no press was needed/busy.

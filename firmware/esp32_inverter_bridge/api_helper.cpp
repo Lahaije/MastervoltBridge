@@ -4,7 +4,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "inverter_data.h"
-#include "inverter_monitor.h"
+#include "inverter_controller.h"
 
 String jsonEscape(const String& input) {
   String out;
@@ -27,11 +27,13 @@ String jsonEscape(const String& input) {
 
 void sendHttpResponse(EthernetClient& client, int code, const char* contentType, const String& body) {
   String statusText = "OK";
-  if (code == 400) statusText = "Bad Request";
+  if (code == 202) statusText = "Accepted";
+  else if (code == 400) statusText = "Bad Request";
   else if (code == 404) statusText = "Not Found";
   else if (code == 405) statusText = "Method Not Allowed";
-  else if (code == 502) statusText = "Bad Gateway";
+  else if (code == 408) statusText = "Request Timeout";
   else if (code == 500) statusText = "Internal Server Error";
+  else if (code == 502) statusText = "Bad Gateway";
 
   client.print("HTTP/1.1 ");
   client.print(code);
@@ -139,8 +141,8 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
     .addString("total_yield", data.lifetimeEnergy)  // Total lifetime yield (via get_Total_Yield())
     .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
-    .addString("inverter_link_state", String(toString(InverterMonitor::getInstance().getLinkState())))
-    .addNumber("failure_streak_s", String(InverterMonitor::getInstance().getFailureStreakMs() / 1000UL))
+    .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
+    .addNumber("failure_streak_s", String(InverterController::getInstance().getFailureStreakMs() / 1000UL))
     .build();
 }
 

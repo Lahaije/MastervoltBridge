@@ -93,7 +93,16 @@ def main() -> int:
         action="store_true",
         help="Skip compilation, go straight to upload",
     )
+    parser.add_argument(
+        "--skip-upload",
+        action="store_true",
+        help="Compile only; do not flash the device (and do not require it to be connected)",
+    )
     args = parser.parse_args()
+
+    if args.skip_compile and args.skip_upload:
+        print("Nothing to do: both --skip-compile and --skip-upload were given.")
+        return 2
 
     print("ESP32 Firmware Upload")
     print(f"  FQBN   : {FQBN}")
@@ -101,10 +110,14 @@ def main() -> int:
     print(f"  Sketch : {SKETCH}")
 
     # ------------------------------------------------------------------
-    # Step 1: Detect device
+    # Step 1: Detect device (skipped for compile-only runs)
     # ------------------------------------------------------------------
-    print(f"\nDetecting ESP32 on {args.port}...", end=" ", flush=True)
-    found = detect_port(ARDUINO_CLI, args.port)
+    if args.skip_upload:
+        print("\nCompile-only run (--skip-upload): device detection skipped.")
+        found = True
+    else:
+        print(f"\nDetecting ESP32 on {args.port}...", end=" ", flush=True)
+        found = detect_port(ARDUINO_CLI, args.port)
 
     if not found:
         print("NOT FOUND")
@@ -130,7 +143,8 @@ def main() -> int:
 
         return 1
 
-    print("OK")
+    if not args.skip_upload:
+        print("OK")
 
     # ------------------------------------------------------------------
     # Step 2: Compile
@@ -146,6 +160,10 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Step 3: Upload
     # ------------------------------------------------------------------
+    if args.skip_upload:
+        print("\nCompile-only run complete (--skip-upload).")
+        return 0
+
     ok = run_step(
         f"Uploading to {args.port}...",
         [ARDUINO_CLI, "upload", "--fqbn", FQBN, "--port", args.port, SKETCH],

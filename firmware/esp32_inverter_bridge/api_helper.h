@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 9;
+constexpr size_t API_ENDPOINT_COUNT = 10;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**
@@ -69,6 +69,16 @@ public:
   }
 
   /**
+   * Add a JSON null field.
+   */
+  JsonBuilder& addNull(const String& key) {
+    if (needsComma) json += ",";
+    json += "\"" + key + "\":null";
+    needsComma = true;
+    return *this;
+  }
+
+  /**
    * Finalize and return the JSON object.
    */
   String build() {
@@ -105,8 +115,7 @@ String getJsonValueByKey(const String& body, const String& key);
 
 /**
  * Parse inverter URL from request body.
- * JSON-only format:
- * - {"url":"/home"} or {'url':'/home'}
+ * Expects JSON with a double-quoted key: {"url":"/home"}
  * Returns true if successfully parsed, false otherwise.
  */
 bool parseFetchUrlFromBody(const String& body, String& urlOut);

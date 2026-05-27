@@ -10,9 +10,9 @@ including power readings and disconnection episode breakdown.
 Log format expected (produced by wifi_bridge.cpp):
   [WIFI-CONNECT] start path=<dwell|auto> scan_dwell_ms=<N> hint_fallback=<0|1>
   [WIFI-CONNECT] complete path=<dwell|auto> duration_ms=<N> result=<success|timeout> ...
-  [INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW
-  [INVERTER-MONITOR] No WiFi connection; skipping poll iteration
-  [INVERTER-MONITOR] Inverter recovered; resuming normal poll interval
+  [INVERTER-CONTROLLER] Poll #N: Status=X Power=Y.ZW
+  [INVERTER-CONTROLLER] No WiFi connection; skipping poll iteration
+  [INVERTER-CONTROLLER] Inverter recovered; resuming normal poll interval
 
 Timestamp format used throughout: Xm SS.sss  (e.g. 4m 05.123)
 This matches the format produced by format_ms() and is the preferred way
@@ -67,6 +67,15 @@ class PollEntry:
 class BackoffEvent:
     timestamp_ms: int
     interval_seconds: int
+
+
+@dataclass
+class StateChangeEvent:
+    timestamp_ms: int
+    from_state: str
+    to_state: str
+    streak_seconds: Optional[int] = None
+    interval_seconds: Optional[int] = None
 
 
 @dataclass
@@ -173,9 +182,15 @@ def parse_attempts(entries: List[Dict]) -> List[Attempt]:
     return attempts
 
 
-# Poll regex: "[INVERTER-MONITOR] Poll #N: Status=X Power=Y.ZW"
-_POLL_RE = re.compile(r"\[INVERTER-MONITOR\] Poll #(\d+): Status=(\S+) Power=([\d.]+)W")
-_BACKOFF_RE = re.compile(r"\[INVERTER-MONITOR\] Backoff: retry interval -> (\d+)s")
+# Poll/backoff logs may come from either INVERTER-CONTROLLER (older firmware)
+# or INVERTER-MONITOR (current firmware).
+_INVERTER_PREFIX_RE = r"INVERTER-(?:CONTROLLER|MONITOR)"
+_POLL_RE = re.compile(rf"\[{_INVERTER_PREFIX_RE}\] Poll #(\d+): Status=(\S+) Power=([\d.]+)W")
+_BACKOFF_RE = re.compile(rf"\[{_INVERTER_PREFIX_RE}\] Backoff: retry interval -> (\d+)s")
+_LINK_STATE_RE = re.compile(
+    rf"\[{_INVERTER_PREFIX_RE}\] Link state: ([A-Z]+) -> ([A-Z]+)"
+    r"(?: \(streak=(\d+)s, interval=(\d+)s\))?"
+)
 
 
 def parse_polls(entries: List[Dict]) -> Tuple[List[PollEntry], int]:
@@ -207,6 +222,28 @@ def parse_backoff_events(entries: List[Dict]) -> List[BackoffEvent]:
         m = _BACKOFF_RE.search(msg)
         if m:
             events.append(BackoffEvent(timestamp_ms=ts, interval_seconds=int(m.group(1))))
+    return events
+
+
+def parse_state_change_events(entries: List[Dict]) -> List[StateChangeEvent]:
+    """Parse inverter link state transition events (e.g. STARTING -> ONLINE)."""
+    events: List[StateChangeEvent] = []
+    for e in entries:
+        msg = str(e.get("message", ""))
+        ts = int(e.get("timestamp_ms", 0))
+        m = _LINK_STATE_RE.search(msg)
+        if m:
+            streak = int(m.group(3)) if m.group(3) is not None else None
+            interval = int(m.group(4)) if m.group(4) is not None else None
+            events.append(
+                StateChangeEvent(
+                    timestamp_ms=ts,
+                    from_state=m.group(1),
+                    to_state=m.group(2),
+                    streak_seconds=streak,
+                    interval_seconds=interval,
+                )
+            )
     return events
 
 

@@ -37,6 +37,7 @@ DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/api/logs"),
     ("GET",  "/api/info"),
     ("POST", "/api/power"),
+    ("POST", "/api/shadow"),
     ("POST", "/api/inverter/fetch"),
     ("POST", "/wifi/off"),
     ("GET",  "/pulse"),

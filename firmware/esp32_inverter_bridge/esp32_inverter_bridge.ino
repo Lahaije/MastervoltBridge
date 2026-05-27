@@ -2,7 +2,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "wifi_bridge.h"
-#include "inverter_monitor.h"
+#include "inverter_controller.h"
 #include "ethernet_bridge.h"
 
 
@@ -13,8 +13,8 @@ void setup() {
   ethernetBridgeInit();
   wifiBridgeInit();
   
-  // Initialize inverter monitor for inverter telemetry and requests
-  InverterMonitor::getInstance().initialize();
+  // Initialize inverter controller for inverter telemetry and requests
+  InverterController::getInstance().initialize();
 
   // All hardware and tasks are initialized; disable debug-level logging for
   // routine HTTP 200 success events to keep the log buffer clean.
