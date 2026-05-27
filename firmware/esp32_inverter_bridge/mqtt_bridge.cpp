@@ -68,6 +68,18 @@ void MqttBridge::messageCallback(char* topic, byte* payload, unsigned int length
 }
 
 void MqttBridge::initialize() {
+#if MQTT_BRIDGE_DISABLED
+  // Compile-time kill switch. UIPEthernet has shown corruption when MQTT
+  // operations (probe scan, frequent connect retries) run alongside
+  // Ethernet.maintain() and the API server. Bisecting suspected MQTT as the
+  // root cause of the ENC28J60 wedge that left the bridge unreachable
+  // overnight. Keep MQTT compiled out until the bridge has been verified
+  // stable on LAN; then re-enable in phases.
+  haEnabled_ = false;
+  configured_ = false;
+  appLogger.log("[MQTT] compiled out (MQTT_BRIDGE_DISABLED=1); skipping init");
+  return;
+#endif
   Preferences prefs;
   prefs.begin(NVS_NAMESPACE, true);
   uint32_t stored = prefs.getUInt(NVS_KEY_BROKER, 0);
@@ -120,6 +132,12 @@ bool MqttBridge::setBrokerIp(const IPAddress& ip) {
 }
 
 void MqttBridge::setHaEnabled(bool enabled) {
+#if MQTT_BRIDGE_DISABLED
+  if (enabled) {
+    appLogger.log("[MQTT] setHaEnabled(true) ignored - MQTT compiled out");
+    return;
+  }
+#endif
   if (haEnabled_ == enabled) return;
   haEnabled_ = enabled;
 

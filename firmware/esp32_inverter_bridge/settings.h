@@ -4,6 +4,15 @@
 #include <Arduino.h>
 #include <UIPEthernet.h>
 
+// Compile-time kill switch for the MQTT bridge.
+// Set to 1 to compile MQTT out entirely (no UIPEthernet socket usage).
+// Used while bisecting the ENC28J60 wedge that left the bridge unreachable
+// overnight. Once MQTT is rebuilt with a safer Ethernet pattern this can
+// flip back to 0.
+#ifndef MQTT_BRIDGE_DISABLED
+#define MQTT_BRIDGE_DISABLED 1
+#endif
+
 class Logger;
 
 // User configuration

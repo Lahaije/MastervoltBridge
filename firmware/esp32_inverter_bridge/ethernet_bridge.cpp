@@ -20,6 +20,13 @@ void initEthernetHardware() {
   // ESP32 requires explicit SPI pin assignment before UIPEthernet initialises.
   SPI.begin(PIN_ETH_SCK, PIN_ETH_MISO, PIN_ETH_MOSI, PIN_ETH_CS);
   Ethernet.init(PIN_ETH_CS);
+  // Ethernet.init() above only stores the CS pin number; it never touches
+  // the chip. The actual ENC28J60 SPI reset only runs inside Ethernet.begin().
+  // To actually unwedge a chip stuck in a permanent LinkOFF, call begin()
+  // here with a placeholder static IP -- this drives the SPI soft-reset and
+  // register init sequence without blocking on DHCP. tryAcquireDhcp() will
+  // run again with the real DHCP path as soon as linkStatus() reports up.
+  Ethernet.begin(ETH_MAC, IPAddress(0, 0, 0, 0));
   appLogger.log("[ETH] ENC28J60 hardware initialized. Waiting for cable...");
 }
 
