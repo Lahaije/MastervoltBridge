@@ -7,6 +7,8 @@
 #include <freertos/semphr.h>
 
 #include "inverter_data.h"
+#include "settings.h"
+#include "inverter_link_state.h"
 
 /**
  * InverterMonitor: Manages polling of the inverter's /home endpoint,
@@ -57,6 +59,23 @@ public:
    */
   bool fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage);
 
+  /**
+   * Current link state (see InverterLinkState above).
+   * Written only by the polling task; safe to read from any context.
+   */
+  InverterLinkState getLinkState();
+
+  /**
+   * How long the current failure streak has lasted, in milliseconds.
+   * Returns 0 when state is ONLINE or STARTING.
+   */
+  uint32_t getFailureStreakMs();
+
+  /**
+   * The poll/retry interval currently in use, in milliseconds.
+   */
+  uint32_t getRetryIntervalMs();
+
 private:
   InverterMonitor();
   ~InverterMonitor();
@@ -75,6 +94,19 @@ private:
   // Returns false if the mutex could not be acquired within 5 s.
   bool incrementCounterLocked(uint32_t& counter);
 
+  // Fired on every link-state transition. All once-per-transition actions
+  // are dispatched here. Called from the polling task only.
+  //
+  // Current bindings:
+  //   STARTING -> ONLINE           : fetchAndCacheSettings()
+  //   BACKOFF|DORMANT -> ONLINE    : fetchAndCacheSettings()
+  void onLinkStateTransition(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
+
+  // Fetch shadow state and power limit live from the inverter and update
+  // the in-memory cache. Called on first-ever connection and after recovery
+  // from an extended outage.
+  void fetchAndCacheSettings();
+
   // Private state
   TaskHandle_t pollingTaskHandle = nullptr;
   SemaphoreHandle_t dataMutex = nullptr;
@@ -83,6 +115,19 @@ private:
   uint32_t successfulPolls = 0;
   uint32_t failedPolls = 0;
   bool isInitialized = false;
+
+  // Link-state machine. Written only by the polling task; linkState and
+  // failureStartMs are uint-sized so reads from other tasks are atomic on ESP32.
+  InverterLinkState linkState = InverterLinkState::STARTING;
+  uint32_t failureStartMs = 0;          // millis() when current streak began; 0 if none
+  uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+
+  // Cached shadow + power-limit read back from the inverter.
+  // Protected by dataMutex. *Known = false until first successful read.
+  bool shadowKnown_ = false;
+  bool shadowOn_ = false;
+  bool powerLimitKnown_ = false;
+  uint16_t powerLimitW_ = 0;
 };
 
 #endif // INVERTER_MONITOR_H
