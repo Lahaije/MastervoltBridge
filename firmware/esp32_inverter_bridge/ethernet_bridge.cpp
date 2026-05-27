@@ -44,6 +44,13 @@ void ethernetBridgeTask(void* param) {
   appLogger.log("ESP32 inverter bridge booting...");
   initEthernetHardware();
 
+  // Liveness recovery state. Used to recover from two UIPEthernet failure
+  // modes that the overnight run hit:
+  //   1. ENC28J60 silently wedges and keeps reporting LinkOFF.
+  //   2. Link reports up but RX is dead / DHCP lease silently lost.
+  uint32_t lastLinkUpMs = millis();
+  uint32_t lastApiClientMs = millis();
+
   // Main Ethernet service loop.
   while (true) {
     bool linkUp = (Ethernet.linkStatus() == LinkON);
@@ -55,11 +62,21 @@ void ethernetBridgeTask(void* param) {
         apiServerStarted = false;
       }
       prevLinkUp = false;
+      // Recovery: if the link has stayed down for too long, re-init the
+      // ENC28J60. Handles the case where the chip is wedged and pretends
+      // LinkOFF even though the cable is plugged in.
+      if (millis() - lastLinkUpMs >= ETHERNET_NO_LINK_RECOVERY_MS) {
+        appLogger.log("[ETH] No link for too long; re-initialising ENC28J60.");
+        initEthernetHardware();
+        lastLinkUpMs = millis();
+        lastApiClientMs = millis();
+      }
       vTaskDelay(pdMS_TO_TICKS(ETHERNET_INIT_RETRY_MS));
       continue;
     }
 
     prevLinkUp = true;
+    lastLinkUpMs = millis();
 
     // Link is up and API server not started yet: acquire DHCP and start API listener.
     if (!apiServerStarted) {
@@ -96,10 +113,24 @@ void ethernetBridgeTask(void* param) {
       if (!client) break;
       handleApiClient(client);
       client.stop();
+      lastApiClientMs = millis();
     }
 
     // Service MQTT connection (connect/reconnect, publish, receive)
     MqttBridge::getInstance().loop();
+
+    // Recovery: link claims up but nothing is reaching us. The ENC28J60 RX
+    // path may be wedged or the DHCP lease may have been quietly revoked by
+    // the router. Force a hardware re-init + fresh DHCP.
+    if (apiServerStarted &&
+        millis() - lastApiClientMs >= ETHERNET_NO_ACTIVITY_RECOVERY_MS) {
+      appLogger.log("[ETH] No API activity for too long; forcing re-init.");
+      initEthernetHardware();
+      apiServerStarted = false;
+      prevLinkUp = false;
+      lastLinkUpMs = millis();
+      lastApiClientMs = millis();
+    }
 
     vTaskDelay(pdMS_TO_TICKS(ETHERNET_SERVICE_INTERVAL_MS));
   }

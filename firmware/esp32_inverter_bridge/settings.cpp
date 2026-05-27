@@ -33,6 +33,8 @@ const uint16_t INVERTER_MAX_POWER_WATTS = 1575;
 const uint16_t API_CLIENT_TIMEOUT_MS = 250;
 const uint32_t ETHERNET_INIT_RETRY_MS = 5000;
 const uint32_t ETHERNET_SERVICE_INTERVAL_MS = 2;
+const uint32_t ETHERNET_NO_LINK_RECOVERY_MS = 60000;          // 60 s
+const uint32_t ETHERNET_NO_ACTIVITY_RECOVERY_MS = 1800000;   // 30 min
 
 byte ETH_MAC[6] = {0x02, 0xA1, 0x82, 0x32, 0x10, 0x42};
 

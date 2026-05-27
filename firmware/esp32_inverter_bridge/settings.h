@@ -50,6 +50,14 @@ extern const uint16_t API_CLIENT_TIMEOUT_MS;
 // Ethernet bridge behavior
 extern const uint32_t ETHERNET_INIT_RETRY_MS;
 extern const uint32_t ETHERNET_SERVICE_INTERVAL_MS;
+// If linkStatus() reports not-up for this long, re-init the ENC28J60 to
+// recover from the silent SPI/PHY wedge where the chip keeps reporting
+// LinkOFF forever.
+extern const uint32_t ETHERNET_NO_LINK_RECOVERY_MS;
+// If link is reportedly up and API server is running but no incoming HTTP
+// client has been seen for this long, force a full re-init + fresh DHCP to
+// recover from the silent RX wedge / stale lease cases.
+extern const uint32_t ETHERNET_NO_ACTIVITY_RECOVERY_MS;
 
 // Ethernet config
 extern byte ETH_MAC[6];
