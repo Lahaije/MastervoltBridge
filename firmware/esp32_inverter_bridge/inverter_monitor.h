@@ -94,6 +94,10 @@ private:
   // Returns false if the mutex could not be acquired within 5 s.
   bool incrementCounterLocked(uint32_t& counter);
 
+  // Set the inverter link state. Centralizes all state updates.
+  // Called from runPollingTask() only.
+  void setInverterState(InverterLinkState newState);
+
   // Fired on every link-state transition. All once-per-transition actions
   // are dispatched here. Called from the polling task only.
   //

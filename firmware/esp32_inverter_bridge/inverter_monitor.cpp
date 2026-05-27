@@ -83,9 +83,13 @@ bool InverterMonitor::incrementCounterLocked(uint32_t& counter) {
   return true;
 }
 
+void InverterMonitor::setInverterState(InverterLinkState newState) {
+  linkState = newState;
+}
+
 void InverterMonitor::runPollingTask() {
   failureStartMs = 0;
-  linkState = InverterLinkState::STARTING;
+  setInverterState(InverterLinkState::STARTING);
   currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 
   while (true) {
@@ -148,7 +152,7 @@ void InverterMonitor::runPollingTask() {
     currentRetryIntervalMs = nextIntervalMs;
 
     if (newState != prevState) {
-      linkState = newState;
+      setInverterState(newState);
       appLogger.log(String("[INVERTER-MONITOR] State: ") + toString(prevState) +
                     " -> " + toString(newState) +
                     "  streak=" + (streakMs / 1000) + "s" +
