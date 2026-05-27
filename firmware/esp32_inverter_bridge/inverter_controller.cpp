@@ -302,6 +302,20 @@ uint32_t InverterController::getRetryIntervalMs() {
   return currentRetryIntervalMs;
 }
 
+uint32_t InverterController::getBasePollIntervalMs() {
+  return basePollIntervalMs_;
+}
+
+void InverterController::setBasePollIntervalMs(uint32_t ms) {
+  if (ms < 5000) ms = 5000;
+  if (ms > 300000) ms = 300000;
+  basePollIntervalMs_ = ms;
+  // Re-apply interval for current state so it takes effect immediately
+  InverterLinkState current = getLinkState();
+  currentRetryIntervalMs = intervalForState(current, basePollIntervalMs_);
+  appLogger.log(String("[INVERTER-CONTROLLER] Base poll interval set to ") + ms + "ms");
+}
+
 // -----------------------------------------------------------------------------
 // applyIntervalForState — state-entry hook registered at initialize().
 //
@@ -317,7 +331,7 @@ uint32_t InverterController::getRetryIntervalMs() {
 // -----------------------------------------------------------------------------
 void InverterController::applyIntervalForState(InverterLinkState /*from*/,
                                             InverterLinkState to) {
-  getInstance().currentRetryIntervalMs = intervalForState(to, WIFI_BRIDGE_POLL_INTERVAL_MS);
+  getInstance().currentRetryIntervalMs = intervalForState(to, getInstance().basePollIntervalMs_);
 }
 
 // -----------------------------------------------------------------------------

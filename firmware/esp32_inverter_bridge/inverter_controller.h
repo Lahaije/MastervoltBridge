@@ -104,6 +104,18 @@ public:
   uint32_t getRetryIntervalMs();
 
   /**
+   * Get the base poll interval (used for ONLINE/RETRYING/STARTING states).
+   */
+  uint32_t getBasePollIntervalMs();
+
+  /**
+   * Set the base poll interval at runtime. Clamped to [5000, 300000] ms.
+   * Takes effect on the next state-entry hook fire or immediately if
+   * the current state uses the base interval.
+   */
+  void setBasePollIntervalMs(uint32_t ms);
+
+  /**
    * Cached shadow function state. Returns true if a value has been read from
    * the inverter at least once since boot (cache populated by
    * fetchAndCacheSettings()), in which case the on/off state is written to
@@ -195,6 +207,7 @@ private:
   // failureStartMs is written only by the polling task; reads from other tasks are atomic.
   uint32_t failureStartMs = 0;          // millis() when current streak began; 0 if none
   uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
+  uint32_t basePollIntervalMs_ = WIFI_BRIDGE_POLL_INTERVAL_MS;  // runtime-adjustable base
 
   // Cached shadow + power-limit read back from the inverter.
   // Protected by dataMutex. *Known = false until first successful read.

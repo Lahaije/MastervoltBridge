@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 10;
+constexpr size_t API_ENDPOINT_COUNT = 12;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**
@@ -146,5 +146,12 @@ void sendLogsResponse(EthernetClient& client);
  * Lists all available API endpoints with methods, paths, and descriptions.
  */
 String buildApiDiscoveryJson();
+
+/**
+ * Send a PROGMEM-backed HTML page directly to the client in bounded chunks.
+ * Zero heap allocation for the payload — reads from flash and writes in
+ * fixed-size batches with connectivity checks to avoid dead-write crashes.
+ */
+void sendFlashHtmlResponse(EthernetClient& client, const char* flashData, size_t len);
 
 #endif // API_HELPER_H

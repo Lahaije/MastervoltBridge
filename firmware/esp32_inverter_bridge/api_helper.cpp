@@ -143,6 +143,8 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
     .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
     .addNumber("failure_streak_s", String(InverterController::getInstance().getFailureStreakMs() / 1000UL))
+    .addNumber("poll_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
+    .addNumber("base_poll_interval_ms", String(InverterController::getInstance().getBasePollIntervalMs()))
     .build();
 }
 
@@ -263,4 +265,28 @@ String buildApiDiscoveryJson() {
   json += "]";
   json += "}";
   return json;
+}
+
+void sendFlashHtmlResponse(EthernetClient& client, const char* flashData, size_t len) {
+  // Send HTTP headers with compile-time Content-Length.
+  client.print(F("HTTP/1.1 200 OK\r\n"));
+  client.print(F("Connection: close\r\n"));
+  client.print(F("Content-Type: text/html\r\n"));
+  client.print(F("Content-Length: "));
+  client.print(len);
+  client.print(F("\r\n\r\n"));
+
+  // Write payload in bounded chunks directly from flash.
+  static const size_t CHUNK = 512;
+  char buf[CHUNK];
+  size_t offset = 0;
+  while (offset < len) {
+    if (!client.connected()) return;  // abort cleanly on disconnect
+    size_t remaining = len - offset;
+    size_t n = (remaining < CHUNK) ? remaining : CHUNK;
+    memcpy_P(buf, flashData + offset, n);
+    client.write((const uint8_t*)buf, n);
+    offset += n;
+    delay(1);  // yield for UIP stack ACK processing
+  }
 }

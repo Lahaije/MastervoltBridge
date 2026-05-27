@@ -5,9 +5,18 @@ IP = '192.168.1.48'
 BASE = f"http://{IP}:8080"
 failed = False
 
-# --- GET / (discovery) ---
+# --- GET / (Web UI HTML) ---
 print("=== GET / ===")
 r = requests.get(f"{BASE}/", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+assert "text/html" in r.headers.get("Content-Type", ""), f"Expected text/html, got {r.headers.get('Content-Type')}"
+assert "<!doctype html>" in r.text.lower(), "Response does not look like HTML"
+print(f"  HTML page: {len(r.content)} bytes")
+print()
+
+# --- GET /api (discovery) ---
+print("=== GET /api ===")
+r = requests.get(f"{BASE}/api", timeout=15)
 assert r.status_code == 200, f"Expected 200, got {r.status_code}"
 for endpoint in r.json()['endpoints']:
     print(f"  {endpoint['method']:4s} {endpoint['path']} — {endpoint['description']}")
@@ -28,19 +37,16 @@ print()
 # --- GET /api/info ---
 print("=== GET /api/info ===")
 r = requests.get(f"{BASE}/api/info", timeout=15)
-if r.status_code == 502:
-    print("  502 — inverter offline (expected at night)")
-else:
-    assert r.status_code == 200, f"Expected 200 or 502, got {r.status_code}"
-    info = r.json()
-    for key, value in info.items():
-        print(f"  {key}: {value}")
-    # Validate expected keys
-    for key in ["last_update_ms", "operating_status", "power", "total_yield", "daily_yield",
-                "inverter_link_state", "failure_streak_s"]:
-        if key not in info:
-            print(f"  FAIL: Missing key '{key}'")
-            failed = True
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+info = r.json()
+for key, value in info.items():
+    print(f"  {key}: {value}")
+# Validate expected keys
+for key in ["last_update_ms", "operating_status", "power", "total_yield", "daily_yield",
+            "inverter_link_state", "failure_streak_s"]:
+    if key not in info:
+        print(f"  FAIL: Missing key '{key}'")
+        failed = True
 print()
 
 # --- GET /api/logs ---

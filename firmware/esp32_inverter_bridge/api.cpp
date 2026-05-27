@@ -6,9 +6,11 @@
 #include "inverter_controller.h"
 #include "inverter_data.h"
 #include "api_helper.h"
+#include "web_ui.h"
 
 const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
-  {"GET", "/", "API discovery and endpoint overview"},
+  {"GET", "/", "Web UI dashboard"},
+  {"GET", "/api", "API discovery and endpoint overview"},
   {"GET", "/api/health", "Bridge connectivity state: WiFi, Ethernet, inverter host, IPs"},
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
   {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
@@ -17,7 +19,8 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
-  {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"}
+  {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"},
+  {"POST", "/api/interval", "Set base poll interval in ms: {\"interval\":20000} (range 5000-300000)"}
 };
 
 void handleApiClient(EthernetClient& client) {
@@ -86,6 +89,11 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/") {
+    sendFlashHtmlResponse(client, WEB_UI_HTML, WEB_UI_HTML_LEN);
+    return;
+  }
+
+  if (method == "GET" && path == "/api") {
     sendHttpResponse(client, 200, "application/json", buildApiDiscoveryJson());
     return;
   }
@@ -130,16 +138,31 @@ void handleApiClient(EthernetClient& client) {
     sendHttpResponse(client, 200, "application/json", response);
     return;
   }
-  
-  if (method == "GET" && path == "/api/info") {
-    // Retrieve latest cached inverter telemetry from polling task
-    HomeData inverterData = getInverterData();
-    if (!inverterData.isValid()) {
-      // Polling hasn't completed yet or WiFi connection failed
-      sendHttpResponse(client, 502, "application/json", buildErrorJson("No inverter telemetry data available yet"));
+
+  if (method == "POST" && path == "/api/interval") {
+    String rawInterval = getJsonValueByKey(body, "interval");
+    if (rawInterval.length() == 0) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain interval field (milliseconds)"));
       return;
     }
-
+    int intervalMs = 0;
+    if (!parseStringToInt(rawInterval, intervalMs) || intervalMs < 5000 || intervalMs > 300000) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("interval must be 5000-300000 ms"));
+      return;
+    }
+    InverterController::getInstance().setBasePollIntervalMs((uint32_t)intervalMs);
+    String response = JsonBuilder()
+      .addNumber("base_poll_interval_ms", String(intervalMs))
+      .addNumber("effective_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+  
+  if (method == "GET" && path == "/api/info") {
+    // Always return cached telemetry — empty strings if no poll has succeeded yet.
+    // Consumers decide how to handle missing data; the bridge just reports state.
+    HomeData inverterData = getInverterData();
     unsigned long lastUpdateMs = InverterController::getInstance().getLastUpdateMs();
     sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs));
     return;

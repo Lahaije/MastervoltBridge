@@ -62,10 +62,13 @@ ethernet_bridge.cpp/h (network layer)
 
 api.cpp / api.h (request routing)
   ├── handleApiClient() — routes all REST endpoints
-  └── deps: api_helper, InverterController, inverter_data
+  └── deps: api_helper, InverterController, inverter_data, web_ui
 
 api_helper.cpp/h (HTTP/JSON utilities)
-  └── sendHttpResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
+  └── sendHttpResponse(), sendFlashHtmlResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
+
+web_ui.h (self-contained HTML dashboard)
+  └── WEB_UI_HTML[] PROGMEM raw literal (~7.7 KB), WEB_UI_HTML_LEN, static_assert < 16 KB
 
 esp32_inverter_bridge.ino (main entry)
   └── starts ethernetBridgeStartTask() + InverterController::initialize()
@@ -202,7 +205,7 @@ Read `settings.h` directly for current values. Do not duplicate constant values 
 ## File Map
 
 **Firmware** (`firmware/esp32_inverter_bridge/`):
-`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_link_state.{h,cpp}`, `inverter_controller.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `settings.{h,cpp}`, `logger.h`
+`esp32_inverter_bridge.ino`, `wifi_bridge.{h,cpp}`, `inverter_data.{h,cpp}`, `inverter_link_state.{h,cpp}`, `inverter_controller.{h,cpp}`, `ethernet_bridge.{h,cpp}`, `api.{h,cpp}`, `api_helper.{h,cpp}`, `web_ui.h`, `settings.{h,cpp}`, `logger.h`
 
 **Documentation** (`docs/`):
 `API_REFERENCE.md`, `SETUP_README.md`, `WIRING_README.md`, `ESP32_UPLOAD_README.md`, `TEST_README.md`

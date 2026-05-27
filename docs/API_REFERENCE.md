@@ -12,8 +12,8 @@ http://192.168.1.48:8080
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | / | API discovery (current) -> fixed HTML Web UI (planned) |
-| GET | /api | API discovery JSON (planned stable path) |
+| GET | / | Web UI dashboard (self-contained HTML) |
+| GET | /api | API discovery JSON |
 | GET | /api/health | Bridge network/inverter status |
 | GET | /api/logs | Log buffer (up to 1000 entries) |
 | GET | /api/info | Cached inverter /home telemetry |
@@ -26,28 +26,31 @@ http://192.168.1.48:8080
 
 ## GET /
 
-Returns discovery JSON containing all current endpoints.
+Returns a self-contained HTML dashboard page (`web_ui.h` PROGMEM blob).
 
-Planned requirement (documentation-first, not yet implemented):
+Implementation details:
 
-- GET / must return a fixed HTML dashboard page.
-- HTML must be stored as one compile-time constant blob (single raw string literal).
-- HTML response path must not build content dynamically with String concatenation.
-- Response must be served in bounded chunks with connection checks on each write.
-- Content-Length must be derived from compile-time size (`sizeof(WEB_UI_HTML) - 1`).
-- CSS and JS stay inline in the same HTML blob (single request, no external assets).
+- HTML stored as a single compile-time constant (`WEB_UI_HTML[]` in PROGMEM).
+- Served in 512-byte chunks via `sendFlashHtmlResponse()` with `client.connected()` checks.
+- Content-Length derived from `sizeof(WEB_UI_HTML) - 1` (compile-time).
+- CSS and JS inline — single request, no external assets.
+- JS auto-refreshes `/api/health` + `/api/info` every 5 seconds (serialized, not parallel).
+- Gracefully handles 502 from `/api/info` when inverter is offline.
 
-Design intent:
+UI controls:
 
-- Prevent heap fragmentation on long-running devices.
-- Keep ENC28J60/UIPEthernet socket usage predictable and stable.
+- Power limit: input + Apply → POST /api/power
+- Shadow function: checkbox + Apply → POST /api/shadow
+- Debug mode: checkbox + Apply → POST /api/debug
+- Wake Pulse button → GET /pulse
+- WiFi Off button → POST /wifi/off
 
 ## GET /api
 
-Planned stable discovery endpoint for machine clients.
+Returns discovery JSON listing all available endpoints.
 
-- Returns discovery JSON containing all current endpoints.
-- This endpoint remains JSON even after GET / becomes HTML.
+- Stable machine-readable endpoint for automation and tooling.
+- GET / serves HTML; GET /api remains JSON.
 
 ## GET /api/health
 
