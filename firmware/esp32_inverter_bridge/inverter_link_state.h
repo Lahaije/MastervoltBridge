@@ -71,4 +71,19 @@ uint32_t intervalForState(InverterLinkState s, uint32_t baseMs);
 /** Human-readable name of a state (e.g. "ONLINE"). Never returns nullptr. */
 const char* toString(InverterLinkState s);
 
+// ---------------------------------------------------------------------------
+// State-change hooks — extensible callbacks for transitions.
+// Hooks allow external code to react to state changes without modifying
+// inverter_monitor.cpp. Each hook is called when transitioning from->to.
+// ---------------------------------------------------------------------------
+
+/** Hook function signature: called on matching state transition. */
+typedef void (*StateChangeHook)(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
+
+/** Register a hook for a specific transition. Returns false if no more slots. */
+bool registerStateChangeHook(InverterLinkState from, InverterLinkState to, StateChangeHook callback);
+
+/** Dispatch all registered hooks for a transition. Called from inverter_monitor.cpp. */
+void dispatchStateChangeHooks(InverterLinkState from, InverterLinkState to, uint32_t streakMs);
+
 #endif  // INVERTER_LINK_STATE_H

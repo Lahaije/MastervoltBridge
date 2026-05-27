@@ -238,6 +238,9 @@ void InverterMonitor::onLinkStateTransition(InverterLinkState from,
     // RETRYING -> ONLINE: quick recovery, no action needed
   }
   // All other transitions: interval change was already handled by intervalForState().
+
+  // Dispatch registered hooks (optional; allows external code to react)
+  dispatchStateChangeHooks(from, to, streakMs);
 }
 
 void InverterMonitor::fetchAndCacheSettings() {
