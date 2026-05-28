@@ -6,10 +6,6 @@
 #include "logger.h"
 #include "wifi_bridge.h"
 
-// State-transition logic (linkStateFromStreak, intervalForState) lives here in
-// inverter_controller.cpp — it is the monitor's decision-making, not state storage.
-// State storage, hook registry, and toString() live in inverter_link_state.cpp.
-
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
 constexpr const char* MULTIPART_BOUNDARY = "FormBoundary7MA4YWxkTrZu0gW";
@@ -84,8 +80,7 @@ void InverterController::initialize() {
   REGISTER_STATE_CHANGE_HOOK(InverterLinkState::BACKOFF,  InverterLinkState::ONLINE, updateAllInverterParam);
   REGISTER_STATE_CHANGE_HOOK(InverterLinkState::DORMANT,  InverterLinkState::ONLINE, updateAllInverterParam);
 
-  // Create polling task only after hooks are registered so they are ready
-  // before the task transitions STARTING -> ONLINE.
+  // Create polling task.
   if (pollingTaskHandle == nullptr) {
     xTaskCreatePinnedToCore(
       pollingTaskEntry,
@@ -159,8 +154,6 @@ void InverterController::linkStateFromStreak(uint32_t streakMs) {
 
 void InverterController::runPollingTask() {
   failureStartMs = 0;
-  // globalInverterState is already STARTING at boot. Initialize the poll interval
-  // once from settings; later transitions own any overrides.
   currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 
   while (true) {
@@ -186,7 +179,7 @@ void InverterController::runPollingTask() {
 
             appLogger.log(String("[INVERTER-CONTROLLER] Poll #") + successfulPolls +
                           ": Status=" + parsedData.operatingStatus +
-                          " Power=" + parsedData.instantaneousPower + "W");
+                          " Power=" + (parsedData.hasPower ? String(parsedData.instantaneousPowerW, 1) : "?") + "W");
           } else if (dataMutex != nullptr && debugMode) {
             appLogger.log("[INVERTER-CONTROLLER] dataMutex timeout while caching /home poll result");
           }
@@ -208,10 +201,11 @@ void InverterController::runPollingTask() {
       linkStateFromStreak(0);
 
       // Drain any deferred shadow/power-limit set requests now that we know
-      // the inverter is reachable. See setPower() / setShadow() / applyPendingSettings().
-      if (pendingSettings_) {
-        applyPendingSettings();
-      }
+      // the inverter is reachable.
+      applyPendingSettings();
+
+      // Backfill any unknown cached settings.
+      refreshUnknownSettingsAfterPoll();
     } else {
       // Poll failed — accumulate streak and check thresholds.
       if (failureStartMs == 0) failureStartMs = millis();
@@ -257,28 +251,14 @@ unsigned long InverterController::getLastUpdateMs() {
 }
 
 bool InverterController::getShadow(bool& enabledOut) {
-  if (dataMutex == nullptr) return false;
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) {
-    return false;
-  }
-  bool known = shadowKnown_;
-  bool value = shadowOn_;
-  xSemaphoreGive(dataMutex);
-  if (!known) return false;
-  enabledOut = value;
+  if (!shadowKnown_) return false;
+  enabledOut = shadowOn_;
   return true;
 }
 
 bool InverterController::getPowerLimit(uint16_t& wattsOut) {
-  if (dataMutex == nullptr) return false;
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) {
-    return false;
-  }
-  bool known = powerLimitKnown_;
-  uint16_t value = powerLimitW_;
-  xSemaphoreGive(dataMutex);
-  if (!known) return false;
-  wattsOut = value;
+  if (!powerLimitKnown_) return false;
+  wattsOut = powerLimitW_;
   return true;
 }
 
@@ -313,82 +293,70 @@ void InverterController::updatePollFrequency(InverterLinkState /*from*/,
 // Transition hook: first-ever ONLINE after boot.
 void InverterController::loadSettingsOnBoot(InverterLinkState /*from*/,
                                          InverterLinkState /*to*/) {
-  appLogger.log("[INVERTER-CONTROLLER] First connection; fetching shadow + power limit");
-  getInstance().fetchAndCacheSettings();
+  appLogger.log("[INVERTER-CONTROLLER] First connection; invalidating shadow + power limit cache");
+  getInstance().shadowKnown_ = false;
+  getInstance().powerLimitKnown_ = false;
 }
 
 // Transition hook: ONLINE recovery after prolonged outage.
 void InverterController::updateAllInverterParam(InverterLinkState from,
                                              InverterLinkState /*to*/) {
   appLogger.log(String("[INVERTER-CONTROLLER] Recovered from ") + toString(from) +
-                "; refreshing shadow + power limit");
-  getInstance().fetchAndCacheSettings();
+                "; invalidating shadow + power limit cache");
+  getInstance().shadowKnown_ = false;
+  getInstance().powerLimitKnown_ = false;
 }
 
-void InverterController::fetchAndCacheSettings() {
+void InverterController::fetchAndCacheShadow() {
   // Shadow: GET /shadow -> "<0|1>\n<interval>\n"
-  {
-    String body, err;
-    int code = 0;
-    if (fetchInverterData("GET", "/shadow", "", body, code, err) && code == 200) {
-      body.trim();
-      bool enabled = body.length() > 0 && body[0] == '1';
-      if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) == pdTRUE) {
-        shadowOn_ = enabled;
-        shadowKnown_ = true;
-        xSemaphoreGive(dataMutex);
-      } else if (dataMutex != nullptr && debugMode) {
-        appLogger.log("[INVERTER-CONTROLLER] dataMutex timeout while caching /shadow state");
-      }
-      appLogger.log(String("[INVERTER-CONTROLLER] Shadow read: ") + (enabled ? "ON" : "OFF"));
-    } else {
-      appLogger.log(String("[INVERTER-CONTROLLER] Failed to read shadow: ") + err);
-    }
+  String body, err;
+  int code = 0;
+  if (fetchInverterData("GET", "/shadow", "", body, code, err) && code == 200) {
+    body.trim();
+    bool enabled = body.length() > 0 && body[0] == '1';
+    shadowOn_ = enabled;
+    shadowKnown_ = true;
+    appLogger.log(String("[INVERTER-CONTROLLER] Shadow read: ") + (enabled ? "ON" : "OFF"));
+  } else {
+    appLogger.log(String("[INVERTER-CONTROLLER] Failed to read shadow: ") + err);
   }
+}
+
+void InverterController::fetchAndCachePowerLimit() {
   // Power limit: GET /power -> "<watts>\n"
-  {
-    String body, err;
-    int code = 0;
-    if (fetchInverterData("GET", "/power", "", body, code, err) && code == 200) {
-      body.trim();
-      int watts = body.toInt();
-      if (watts >= 0 && watts <= INVERTER_MAX_POWER_WATTS) {
-        uint16_t w = static_cast<uint16_t>(watts);
-        if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) == pdTRUE) {
-          powerLimitW_ = w;
-          powerLimitKnown_ = true;
-          xSemaphoreGive(dataMutex);
-        } else if (dataMutex != nullptr && debugMode) {
-          appLogger.log("[INVERTER-CONTROLLER] dataMutex timeout while caching /power limit");
-        }
-        appLogger.log(String("[INVERTER-CONTROLLER] Power limit read: ") + watts + "W");
-      } else {
-        appLogger.log(String("[INVERTER-CONTROLLER] Invalid /power response: '") + body + "'");
-      }
+  String body, err;
+  int code = 0;
+  if (fetchInverterData("GET", "/power", "", body, code, err) && code == 200) {
+    body.trim();
+    int watts = body.toInt();
+    if (watts >= 0 && watts <= INVERTER_MAX_POWER_WATTS) {
+      uint16_t w = static_cast<uint16_t>(watts);
+      powerLimitW_ = w;
+      powerLimitKnown_ = true;
+      appLogger.log(String("[INVERTER-CONTROLLER] Power limit read: ") + watts + "W");
     } else {
-      appLogger.log(String("[INVERTER-CONTROLLER] Failed to read power limit: ") + err);
+      appLogger.log(String("[INVERTER-CONTROLLER] Invalid /power response: '") + body + "'");
     }
+  } else {
+    appLogger.log(String("[INVERTER-CONTROLLER] Failed to read power limit: ") + err);
+  }
+}
+
+void InverterController::refreshUnknownSettingsAfterPoll() {
+  if (!powerLimitKnown_) {
+    if (debugMode) appLogger.log("[INVERTER-CONTROLLER] Power limit unknown; refreshing /power");
+    fetchAndCachePowerLimit();
+  }
+  if (!shadowKnown_) {
+    if (debugMode) appLogger.log("[INVERTER-CONTROLLER] Shadow state unknown; refreshing /shadow");
+    fetchAndCacheShadow();
   }
 }
 
 // -----------------------------------------------------------------------------
-// Setter implementations: setPower / setShadow both POST to the inverter's
-// /postoptions form endpoint via postOptions(). The payload differs per
-// setter — power uses enable_mxpower + maxpower; shadow uses enShadow only.
-// Partial submissions are accepted by the inverter (fields not present are
-// left unchanged), so there is no need to read the other field's state first.
-//
-// Flow:
-//   1. Validate input. Out-of-range -> Rejected.
-//   2. POST the field-specific payload to /postoptions. On HTTP failure,
-//      queue the desired value and return Deferred.
-//   3. On success, re-read both values live from the inverter (cache
-//      refresh). Clear that field's pending flag if it now matches. Return
-//      Applied.
-//
-// Step lifecycle for the queue (clearing the master flag after retry) lives
-// in applyPendingSettings(), called from the polling task on every successful
-// /home telegram.
+// setPower / setShadow: POST a field-specific payload to /postoptions.
+// On failure, queue the desired value (Deferred). On success, invalidate
+// the Known cache flag and attempt a readback (Applied).
 // -----------------------------------------------------------------------------
 
 InverterController::SetResult InverterController::setPower(int watts, String& responseBody,
@@ -410,23 +378,15 @@ InverterController::SetResult InverterController::setPower(int watts, String& re
     return SetResult::Deferred;
   }
 
-  // 3. Refresh cache from inverter; clear pending if it now matches.
-  fetchAndCacheSettings();
-  uint16_t readback = 0;
-  if (getPowerLimit(readback) && readback == static_cast<uint16_t>(watts)) {
-    if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) == pdTRUE) {
-      powerLimitDesiredPending_ = false;
-      pendingSettings_ = shadowDesiredPending_;
-      xSemaphoreGive(dataMutex);
-    }
-  }
+  // 3. POST succeeded: clear pending flag, invalidate cache, attempt readback.
+  powerLimitDesiredPending_ = false;
+  powerLimitKnown_ = false;
+  fetchAndCachePowerLimit();
   return SetResult::Applied;
 }
 
 InverterController::SetResult InverterController::setShadow(bool enabled, String& responseBody,
                                                      int& httpCode, String& errorMessage) {
-  // 1. Validation — caller has already coerced to bool, nothing to reject.
-
   // 2. POST shadow-only payload.
   String payload = String("enShadow=") + (enabled ? "on" : "off");
   if (!postOptions(payload, responseBody, httpCode, errorMessage)) {
@@ -435,16 +395,10 @@ InverterController::SetResult InverterController::setShadow(bool enabled, String
     return SetResult::Deferred;
   }
 
-  // 3. Refresh cache from inverter; clear pending if it now matches.
-  fetchAndCacheSettings();
-  bool readback = false;
-  if (getShadow(readback) && readback == enabled) {
-    if (dataMutex != nullptr && xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) == pdTRUE) {
-      shadowDesiredPending_ = false;
-      pendingSettings_ = powerLimitDesiredPending_;
-      xSemaphoreGive(dataMutex);
-    }
-  }
+  // 3. POST succeeded: clear pending flag, invalidate cache, attempt readback.
+  shadowDesiredPending_ = false;
+  shadowKnown_ = false;
+  fetchAndCacheShadow();
   return SetResult::Applied;
 }
 
@@ -457,95 +411,69 @@ bool InverterController::postOptions(const String& payload, String& responseBody
 }
 
 void InverterController::queueShadowDesired(bool enabled) {
-  if (dataMutex == nullptr) return;
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) return;
   shadowDesired_ = enabled;
   shadowDesiredPending_ = true;
-  pendingSettings_ = true;
-  xSemaphoreGive(dataMutex);
   appLogger.log(String("[INVERTER-CONTROLLER] Queued desired shadow=") + (enabled ? "ON" : "OFF"));
 }
 
 void InverterController::queuePowerLimitDesired(uint16_t watts) {
-  if (dataMutex == nullptr) return;
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) return;
   powerLimitDesired_ = watts;
   powerLimitDesiredPending_ = true;
-  pendingSettings_ = true;
-  xSemaphoreGive(dataMutex);
   appLogger.log(String("[INVERTER-CONTROLLER] Queued desired power_limit=") + watts + "W");
 }
 
 bool InverterController::hasPendingSettings() {
-  return pendingSettings_;  // volatile bool, atomic read on ESP32
+  return shadowDesiredPending_ || powerLimitDesiredPending_;
+}
+
+void InverterController::applyPendingSettings() {
+  applyPendingPowerLimit();
+  applyPendingShadow();
 }
 
 // -----------------------------------------------------------------------------
-// applyPendingSettings — called from the polling task after a successful
-// /home telegram when pendingSettings_ is set. See the lifecycle comment on
-// setPower() above.
+// applyPendingPowerLimit / applyPendingShadow — retry queued writes after a
+// successful /home poll. Each no-ops unless its own field is queued.
 // -----------------------------------------------------------------------------
-void InverterController::applyPendingSettings() {
-  // Snapshot pending desired state under the mutex.
-  bool sPending = false, sDesired = false;
-  bool pPending = false;
-  uint16_t pDesired = 0;
-  if (dataMutex == nullptr) return;
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) return;
-  sPending = shadowDesiredPending_;
-  sDesired = shadowDesired_;
-  pPending = powerLimitDesiredPending_;
-  pDesired = powerLimitDesired_;
-  xSemaphoreGive(dataMutex);
-
-  if (!sPending && !pPending) {
-    // Master flag was raised but no desired values queued: clear and exit.
-    pendingSettings_ = false;
+void InverterController::applyPendingPowerLimit() {
+  if (!powerLimitDesiredPending_) {
     return;
   }
 
-  // POST each pending field independently via /postoptions. Partial submissions
-  // are accepted by the inverter; the omitted field is left unchanged. If a
-  // POST fails, keep the flag raised and retry on the next successful poll.
-  if (pPending) {
-    String resp, err;
-    int code = 0;
-    String payload = String("enable_mxpower=on\nmaxpower=") + pDesired;
-    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingSettings: posting power=") + pDesired + "W");
-    if (!postOptions(payload, resp, code, err)) {
-      appLogger.log(String("[INVERTER-CONTROLLER] applyPendingSettings power POST failed: ") + err);
-      return;  // keep flags raised, retry next poll
-    }
-  }
-  if (sPending) {
-    String resp, err;
-    int code = 0;
-    String payload = String("enShadow=") + (sDesired ? "on" : "off");
-    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingSettings: posting shadow=") +
-                  (sDesired ? "ON" : "OFF"));
-    if (!postOptions(payload, resp, code, err)) {
-      appLogger.log(String("[INVERTER-CONTROLLER] applyPendingSettings shadow POST failed: ") + err);
-      return;  // keep flags raised, retry next poll
-    }
+  String resp, err;
+  int code = 0;
+  String payload = String("enable_mxpower=on\nmaxpower=") + powerLimitDesired_;
+  appLogger.log(String("[INVERTER-CONTROLLER] applyPendingPowerLimit: posting power=") + powerLimitDesired_ + "W");
+  if (!postOptions(payload, resp, code, err)) {
+    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingPowerLimit POST failed: ") + err);
+    return;
   }
 
-  // Re-read live from inverter to verify; updates shadowKnown_/powerLimitKnown_.
-  fetchAndCacheSettings();
+  powerLimitDesiredPending_ = false;
+  powerLimitKnown_ = false;
+  fetchAndCachePowerLimit();
+  appLogger.log("[INVERTER-CONTROLLER] applyPendingPowerLimit: applied, readback attempted");
+}
 
-  // Check convergence and clear flags.
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) return;
-  bool allMatch = true;
-  if (sPending && (!shadowKnown_ || shadowOn_ != sDesired))      allMatch = false;
-  if (pPending && (!powerLimitKnown_ || powerLimitW_ != pDesired)) allMatch = false;
-  if (allMatch) {
-    if (sPending) shadowDesiredPending_ = false;
-    if (pPending) powerLimitDesiredPending_ = false;
-    pendingSettings_ = shadowDesiredPending_ || powerLimitDesiredPending_;
-    appLogger.log("[INVERTER-CONTROLLER] applyPendingSettings: converged, flags cleared");
-  } else {
-    appLogger.log("[INVERTER-CONTROLLER] applyPendingSettings: mismatch persists, will retry");
+void InverterController::applyPendingShadow() {
+  if (!shadowDesiredPending_) {
+    return;
   }
-  xSemaphoreGive(dataMutex);
+
+  String resp, err;
+  int code = 0;
+  String payload = String("enShadow=") + (shadowDesired_ ? "on" : "off");
+  appLogger.log(String("[INVERTER-CONTROLLER] applyPendingShadow: posting shadow=") +
+                (shadowDesired_ ? "ON" : "OFF"));
+  if (!postOptions(payload, resp, code, err)) {
+    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingShadow POST failed: ") + err);
+    return;
+  }
+
+  shadowDesiredPending_ = false;
+  shadowKnown_ = false;
+  fetchAndCacheShadow();
+  appLogger.log("[INVERTER-CONTROLLER] applyPendingShadow: applied, readback attempted");
 }
 
 bool InverterController::fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage) {

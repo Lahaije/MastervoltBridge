@@ -52,14 +52,16 @@ public:
   /**
    * Result of a setShadow / setPower call.
    *
-   *  Applied  — value validated, POSTed to inverter, and re-read from
-   *             inverter (cache updated). The readback value should match
-   *             the desired value but the caller can verify via getShadow()
-   *             / getPowerLimit() if needed.
-  *  Deferred — value validated, but could not be applied right now (POST
-  *             failed). The
+    *  Applied  — value validated and POSTed to the inverter. The controller
+    *             then invalidates the corresponding cached read-back and
+    *             attempts an immediate refresh. If that read-back fails, the
+    *             cache remains unknown and the polling task retries it on the
+    *             next successful /home telegram.
+    *  Deferred — value validated, but could not be applied right now (POST
+    *             failed).
    *             desired value is queued; the polling task will retry it on
-   *             the next successful /home telegram via applyPendingSettings().
+    *             the next successful /home telegram via the corresponding
+    *             per-field applyPending...() helper.
    *             The cached read-back fields are NOT updated.
    *  Rejected — value failed validation (out of range, malformed). Nothing
    *             is queued, nothing is sent.
@@ -68,15 +70,15 @@ public:
 
   /**
    * Set the inverter power limit.
-   * On Applied, the cached value is refreshed from the inverter and any
-   * pending desired-power flag is cleared if it now matches.
+    * On Applied, the queued desired-power flag is cleared, the cached value is
+    * invalidated, and an immediate read-back is attempted.
    */
   SetResult setPower(int watts, String& responseBody, int& httpCode, String& errorMessage);
 
   /**
    * Enable or disable the inverter shadow function.
-   * On Applied, the cached value is refreshed from the inverter and any
-   * pending desired-shadow flag is cleared if it now matches.
+    * On Applied, the queued desired-shadow flag is cleared, the cached value is
+    * invalidated, and an immediate read-back is attempted.
    */
   SetResult setShadow(bool enabled, String& responseBody, int& httpCode, String& errorMessage);
 
@@ -87,7 +89,6 @@ public:
 
   /**
    * Current link state (see InverterLinkState above).
-   * Written only by the polling task; safe to read from any context.
    */
   InverterLinkState getLinkState();
 
@@ -110,25 +111,24 @@ public:
   void setPollIntervalMs(uint32_t ms);
 
   /**
-   * Cached shadow function state. Returns true if a value has been read from
-   * the inverter at least once since boot (cache populated by
-   * fetchAndCacheSettings()), in which case the on/off state is written to
-   * *enabledOut*. Returns false when no value has ever been cached or when
-   * the data mutex could not be acquired.
+   * Cached shadow function state. Returns true if a value has been successfully
+   * read from the inverter at least once since boot, in which case the on/off
+   * state is written to *enabledOut*. Returns false when shadowKnown_ is false
+   * (never fetched, or invalidated pending a readback).
    */
   bool getShadow(bool& enabledOut);
 
   /**
    * Cached inverter power limit in watts. Returns true if a value has been
-   * read from the inverter at least once since boot, in which case the limit
-   * is written to *wattsOut*. Returns false when no value has ever been
-   * cached or when the data mutex could not be acquired.
+   * successfully read from the inverter at least once since boot, in which
+   * case the limit is written to *wattsOut*. Returns false when
+   * powerLimitKnown_ is false (never fetched, or invalidated pending a readback).
    */
   bool getPowerLimit(uint16_t& wattsOut);
 
   /**
    * Returns true if at least one desired shadow / power-limit value is
-   * currently queued for delayed apply (see applyPendingSettings()).
+    * currently queued for delayed apply.
    */
   bool hasPendingSettings();
 
@@ -164,10 +164,14 @@ private:
   static void loadSettingsOnBoot(InverterLinkState from, InverterLinkState to);
   static void updateAllInverterParam(InverterLinkState from, InverterLinkState to);
 
-  // Fetch shadow state and power limit live from the inverter and update
-  // the in-memory cache. Called on first-ever connection and after recovery
-  // from an extended outage.
-  void fetchAndCacheSettings();
+  // Fetch shadow/power state live from the inverter and update the in-memory
+  // cache. Called independently so only the unknown or invalidated field is
+  // re-fetched.
+  void fetchAndCacheShadow();
+  void fetchAndCachePowerLimit();
+
+  // Called after a successful /home poll to backfill any unknown setting.
+  void refreshUnknownSettingsAfterPoll();
 
   // POST a payload to the inverter's /postoptions form endpoint. Both shadow
   // and power-limit setters share this endpoint; only the payload differs:
@@ -178,13 +182,19 @@ private:
   bool postOptions(const String& payload, String& responseBody,
                    int& httpCode, String& errorMessage);
 
-  // Reconciliation loop. Called from runPollingTask() after a successful
-  // /home telegram when pendingSettings_ is set. Recomputes the desired
-  // composite state, posts if it differs from the cached read-back, re-reads
-  // both values from the inverter, and clears the pending flag on full match.
+  // Called after a successful /home poll to retry any queued setting writes.
+  // This is a thin wrapper over the per-field applyPending...() helpers.
   void applyPendingSettings();
 
-  // Helpers to queue a desired value under dataMutex; also raise pendingSettings_.
+  // Retry a queued power-limit write after a successful /home poll.
+  // No-ops unless powerLimitDesiredPending_ is set.
+  void applyPendingPowerLimit();
+
+  // Retry a queued shadow write after a successful /home poll.
+  // No-ops unless shadowDesiredPending_ is set.
+  void applyPendingShadow();
+
+  // Helpers to queue a desired value for delayed apply.
   void queueShadowDesired(bool enabled);
   void queuePowerLimitDesired(uint16_t watts);
 
@@ -197,27 +207,21 @@ private:
   uint32_t failedPolls = 0;
   bool isInitialized = false;
 
-  // Link-state machine tracking. The actual state lives in inverter_link_state.cpp
-  // as globalInverterState, accessed via setInverterState() and getInverterState().
-  // failureStartMs is written only by the polling task; reads from other tasks are atomic.
+  // Link-state machine tracking.
   uint32_t failureStartMs = 0;          // millis() when current streak began; 0 if none
   uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 
   // Cached shadow + power-limit read back from the inverter.
-  // Protected by dataMutex. *Known = false until first successful read.
+  // *Known = false until first successful read, or after invalidation.
   bool shadowKnown_ = false;
   bool shadowOn_ = false;
   bool powerLimitKnown_ = false;
   uint16_t powerLimitW_ = 0;
 
   // Desired-state convergence: when an API set call cannot reach the inverter
-  // the desired value is queued here and the
-  // master flag is raised. The polling task drains it via applyPendingSettings()
-  // on the next successful /home telegram. Protected by dataMutex.
-  // pendingSettings_ is the master "anything to do?" flag — equivalent to
-  // (shadowDesiredPending_ || powerLimitDesiredPending_) but stored explicitly
-  // to keep the polling task's per-poll check O(1) without taking the mutex.
-  volatile bool pendingSettings_           = false;
+  // the desired value is queued here. The polling task drains each queued
+  // field independently via the corresponding applyPending...() helper on the
+  // next successful /home telegram.
   bool          shadowDesiredPending_      = false;
   bool          shadowDesired_             = false;
   bool          powerLimitDesiredPending_  = false;
