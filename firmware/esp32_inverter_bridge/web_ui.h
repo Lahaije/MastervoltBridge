@@ -49,7 +49,10 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 </head>
 <body>
 <header>
-<h1>Mastervolt Bridge</h1>
+<div>
+  <h1>Mastervolt Bridge</h1>
+  <div style="font-size:12px;color:var(--muted);margin-top:2px;" id="fwVersion">-</div>
+</div>
 <span class="live" id="lastFetch">connecting...</span>
 </header>
 <main>
@@ -148,6 +151,9 @@ async function refresh(){
 
     try{
       const info=await jget('/api/info');
+      if(info.firmware_version){
+        $('fwVersion').textContent='Firmware: '+info.firmware_version;
+      }
       $('sPower').textContent=info.power?(info.power+' W'):'-';
       $('sDaily').textContent=fmtKwh(info.daily_yield);
       $('sTotal').textContent=fmtKwh(info.total_yield);
