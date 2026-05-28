@@ -76,7 +76,7 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 <h2>Polling</h2>
 <div class="row">
 <label for="iInterval">Interval (s)</label>
-<input type="number" id="iInterval" min="1" max="300" step="1">
+<input type="number" id="iInterval" min="1" max="300" step="1" style="flex:0 0 5ch;min-width:unset">
 <button class="primary" id="bInterval">Apply</button>
 </div>
 <div class="msg" id="mInterval"></div>
