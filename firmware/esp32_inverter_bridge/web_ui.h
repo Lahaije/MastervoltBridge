@@ -73,6 +73,16 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 </div>
 
 <div class="card">
+<h2>Polling</h2>
+<div class="row">
+<label for="iInterval">Interval (s)</label>
+<input type="number" id="iInterval" min="1" max="300" step="1">
+<button class="primary" id="bInterval">Apply</button>
+</div>
+<div class="msg" id="mInterval"></div>
+</div>
+
+<div class="card">
 <h2>Power Limit</h2>
 <div class="row" id="rowPowerUnknown">
 <label>Status</label>
@@ -113,20 +123,6 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 <button id="bWifiOff" class="warn">Inverter WiFi Off</button>
 </div>
 <div class="msg" id="mAction"></div>
-</div>
-
-<div class="card">
-<h2>Polling</h2>
-<div class="grid">
-<div class="k">Interval</div><div class="v" id="sPollInt">-</div>
-<div class="k">State</div><div class="v" id="sPollState">-</div>
-</div>
-<div class="row">
-<label for="iInterval">Interval (s)</label>
-<input type="number" id="iInterval" min="1" max="300" step="1">
-<button class="primary" id="bInterval">Apply</button>
-</div>
-<div class="msg" id="mInterval"></div>
 </div>
 
 </main>
@@ -190,8 +186,7 @@ async function refresh(){
       $('sOp').textContent=info.operating_status?(info.operating_status==='1'?'normal':'code '+info.operating_status):'-';
       $('sLink').innerHTML=pill(info.inverter_link_state||'?',info.inverter_link_state==='ONLINE'?'ok':info.inverter_link_state==='DORMANT'?'bad':'warn');
       $('sStreak').textContent=(info.failure_streak_s||0)+' s';
-      $('sPollInt').textContent=(info.poll_interval_ms/1000)+' s';
-      $('sPollState').textContent=info.inverter_link_state||'-';
+      $('iInterval').value=String(Math.round(info.poll_interval_ms/1000));
 
       syncPowerLimit(info);
       syncShadow(info);
