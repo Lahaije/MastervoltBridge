@@ -46,7 +46,7 @@ Both paths log structured start/complete entries tagged with path name and durat
 - `show_all.py` — dump all entries in chronological order
 </background>
 
-<commands>
+<examples>
 **1. Show All Log Entries (Chronological):**
 ```powershell
 python skills/log-analysis/show_all.py
@@ -81,9 +81,9 @@ All commands accept `--base-url http://192.168.1.48:8080` for custom bridge URL.
 Output saved to `output/powerplot.png` by default (git-ignored, overwritten each run).
 
 **Requires**: `matplotlib` — install with `uv pip install matplotlib`.
-</commands>
+</examples>
 
-<script_outputs>
+<validation>
 **show_all.py** reports:
 - Total entries, boot time, last entry time, total uptime
 - Chronological list with formatted timestamps (Xm SSs)
@@ -108,7 +108,7 @@ Output saved to `output/powerplot.png` by default (git-ignored, overwritten each
 - Disconnection episodes as shaded bands
 - Backoff transitions as dashed vertical markers
 - Post-backoff episode labels thinned for readability
-</script_outputs>
+</validation>
 
 <log_patterns>
 | Pattern | Source | Meaning |

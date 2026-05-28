@@ -21,7 +21,8 @@ struct HomeData {
   String operatingMode;
   String inverterModel;
   String inverterMacAddress;
-  String instantaneousPower;
+  float instantaneousPowerW = 0.0f;
+  bool hasPower = false;
   float lifetimeEnergyKwh = 0.0f;
   float dailySessionEnergyKwh = 0.0f;
   bool hasLifetimeEnergy = false;

@@ -155,7 +155,7 @@ scripts/:
 </complex_skill_template>
 </quick_reference>
 
-<reference_index>
+<reference_guides>
 <title>Domain Knowledge</title>
 <description>All in `references/`:</description>
 
@@ -173,12 +173,12 @@ scripts/:
 
 <assets>
 **Assets:** using-templates.md, using-scripts.md
-assets>
+</assets>
 
 <advanced>
 **Advanced:** executable-code.md, api-security.md, iteration-and-testing.md
 </advanced>
-</reference_index>
+</reference_guides>
 
 <workflows_index>
 <title>Workflows</title>

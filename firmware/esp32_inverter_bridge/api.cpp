@@ -65,12 +65,7 @@ void handleApiClient(EthernetClient& client) {
     }
   }
 
-  // Read request body if Content-Length > 0.
-  // client.setTimeout() only covers Stream read calls (readStringUntil, readBytes, etc.),
-  // NOT this manual polling loop. Without an explicit deadline a client that sends
-  // Content-Length: N but stalls before delivering all bytes would block the single
-  // Ethernet service task indefinitely. We therefore cap total body-read time to
-  // API_CLIENT_TIMEOUT_MS so a slow or malicious client cannot monopolize the task.
+  // Read request body if Content-Length > 0. Enforces a deadline to prevent stalls.
   String body;
   if (contentLength > 0) {
     body.reserve(contentLength);
@@ -109,9 +104,6 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/pulse") {
-    // forceReconnect() pulses the wake GPIO and then runs a fresh connect
-    // attempt using the next alternating path, so the resulting
-    // [WIFI-CONNECT] log line captures real-world performance.
     bool ok = WifiConnectionManager::getInstance().forceReconnect();
     String response = JsonBuilder().addBool("reconnected", ok).build();
     sendHttpResponse(client, 200, "application/json", response);
@@ -159,9 +151,7 @@ void handleApiClient(EthernetClient& client) {
   }
   
   if (method == "GET" && path == "/api/info") {
-    // Always return cached telemetry. Yield fields are numeric when available,
-    // otherwise null if no successful parse has occurred yet.
-    // Consumers decide how to handle missing data; the bridge just reports state.
+    // Return cached telemetry; yield fields are null until first successful parse.
     HomeData inverterData = getInverterData();
     unsigned long lastUpdateMs = InverterController::getInstance().getLastUpdateMs();
     sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs));

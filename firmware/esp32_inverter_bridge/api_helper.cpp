@@ -142,15 +142,17 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
 
 String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
   JsonBuilder json;
+  const float powerW = (data.hasPower && isfinite(data.instantaneousPowerW))
+                         ? data.instantaneousPowerW
+                         : 0.0f;
   json
-    .addString("firmware_version", String(FIRMWARE_VERSION))
     .addNumber("last_update_ms", String(lastUpdateMs))
     .addString("operating_status", data.operatingStatus)
     .addString("error_alarm_code", data.errorAlarmCode)
     .addString("operating_mode", data.operatingMode)
     .addString("inverter_model", data.inverterModel)
     .addString("inverter_mac_address", data.inverterMacAddress)
-    .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
+    .addNumber("power", String(powerW, 3))
     .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
     .addNumber("failure_streak_s", String(InverterController::getInstance().getFailureStreakMs() / 1000UL))
     .addNumber("poll_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
@@ -213,8 +215,7 @@ String buildHealthJson() {
 }
 
 void sendLogsResponse(EthernetClient& client) {
-  // Snapshot count up-front; the buffer is appended to from another task and
-  // could grow between the loop's iterations.
+  // Snapshot count before iterating.
   const int count = appLogger.getLogCount();
 
   // Headers: omit Content-Length and use Connection: close framing so we can
@@ -224,19 +225,13 @@ void sendLogsResponse(EthernetClient& client) {
   client.print(F("Content-Type: application/json\r\n"));
   client.print(F("\r\n"));
 
-  // Use a stack buffer to batch entries per TCP write, reducing the number
-  // of small packets sent over the ENC28J60 (major throughput bottleneck).
-  // Buffer must be small enough to fit in the ENC28J60's 8KB packet memory
-  // alongside receive buffers. After each flush we yield to let the UIP
-  // TCP/IP stack process incoming ACKs, preventing write-stalls.
+  // Batch writes to reduce small packets.
   static const size_t BUF_SIZE = 1024;
   char buf[BUF_SIZE];
   size_t pos = 0;
   bool aborted = false;
 
-  // Helper lambda: flush buffer to client when full or at end.
-  // Checks client connectivity first to avoid writing to a dead connection
-  // (which crashes the ENC28J60/UIP stack).
+  // Flush buffer to client; aborts on disconnect.
   auto flush = [&]() {
     if (pos > 0) {
       if (!client.connected()) {
@@ -246,7 +241,6 @@ void sendLogsResponse(EthernetClient& client) {
       }
       client.write((const uint8_t*)buf, pos);
       pos = 0;
-      // Yield to allow UIP stack to process ACKs from receiver.
       delay(1);
     }
   };
@@ -320,7 +314,6 @@ String buildApiDiscoveryJson() {
 }
 
 void sendFlashHtmlResponse(EthernetClient& client, const char* flashData, size_t len) {
-  // Send HTTP headers with compile-time Content-Length.
   client.print(F("HTTP/1.1 200 OK\r\n"));
   client.print(F("Connection: close\r\n"));
   client.print(F("Content-Type: text/html\r\n"));
@@ -339,6 +332,6 @@ void sendFlashHtmlResponse(EthernetClient& client, const char* flashData, size_t
     memcpy_P(buf, flashData + offset, n);
     client.write((const uint8_t*)buf, n);
     offset += n;
-    delay(1);  // yield for UIP stack ACK processing
+    delay(1);
   }
 }

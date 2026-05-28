@@ -28,9 +28,21 @@ Add based on skill complexity and domain requirements:
 - **`<testing>`** - Testing workflows
 - **`<common_patterns>`** - Code examples and recipes
 - **`<reference_guides>` or `<detailed_references>`** - Links to reference files
+- **`<troubleshooting>`** - Failure modes and recovery actions
 
 See [use-xml-tags.md](use-xml-tags.md) for detailed guidance on each tag.
 </conditional_tags>
+
+<operational_workflow_guidance>
+For operational skills (deployment, release, flashing, migrations), prefer explicit reproducibility steps in `<quick_start>` and `<process>`:
+
+- Commit or snapshot source state before execution
+- Derive runtime/version identifiers from source control and date when traceability matters
+- Apply identifiers/config updates before running the primary command
+- Include post-run verification in `<validation>`
+
+This pattern prevents non-reproducible releases and makes rollback/audit straightforward.
+</operational_workflow_guidance>
 
 <tag_selection_intelligence>
 **Simple skills** (single domain, straightforward):

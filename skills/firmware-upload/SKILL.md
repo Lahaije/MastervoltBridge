@@ -4,110 +4,59 @@ description: Compile and upload ESP32 inverter bridge firmware. Use when flashin
 ---
 
 <objective>
-Compile the inverter bridge firmware and upload it to the ESP32 over USB serial.
+Compile and upload the inverter bridge firmware to the ESP32-S3 over USB serial.
 
-**Version tracking:** Each firmware flash is tracked via git commit. Before flashing:
-1. Commit any code changes: `git commit -m "..."`
-2. Get commit ID: `git rev-parse HEAD` (use first 7 chars)
-3. Calculate firmware version: `<semver>-<YYYYMMDD>-<commit_short_hash>`
-   - Example: `0.1.0-20260528-f09de5c`
-4. Update `FIRMWARE_VERSION` in `firmware/esp32_inverter_bridge/settings.cpp`
-5. Compile and upload
+Enforce release traceability by requiring firmware version strings that include semantic version, date, and git short commit hash before flashing. This guarantees that every flashed binary can be mapped back to an exact repository state.
 
-This ensures every flashed firmware can be traced back to its exact git commit.
-
-The script detects whether the target device is reachable before attempting upload,
-and produces a clear diagnostic message when the ESP32 is not connected.
+Use the upload helper script to detect the target device, compile, and flash while preserving the project's canonical Python invocation style.
 </objective>
 
 <quick_start>
-**Before flashing, version and commit the firmware:**
+From the repository root, run this release-safe sequence:
 
-1. Commit your changes:
 ```powershell
 git add -A
-git commit -m "Your change description"
-```
-
-2. Get the commit ID and date:
-```powershell
-$commit = git rev-parse HEAD | Select-Object -First 7
+git commit -m "Describe firmware change"
+$commit = (git rev-parse --short=7 HEAD).Trim()
 $date = Get-Date -Format "yyyyMMdd"
-# Gives: 0.1.0-{date}-{commit_short} (e.g., 0.1.0-20260528-f09de5c)
-```
-
-3. Update `firmware/esp32_inverter_bridge/settings.cpp`:
-   - Find line: `const char* FIRMWARE_VERSION = "..."`
-   - Replace with: `const char* FIRMWARE_VERSION = "0.1.0-{date}-{commit}"`
-
-4. Compile and upload:
-```powershell
+# Update firmware/esp32_inverter_bridge/settings.cpp:
+# const char* FIRMWARE_VERSION = "0.1.0-$date-$commit";
 .venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py
 ```
 
-Or use script options:
-```powershell
-.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-upload    # Compile only
-.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-compile   # Upload last build
-.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --port COM5      # Use different port
-```
+Expected version format: `<semver>-<YYYYMMDD>-<commit_short_hash>`.
 </quick_start>
 
-<commands>
-**Compile and upload (default):**
-```powershell
-.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py
-```
-
-**Compile only (do not flash; no device required):**
-```powershell
-.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-upload
-```
-
-**Upload only (skip compile):**
-```powershell
-.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-compile
-```
-
-**Override COM port:**
-```powershell
-.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --port COM5
-```
-</commands>
-
 <process>
-**Full workflow (recommended for releases):**
-1. Make and test code changes
-2. Commit to git: `git commit -m "description"`
-3. Extract commit ID and date
-4. Update `FIRMWARE_VERSION` in `settings.cpp` with format: `semver-YYYYMMDD-commit_short_hash`
-5. Run upload script to compile and flash
-
-**Script steps (automatic once version is set):**
-1. **Detect device** — Queries `arduino-cli board list` to check whether `COM9` is present. If not found, exits with a diagnostic listing all visible ports.
-2. **Compile** — Runs `arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc` on the sketch. Skipped with `--skip-compile`.
-3. **Upload** — Runs `arduino-cli upload` to flash the compiled binary.
-
-**Version format:** `<semver>-<YYYYMMDD>-<commit_short_hash>`
-- Example: `0.1.0-20260528-f09de5c` (semantic version + date + 7-char commit hash)
-- This ensures every flashed device can be traced back to its exact git commit
+1. Stage and commit firmware-related changes so the release has a stable source snapshot.
+2. Generate `date` and `commit` values and update `FIRMWARE_VERSION` in `firmware/esp32_inverter_bridge/settings.cpp`.
+3. Run `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py`.
+4. If needed, use script variants:
+   - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-upload`
+   - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-compile`
+   - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --port COM5`
+5. Confirm upload completion and runtime visibility of the flashed version.
 </process>
 
-<requirements>
+<context>
 - Arduino IDE installed at the standard path (includes `arduino-cli`).
 - ESP32 board package installed (`esp32:esp32`).
 - USB cable connected from PC to ESP32-S3.
 - Run commands from the **repository root** (`d:\git\MastervoltBridge`).
-</requirements>
+</context>
 
-<configuration>
-| Setting | Value |
-|---------|-------|
-| FQBN | `esp32:esp32:esp32s3:CDCOnBoot=cdc` |
-| Default port | `COM9` |
-| Sketch path | `firmware/esp32_inverter_bridge` |
-| arduino-cli | `C:/Users/.../Arduino IDE/.../arduino-cli.exe` |
-</configuration>
+<examples>
+```powershell
+# Compile and upload (default)
+.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py
+
+# Compile only (no board needed)
+.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-upload
+
+# Upload only (reuse previous build)
+.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-compile
+```
+</examples>
 
 <troubleshooting>
 - **"NOT FOUND" / no ports visible** — Check USB cable and driver. On Windows, look for "USB Serial Device" or "CP210x" in Device Manager.
@@ -116,11 +65,24 @@ Or use script options:
 - **Upload failed after compile OK** — Press BOOT button on ESP32 during upload, or check no other app has the port open.
 </troubleshooting>
 
-<notes>
+<validation>
+- `settings.cpp` contains `FIRMWARE_VERSION` in `<semver>-<YYYYMMDD>-<commit_short_hash>` format.
+- Upload output includes completion text and board reset.
+- `/api/info` returns `firmware_version` matching `settings.cpp`.
+- Web UI header shows the same flashed firmware version.
+</validation>
+
+<anti_patterns>
+- Flashing without committing code first.
+- Keeping `FIRMWARE_VERSION` as a static label (for example `0.1.0-alpha1`) after code changes.
+- Using bare `python` instead of the canonical `.venv\Scripts\python.exe` invocation.
+</anti_patterns>
+
+<advanced_features>
 - `CDCOnBoot=cdc` enables USB CDC serial output so `Serial.print()` is visible on COM9.
 - Opening COM9 with DTR=true (default) **resets the board**. To monitor without reset, disable DTR/RTS (e.g. pyserial with `dsrdtr=False, rtscts=False, dtr=False`).
 - Changing FQBN flags triggers a **full core rebuild** (~5 min). Same flags = fast incremental (~20s).
-</notes>
+</advanced_features>
 
 <success_criteria>
 Upload is complete when:

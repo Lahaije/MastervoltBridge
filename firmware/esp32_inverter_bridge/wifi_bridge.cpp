@@ -217,8 +217,7 @@ void triggerPulseSequence() {
 }
 
 // ---------------------------------------------------------------------------
-// Connect strategy functions (named so they appear in logs for A/B analysis).
-// File-local; the manager below is the only caller.
+// File-local connect strategy functions.
 // ---------------------------------------------------------------------------
 
 bool connectWifiDwell() {
@@ -253,18 +252,12 @@ bool WifiConnectionManager::ensureConnected() {
   if (isWifiConnected()) {
     return true;
   }
-  // Inverter WiFi is typically asleep; wake it with a double-press pulse
-  // (OFF → ON). We pulse once, then retry the connect up to
-  // MAX_CONNECT_RETRIES times WITHOUT pulsing again — the inverter may
-  // simply need more time to become scannable after the initial wake.
-  // Re-pulsing on every retry risks toggling the inverter WiFi back OFF.
   triggerPulseSequence();
 
   for (int attempt = 0; attempt < MAX_CONNECT_RETRIES; attempt++) {
     if (connectUsingNextPath()) {
       return true;
     }
-    // Brief pause before the next scan/connect attempt (no pulse).
     vTaskDelay(pdMS_TO_TICKS(RETRY_PAUSE_MS));
   }
   return false;
@@ -305,9 +298,6 @@ void wifiBridgeInit() {
 bool fetchInverterData(const String& method, const String& path, const String& body,
                        String& responseBody, int& httpCode, String& errorMessage,
                        const char* contentType) {
-  // Make sure WiFi is up before we try to talk to the inverter. The manager
-  // releases the WiFi-operation lock once the (re)connect attempt completes,
-  // so we can re-acquire it below for the HTTP exchange.
   if (!WifiConnectionManager::getInstance().ensureConnected()) {
     errorMessage = "ESP32 failed to connect to inverter WiFi";
     httpCode = 0;

@@ -18,18 +18,14 @@
 //
 //  From       To         Poll interval change?            Action
 //  --------   --------   -------------------------------   ----------------------------
-//  STARTING   ONLINE     preserves current/default        fetchAndCacheSettings()
+//  STARTING   ONLINE     preserves current/default        invalidates settings cache
 //  ONLINE     RETRYING   preserves current                —
 //  RETRYING   ONLINE     preserves current                —  (quick recovery; settings still valid)
 //  RETRYING   BACKOFF    current -> 1 min                —  (interval change only)
-//  BACKOFF    ONLINE     1 min -> default                fetchAndCacheSettings()
+//  BACKOFF    ONLINE     1 min -> default                invalidates settings cache
 //  BACKOFF    DORMANT    1 min -> 10 min                 —  (interval change only)
-//  DORMANT    ONLINE     10 min -> default               fetchAndCacheSettings()
+//  DORMANT    ONLINE     10 min -> default               invalidates settings cache
 //
-// The poll interval is initialized once at boot, can be temporarily overridden
-// by the API, and is then overwritten only by the state transitions listed
-// above. Side-effect actions (settings refresh, etc.) are dispatched by
-// InverterController transition hooks.
 // =============================================================================
 
 enum class InverterLinkState : uint8_t {
@@ -70,9 +66,6 @@ void setInverterState(InverterLinkState newState);
 //  2. Entry hook       — fires whenever ANY transition enters a target state,
 //                        regardless of where it came from.
 //     Register with registerStateEntryHook(to, cb).
-//
-// Both types share the same callback signature. All registered hooks for a
-// given transition are dispatched by dispatchStateChangeHooks().
 // ---------------------------------------------------------------------------
 
 /** Shared callback signature for both hook types. */

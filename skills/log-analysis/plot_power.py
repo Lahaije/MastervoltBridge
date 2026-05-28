@@ -103,6 +103,58 @@ def build_plot(
     fig.patch.set_facecolor("#1a1a2e")
     ax.set_facecolor("#16213e")
 
+    # Generic overlap-aware label placement: shift labels into lanes when x-positions collide.
+    label_lanes: dict[str, list[tuple[float, float]]] = {}
+
+    def place_shifted_label(
+        group: str,
+        x_min: float,
+        base_y: float,
+        text: str,
+        color: str,
+        fontsize: float,
+        min_spacing_min: float = 1.6,
+        max_lanes: int = 4,
+        lane_step_ratio: float = 0.045,
+        lane_x_step_min: float = 0.18,
+    ) -> None:
+        placed = label_lanes.setdefault(group, [])
+
+        chosen_xy = None
+        for lane in range(max_lanes):
+            cand_x = x_min + (lane * lane_x_step_min)
+            cand_y = base_y - (lane * y_ref * lane_step_ratio)
+            conflict = False
+            for px, py in placed:
+                if abs(cand_x - px) < min_spacing_min and abs(cand_y - py) < (y_ref * lane_step_ratio * 0.9):
+                    conflict = True
+                    break
+            if not conflict:
+                chosen_xy = (cand_x, cand_y)
+                break
+
+        if chosen_xy is None:
+            # If all lanes conflict, place at the furthest lane with extra x-offset.
+            lane = max_lanes
+            chosen_xy = (
+                x_min + (lane * lane_x_step_min),
+                base_y - (lane * y_ref * lane_step_ratio),
+            )
+
+        label_x, label_y = chosen_xy
+        placed.append((label_x, label_y))
+        ax.text(
+            label_x,
+            label_y,
+            text,
+            rotation=0,
+            va="top",
+            ha="left",
+            fontsize=fontsize,
+            color=color,
+            zorder=6,
+        )
+
     # --- Disconnection episode bands ---
     post_backoff_labels_seen = 0
     last_backoff_label_x = None
@@ -149,28 +201,25 @@ def build_plot(
     # --- Backoff transition markers ---
     if backoff_events:
         y_top = y_ref * 0.82
-        y_alt = y_ref * 0.74
-        for idx, ev in enumerate(backoff_events):
+        for ev in backoff_events:
             x_min = ev.timestamp_ms / 60_000
             ax.axvline(x_min, color="#ffd54f", linestyle="--", linewidth=0.8, alpha=0.8, zorder=4)
-            label_y = y_top if idx % 2 == 0 else y_alt
-            ax.text(
+            place_shifted_label(
+                "backoff",
                 x_min,
-                label_y,
+                y_top,
                 f"backoff {ev.interval_seconds}s",
-                rotation=90,
-                va="top",
-                ha="right",
-                fontsize=6,
                 color="#ffe082",
-                zorder=5,
+                fontsize=6,
+                min_spacing_min=2.0,
+                max_lanes=3,
+                lane_step_ratio=0.05,
+                lane_x_step_min=0.20,
             )
 
     # --- Inverter link-state transitions ---
     if state_change_events:
         y_top = y_ref * 0.66
-        y_alt = y_ref * 0.58
-        last_label_x = None
         label_stride = 1 if state_label_mode in ("all", "none") else 2
         for idx, ev in enumerate(state_change_events):
             x_min = ev.timestamp_ms / 60_000
@@ -179,24 +228,20 @@ def build_plot(
                 continue
             if state_label_mode == "major" and not is_major_transition(ev.from_state, ev.to_state):
                 continue
-            # Keep labels readable when transitions cluster tightly.
-            if last_label_x is not None and (x_min - last_label_x) < 1.8:
-                continue
             if state_label_mode == "major" and (idx % label_stride) != 0:
                 continue
-            label_y = y_top if idx % 2 == 0 else y_alt
-            ax.text(
+            place_shifted_label(
+                "state",
                 x_min,
-                label_y,
+                y_top,
                 f"{ev.to_state}",
-                rotation=90,
-                va="top",
-                ha="left",
-                fontsize=6,
                 color="#b2dfdb",
-                zorder=5,
+                fontsize=6,
+                min_spacing_min=1.6,
+                max_lanes=4,
+                lane_step_ratio=0.045,
+                lane_x_step_min=0.18,
             )
-            last_label_x = x_min
 
     # --- Generic control/event labels ---
     if control_events:
@@ -210,30 +255,25 @@ def build_plot(
             "inverter_recovered": ("RECOVERED", "#81c784", y_ref * 0.26),
         }
 
-        last_event_label_x = {}
         for ev in sorted(control_events, key=lambda x: x.timestamp_ms):
             style = event_styles.get(ev.kind)
             if not style:
                 continue
             label, color, y_pos = style
             x_min = ev.timestamp_ms / 60_000
-            # Keep dense event bursts readable.
-            min_spacing = 1.5
-            if x_min - last_event_label_x.get(label, -10_000) < min_spacing:
-                continue
             ax.axvline(x_min, color=color, linestyle=(0, (2, 3)), linewidth=0.7, alpha=0.55, zorder=3)
-            ax.text(
+            place_shifted_label(
+                "events",
                 x_min,
                 y_pos,
                 label,
-                rotation=90,
-                va="top",
-                ha="right",
-                fontsize=5.8,
                 color=color,
-                zorder=6,
+                fontsize=5.8,
+                min_spacing_min=1.4,
+                max_lanes=6,
+                lane_step_ratio=0.04,
+                lane_x_step_min=0.16,
             )
-            last_event_label_x[label] = x_min
 
     # --- Peak annotation ---
     peak_w = max(powers_w)

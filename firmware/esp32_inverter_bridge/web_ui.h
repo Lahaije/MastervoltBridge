@@ -44,6 +44,7 @@ button.warn{background:var(--warn);border-color:var(--warn);color:#000}
 .msg.ok{color:var(--ok)}
 .msg.bad{color:var(--bad)}
 .unknown{color:var(--muted);font-style:italic}
+.hidden{display:none}
 footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 </style>
 </head>
@@ -73,12 +74,12 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 
 <div class="card">
 <h2>Power Limit</h2>
-<div class="row">
-<label>Current</label>
-<span class="v" id="curPower">unknown</span>
+<div class="row" id="rowPowerUnknown">
+<label>Status</label>
+<span class="v unknown" id="curPower">unknown</span>
 </div>
-<div class="row">
-<label for="iPower">New (W)</label>
+<div class="row hidden" id="rowPowerForm">
+<label for="iPower">Power limit (W)</label>
 <input type="number" id="iPower" min="0" max="1575" step="1">
 <button class="primary" id="bPower">Apply</button>
 </div>
@@ -87,11 +88,11 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 
 <div class="card">
 <h2>Shadow Function</h2>
-<div class="row">
-<label>Current</label>
-<span class="v" id="curShadow">unknown</span>
+<div class="row" id="rowShadowUnknown">
+<label>Status</label>
+<span class="v unknown" id="curShadow">unknown</span>
 </div>
-<div class="row">
+<div class="row hidden" id="rowShadowForm">
 <label for="iShadow">Enabled</label>
 <input type="checkbox" id="iShadow">
 <button class="primary" id="bShadow">Apply</button>
@@ -138,6 +139,35 @@ function pill(text,cls){return '<span class="pill '+cls+'">'+text+'</span>';}
 function flash(el,ok,msg){el.textContent=msg;el.className='msg '+(ok?'ok':'bad');setTimeout(()=>{if(el.textContent===msg)el.textContent='';},4000);}
 function hasFiniteNumber(v){return typeof v==='number' && Number.isFinite(v);}
 function fmtKwh(v){return hasFiniteNumber(v)?(v.toFixed(3)+' kWh'):'-';}
+function setShown(id,shown){$(id).classList.toggle('hidden',!shown);}
+function syncPowerLimit(info){
+  const hasPowerLimit=hasFiniteNumber(info.power_limit_watts);
+  setShown('rowPowerUnknown',!hasPowerLimit);
+  setShown('rowPowerForm',hasPowerLimit);
+  if(hasPowerLimit){
+    $('curPower').textContent='';
+    $('curPower').className='v';
+    $('iPower').value=String(info.power_limit_watts);
+  }else{
+    $('curPower').textContent='unknown';
+    $('curPower').className='v unknown';
+    $('iPower').value='';
+  }
+}
+function syncShadow(info){
+  const hasShadow=typeof info.shadow_enabled==='boolean';
+  setShown('rowShadowUnknown',!hasShadow);
+  setShown('rowShadowForm',hasShadow);
+  if(hasShadow){
+    $('curShadow').textContent='';
+    $('curShadow').className='v';
+    $('iShadow').checked=info.shadow_enabled;
+  }else{
+    $('curShadow').textContent='unknown';
+    $('curShadow').className='v unknown';
+    $('iShadow').checked=false;
+  }
+}
 
 async function jget(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
 async function jpost(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=null;try{d=await r.json();}catch(e){}if(!r.ok){const m=(d&&d.error)?d.error:('HTTP '+r.status);throw new Error(m);}return d||{};}
@@ -163,21 +193,8 @@ async function refresh(){
       $('sPollInt').textContent=(info.poll_interval_ms/1000)+' s';
       $('sPollState').textContent=info.inverter_link_state||'-';
 
-      const hasPowerLimit=hasFiniteNumber(info.power_limit_watts);
-      $('curPower').textContent=hasPowerLimit?(info.power_limit_watts+' W'):'unknown';
-      $('curPower').className=hasPowerLimit?'v':'v unknown';
-      if(hasPowerLimit && !$('iPower').value){
-        $('iPower').value=String(info.power_limit_watts);
-      }
-
-      if(typeof info.shadow_enabled==='boolean'){
-        $('curShadow').textContent=info.shadow_enabled?'enabled':'disabled';
-        $('curShadow').className='v';
-        $('iShadow').checked=info.shadow_enabled;
-      }else{
-        $('curShadow').textContent='unknown';
-        $('curShadow').className='v unknown';
-      }
+      syncPowerLimit(info);
+      syncShadow(info);
     }catch(e){
       $('sPower').innerHTML='<span class="unknown">offline</span>';
       $('sDaily').innerHTML='<span class="unknown">-</span>';
@@ -185,10 +202,8 @@ async function refresh(){
       $('sOp').innerHTML='<span class="unknown">-</span>';
       $('sLink').innerHTML=pill('offline','bad');
       $('sStreak').textContent='-';
-      $('curPower').textContent='unknown';
-      $('curPower').className='v unknown';
-      $('curShadow').textContent='unknown';
-      $('curShadow').className='v unknown';
+      syncPowerLimit({});
+      syncShadow({});
     }
     $('lastFetch').textContent='updated '+new Date().toLocaleTimeString();
   }catch(e){

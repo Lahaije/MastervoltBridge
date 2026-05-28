@@ -120,6 +120,8 @@ Response (applied):
 
 {"requested_power_watts":1200,"applied":true,"inverter_http_status":200,"inverter_response":"...","readback_power_watts":1200}
 
+`readback_power_watts` is `null` if the POST succeeded but the subsequent cache refresh fetch failed (the polling task will retry on the next successful poll).
+
 Response (deferred — inverter temporarily unreachable):
 
 HTTP 202
@@ -149,6 +151,8 @@ Validation:
 Response (applied):
 
 {"requested_shadow":true,"applied":true,"inverter_http_status":200,"inverter_response":"...","readback_shadow":true}
+
+`readback_shadow` is `null` if the POST succeeded but the subsequent cache refresh fetch failed (the polling task will retry on the next successful poll).
 
 Response (deferred — inverter temporarily unreachable):
 

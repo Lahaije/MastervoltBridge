@@ -16,7 +16,7 @@ Run from the repository root. The explicit venv python works in any shell — no
 Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 </quick_start>
 
-<commands>
+<examples>
 **Verbose output** (shows response keys and full endpoint list):
 ```powershell
 .venv\Scripts\python.exe skills/api-validation/validate_api.py --verbose
@@ -26,9 +26,9 @@ Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 ```powershell
 .venv\Scripts\python.exe skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
 ```
-</commands>
+</examples>
 
-<checks>
+<validation>
 **1. Bridge reachability** — Calls `GET /api/health`. If unreachable, stops immediately with a clear error message.
 
 **2. Discovery cross-check (`GET /api`)** — Verifies every documented endpoint appears in the firmware response, and every firmware endpoint appears in the documentation (catches silent additions).
@@ -43,9 +43,9 @@ Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 | `GET /api/logs` | `entries` |
 | `GET /api/info` | `power`, `total_yield`, `daily_yield`, `poll_interval_ms`, `base_poll_interval_ms` |
 | `GET /pulse` | `reconnected` |
-</checks>
+</validation>
 
-<interpreting_results>
+<context>
 | Result | Meaning | Action |
 |---|---|---|
 | `✓ All checks passed` | Live bridge matches documentation | No action needed |
@@ -53,9 +53,9 @@ Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 | Firmware endpoint missing from documentation | New endpoint added without updating docs | Update `docs/API_REFERENCE.md` and `AGENTS.md` endpoint table |
 | Response key missing | `api_helper.cpp` response changed, or docs are wrong | Align docs with firmware or restore the field |
 | Bridge not reachable | Ethernet disconnected or wrong IP | Check hardware and bridge IP |
-</interpreting_results>
+</context>
 
-<fixing_mismatches>
+<process>
 **Firmware is missing a documented endpoint:**
 1. Add the handler in `api.cpp` (`handleApiClient()` function).
 2. Add the entry to `API_ENDPOINTS[]` in `api.cpp`.
@@ -73,9 +73,9 @@ Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 - If firmware changed: update the docs.
 - If docs changed incorrectly: revert the doc change.
 - Update `GET_CHECKS` `required_keys` in `validate_api.py` to match the actual schema.
-</fixing_mismatches>
+</process>
 
-<post_endpoints>
+<advanced_features>
 The script does not call POST endpoints automatically (they mutate inverter state). To verify POST endpoints manually:
 ```powershell
 # Set inverter power (inverter WiFi must be on)
@@ -89,7 +89,7 @@ curl -X POST http://192.168.1.48:8080/wifi/off
 ```
 
 Expected responses are documented in `docs/API_REFERENCE.md`.
-</post_endpoints>
+</advanced_features>
 
 <success_criteria>
 Validation is complete when:

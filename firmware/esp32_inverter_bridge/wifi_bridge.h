@@ -14,16 +14,9 @@ extern int lastInverterStatusCode;
 void wifiBridgeInit();
 
 // ---------------------------------------------------------------------------
-// WifiConnectionManager: owns the alternating-path state and is the single
-// entry point used by request handlers / polling tasks to obtain a working
-// WiFi connection. If WiFi is already up, ensureConnected() returns true
-// immediately; otherwise it pulses the inverter wake GPIO and invokes the
-// next alternating connect path (dwell / auto).
-//
-//   dwell : scan-first with short dwell (200ms), uses configured AP hint as
-//           fallback when scan does not locate the inverter.
-//   auto  : scan-first with longer dwell (500ms), pure auto-discovery (no
-//           hint fallback).
+// WifiConnectionManager: manages inverter WiFi connection state.
+// ensureConnected() returns immediately if already up; otherwise pulses the
+// wake GPIO and attempts connection via the next alternating path (dwell/auto).
 // ---------------------------------------------------------------------------
 class WifiConnectionManager {
 public:

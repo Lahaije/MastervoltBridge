@@ -65,7 +65,8 @@ void HomeData::clear() {
   operatingMode = "";
   inverterModel = "";
   inverterMacAddress = "";
-  instantaneousPower = "";
+  instantaneousPowerW = 0.0f;
+  hasPower = false;
   lifetimeEnergyKwh = 0.0f;
   dailySessionEnergyKwh = 0.0f;
   hasLifetimeEnergy = false;
@@ -136,7 +137,7 @@ bool parseHomeResponse(const String& rawResponse, HomeData& dataOut) {
   dataOut.operatingMode = extractLine(2);
   dataOut.inverterModel = extractLine(3);
   dataOut.inverterMacAddress = extractLine(4);
-  dataOut.instantaneousPower = extractLine(5);
+  dataOut.hasPower = parseFloatField(extractLine(5), dataOut.instantaneousPowerW);
   dataOut.hasLifetimeEnergy = parseFloatField(extractLine(6), dataOut.lifetimeEnergyKwh);
   dataOut.hasDailySessionEnergy = parseFloatField(extractLine(7), dataOut.dailySessionEnergyKwh);
 

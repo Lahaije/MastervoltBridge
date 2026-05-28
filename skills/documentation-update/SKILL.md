@@ -13,7 +13,7 @@ Prevent over-editing (updating files that don't need change) and under-editing (
 3. Read the relevant resource file before editing any documentation.
 </quick_start>
 
-<file_map>
+<reference_guides>
 Each documentation file has a dedicated resource describing what it covers, its source of truth, and the exact conditions that require an update.
 
 | File(s) | Resource |
@@ -29,9 +29,9 @@ Each documentation file has a dedicated resource describing what it covers, its 
 | `skills/strategy-comparison/SKILL.md` | `skills/documentation-update/resources/skill-strategy-comparison.md` |
 | `skills/firmware-upload/SKILL.md` | `skills/documentation-update/resources/skill-firmware-upload.md` |
 | `skills/firmware-optimization-loop/SKILL.md` | `skills/documentation-update/resources/skill-firmware-optimization.md` |
-</file_map>
+</reference_guides>
 
-<decision_guide>
+<process>
 | Something changed in… | Files to update |
 |---|---|
 | GPIO pins or pulse timing in `settings.cpp` | `docs/WIRING_README.md` |
@@ -43,9 +43,9 @@ Each documentation file has a dedicated resource describing what it covers, its 
 | New documentation file added | `README.md` (index), `AGENTS.md` (file map), this skill's file map table |
 | Test procedure or troubleshooting knowledge changes | `docs/TEST_README.md` |
 | Hardware changes (board, Ethernet chip) | `docs/SETUP_README.md`, `docs/WIRING_README.md`, `README.md`, `AGENTS.md` |
-</decision_guide>
+</process>
 
-<single_source_of_truth>
+<context>
 Each piece of information has exactly one canonical home. All other files must link to it rather than duplicate it.
 
 | Information | Canonical file |
@@ -60,16 +60,16 @@ Each piece of information has exactly one canonical home. All other files must l
 | Full API request/response schemas | `docs/API_REFERENCE.md` |
 | Post-flash validation and troubleshooting | `docs/TEST_README.md` |
 | Log analysis usage | `skills/log-analysis/SKILL.md` |
-</single_source_of_truth>
+</context>
 
-<rules>
-1. **Never update a documentation file speculatively.** Only update when its specific trigger conditions are met.
-2. **When a code change triggers a doc update**, update all files listed in the decision guide for that change type in the same session.
-3. **Never duplicate information.** If content belongs in a canonical file, put it there and add a brief summary + link in other files.
-4. **Never hardcode counts** (e.g. "10 REST endpoints") outside the canonical file. Counts go stale when code changes. Use descriptive text instead (e.g. "REST API covering…") and link to the canonical source.
-5. **Preserve the dwell/auto strategy documentation** in `AGENTS.md` — these strategies are in active use for long-term A/B measurement. Do not remove until explicitly instructed.
-6. **Do not create new documentation files** unless explicitly asked. Prefer updating existing files.
-</rules>
+<anti_patterns>
+- **Speculative updates**: changing documentation without a concrete code trigger.
+- **Partial sync updates**: updating only one affected file when the decision guide indicates multiple files must be aligned.
+- **Duplicating canonical facts**: copying source-of-truth content instead of linking to it.
+- **Hardcoding counts outside canonical docs** (for example endpoint totals), which drift quickly.
+- **Removing dwell/auto strategy docs from `AGENTS.md`** without explicit instruction.
+- **Creating new documentation files by default** instead of reusing existing docs.
+</anti_patterns>
 
 <success_criteria>
 Documentation update is complete when:

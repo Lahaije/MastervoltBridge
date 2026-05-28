@@ -1,10 +1,7 @@
 #include "settings.h"
 #include "logger.h"
 
-// UIPEthernet 2.0.12 declares this extern but never defines it.
 const char* DHCP_HOSTNAME = "mv-bridge";
-// See TECHNICAL_DEBT.md for details. Scripts should discover bridge at mv-bridge.local
-// or scan the network for the device instead of using a hardcoded IP.
 
 // =============================================================================
 // Inverter WiFi
@@ -85,4 +82,5 @@ bool debugMode = true;
 // =============================================================================
 // Firmware Version
 // =============================================================================
-const char* FIRMWARE_VERSION = "0.1.0-alpha1";
+// Format: <semver>-<YYYYMMDD>-<commit_short_hash>
+const char* FIRMWARE_VERSION = "0.1.0-20260528-f09de5c";

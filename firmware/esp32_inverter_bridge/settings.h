@@ -94,9 +94,7 @@ extern EthernetServer apiServer;
 extern Logger appLogger;
 extern int lastInverterStatusCode;
 
-// Debug mode: when true, HTTP 200 success responses from the inverter are
-// written to the log buffer. Starts true at boot and is cleared at the end
-// of setup() to suppress routine poll noise during normal operation.
+// When true, HTTP 200 inverter responses are written to the log buffer.
 extern bool debugMode;
 
 // Firmware version

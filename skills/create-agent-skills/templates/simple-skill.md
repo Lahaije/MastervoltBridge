@@ -12,18 +12,20 @@ description: {{What it does}} Use when {{trigger conditions}}.
 </quick_start>
 
 <process>
-## Step 1: {{First action}}
-
-{{Instructions for step 1}}
-
-## Step 2: {{Second action}}
-
-{{Instructions for step 2}}
-
-## Step 3: {{Third action}}
-
-{{Instructions for step 3}}
+1. {{First action}}
+2. {{Second action}}
+3. {{Third action}}
 </process>
+
+<validation>
+- {{How to verify result 1}}
+- {{How to verify result 2}}
+</validation>
+
+<anti_patterns>
+- {{Common mistake 1}}
+- {{Common mistake 2}}
+</anti_patterns>
 
 <success_criteria>
 {{Skill name}} is complete when:

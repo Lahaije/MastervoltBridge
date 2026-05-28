@@ -75,7 +75,7 @@ inverter_controller.cpp/h (business logic)
   ├── linkStateFromStreak() — reconciles FSM state from failure duration
   ├── Hook callbacks: applyIntervalForState, loadSettingsOnBoot, updateAllInverterParam
   ├── SetResult enum (Applied, Deferred, Rejected) for setPower/setShadow
-  ├── caches HomeData + cached shadow/power_limit (fetched from inverter on recovery)
+  ├── caches HomeData + cached shadow/power_limit (invalidated on recovery; backfilled by polling loop)
   └── exposes getLatestHomeData(), setPower(), setShadow(), fetchPath(), getShadow(), getPowerLimit()
 
 ethernet_bridge.cpp/h (network layer)
@@ -163,7 +163,7 @@ bool getShadow(bool& enabledOut);       // cached shadow function state
 bool getPowerLimit(uint16_t& wattsOut); // cached inverter power limit
 bool hasPendingSettings();              // true if deferred values are queued
 ```
-`dataMutex` protects all cached data; all lock attempts timeout after 10 ms (`DATA_MUTEX_TIMEOUT_MS` in `settings.cpp`).
+`dataMutex` protects HomeData cache, lastUpdateMs, and poll counters; all lock attempts timeout after 10 ms (`DATA_MUTEX_TIMEOUT_MS` in `settings.cpp`). Shadow/power-limit fields are not mutex-protected (single polling-task writer; stale reads are bounded to one poll cycle).
 
 ### InverterLinkState FSM (inverter_link_state.h)
 

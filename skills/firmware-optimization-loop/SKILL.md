@@ -21,13 +21,13 @@ All commands below use the explicit venv python, which works in any shell — no
 ```
 </quick_start>
 
-<scope>
+<context>
 Use this skill when optimizing firmware logic in:
 - `firmware/esp32_inverter_bridge/wifi_bridge.cpp`
 - `firmware/esp32_inverter_bridge/inverter_controller.cpp`
 - `firmware/esp32_inverter_bridge/settings.cpp`
 - `firmware/esp32_inverter_bridge/settings.h`
-</scope>
+</context>
 
 <required_inputs>
 - Clear optimization objective (e.g. reduce connect latency, reduce timeout rate)
@@ -92,14 +92,14 @@ At each loop iteration, report:
 4. Current status after validation (pass/fail vs baseline)
 </iteration_template>
 
-<validation_checklist>
+<validation>
 - [ ] Firmware compiled successfully
 - [ ] Firmware uploaded to COM9 successfully
 - [ ] At least one connect attempt logged (`[WIFI-CONNECT] complete`)
 - [ ] `/api/info` returns telemetry (HTTP 200)
 - [ ] Log analysis run and metrics compared against baseline
 - [ ] Keep/revert decision documented
-</validation_checklist>
+</validation>
 
 <output_report>
 Report each iteration with:

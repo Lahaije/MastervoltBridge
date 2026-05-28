@@ -16,13 +16,13 @@ Run from the repository root. The explicit venv python works in any shell — no
 ```
 </quick_start>
 
-<strategies>
+<context>
 The bridge alternates between two WiFi connect strategies on every reconnect attempt:
 - **dwell** — 200 ms scan dwell, uses configured AP hint as fallback.
 - **auto** — 500 ms scan dwell, pure auto-discovery (no hint fallback).
-</strategies>
+</context>
 
-<commands>
+<examples>
 **Save result as JSON** (for trend tracking across sessions):
 ```powershell
 .venv\Scripts\python.exe skills/strategy-comparison/compare_strategies.py --save-json results/comparison.json
@@ -32,9 +32,9 @@ The bridge alternates between two WiFi connect strategies on every reconnect att
 ```powershell
 .venv\Scripts\python.exe skills/strategy-comparison/compare_strategies.py --base-url http://192.168.1.48:8080 --min-samples 20
 ```
-</commands>
+</examples>
 
-<interpreting_results>
+<validation>
 | Field | What it means |
 |---|---|
 | Attempts | Total `[WIFI-CONNECT]` log entries for that path |
@@ -46,7 +46,7 @@ The bridge alternates between two WiFi connect strategies on every reconnect att
 | Channel hits | How often each WiFi channel was used on success |
 
 **Verdict reliability**: flagged as unreliable if either path has fewer than `--min-samples` (default 10) attempts. The bridge alternates paths so counts should stay roughly equal over time.
-</interpreting_results>
+</validation>
 
 <success_criteria>
 Comparison is complete when:
