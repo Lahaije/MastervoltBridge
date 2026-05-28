@@ -18,7 +18,7 @@ Validation guide for the ESP32 inverter bridge firmware.
 | GET /api/health | JSON with keys: `wifi_connected`, `wifi_ssid`, `wifi_ip`, `ethernet_ip`, `inverter_host`, `last_inverter_status`, `debug_mode` |
 | GET /api/logs | JSON object with `total_entries` and `entries` array |
 | GET /api/info | Always 200; telemetry fields may be empty before first successful poll |
-| POST /api/interval | Updates base poll interval with JSON body `{"interval":...}` |
+| POST /api/interval | Temporarily overrides current poll interval with JSON body `{"interval":...}` |
 
 ## Web UI Delivery Validation
 

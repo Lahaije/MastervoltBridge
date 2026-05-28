@@ -200,7 +200,7 @@ $('bWifiOff').onclick=async()=>{
 $('bInterval').onclick=async()=>{
   const v=parseInt($('iInterval').value,10);
   if(isNaN(v)||v<1||v>300){flash($('mInterval'),false,'Enter 1-300 seconds');return;}
-  try{const r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.effective_interval_ms/1000)+' s');refresh();}
+  try{const r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refresh();}
   catch(e){flash($('mInterval'),false,e.message);}
 };
 

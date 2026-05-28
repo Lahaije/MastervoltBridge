@@ -42,7 +42,7 @@ extern const bool     AUTO_USE_HINT_FALLBACK;      // Use AP hint fallback in au
 // =============================================================================
 // Polling & Link-State FSM
 // =============================================================================
-extern const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS;    // Base poll interval (ONLINE/RETRYING/STARTING)
+extern const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS;    // Default poll interval after boot and degraded-state recovery
 extern const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS;     // HTTP request timeout per inverter call
 
 // Failure-streak thresholds that trigger FSM state transitions

@@ -188,8 +188,8 @@ _INVERTER_PREFIX_RE = r"INVERTER-(?:CONTROLLER|MONITOR)"
 _POLL_RE = re.compile(rf"\[{_INVERTER_PREFIX_RE}\] Poll #(\d+): Status=(\S+) Power=([\d.]+)W")
 _BACKOFF_RE = re.compile(rf"\[{_INVERTER_PREFIX_RE}\] Backoff: retry interval -> (\d+)s")
 _LINK_STATE_RE = re.compile(
-    rf"\[{_INVERTER_PREFIX_RE}\] Link state: ([A-Z]+) -> ([A-Z]+)"
-    r"(?: \(streak=(\d+)s, interval=(\d+)s\))?"
+    rf"\[{_INVERTER_PREFIX_RE}\] State: ([A-Z]+) -> ([A-Z]+)"
+    r"\s+streak=(\d+)s\s+interval=(\d+)s"
 )
 
 
@@ -233,15 +233,13 @@ def parse_state_change_events(entries: List[Dict]) -> List[StateChangeEvent]:
         ts = int(e.get("timestamp_ms", 0))
         m = _LINK_STATE_RE.search(msg)
         if m:
-            streak = int(m.group(3)) if m.group(3) is not None else None
-            interval = int(m.group(4)) if m.group(4) is not None else None
             events.append(
                 StateChangeEvent(
                     timestamp_ms=ts,
                     from_state=m.group(1),
                     to_state=m.group(2),
-                    streak_seconds=streak,
-                    interval_seconds=interval,
+                    streak_seconds=int(m.group(3)),
+                    interval_seconds=int(m.group(4)),
                 )
             )
     return events

@@ -23,7 +23,7 @@ http://192.168.1.48:8080
 | POST | /wifi/off | Single button press if WiFi is connected |
 | GET | /pulse | Recovery pulse + connection-time measurement |
 | POST | /api/debug | Enable or disable verbose HTTP 200 success logging |
-| POST | /api/interval | Set base poll interval (milliseconds) |
+| POST | /api/interval | Temporarily override current poll interval (milliseconds) |
 
 ## GET /
 
@@ -36,7 +36,7 @@ Implementation details:
 - Content-Length derived from `sizeof(WEB_UI_HTML) - 1` (compile-time).
 - CSS and JS inline — single request, no external assets.
 - JS auto-refreshes `/api/health` + `/api/info` every 5 seconds (serialized, not parallel).
-- Gracefully handles 502 from `/api/info` when inverter is offline.
+- `/api/info` always returns HTTP 200; before first successful poll, telemetry fields may be empty.
 
 UI controls:
 
@@ -101,7 +101,7 @@ Response fields:
 | `daily_yield` | string | Daily energy in kWh, e.g. "12.811" |
 | `inverter_link_state` | string | FSM state: "STARTING", "ONLINE", "RETRYING", "BACKOFF", or "DORMANT" |
 | `failure_streak_s` | number | Seconds since last successful poll (0 when ONLINE) |
-| `poll_interval_ms` | number | Current effective polling interval in milliseconds |
+| `poll_interval_ms` | number | Current polling interval in milliseconds |
 
 ## POST /api/power
 
@@ -233,7 +233,7 @@ Debug mode starts as `true` at boot and is automatically set to `false` at the e
 
 Purpose:
 
-- Set the runtime base polling interval used by STARTING/ONLINE/RETRYING states.
+- Temporarily override the current polling interval.
 
 Body:
 
@@ -246,10 +246,15 @@ Validation:
 
 Response (applied):
 
-{"base_poll_interval_ms":20000,"effective_interval_ms":20000}
+{"poll_interval_ms":20000}
 
-When current FSM state is BACKOFF or DORMANT, `effective_interval_ms` may differ
-from the requested value until state returns to a base-interval state.
+Behavior:
+
+- The override takes effect immediately.
+- The override remains active until the next natural link-state transition.
+- Entering BACKOFF or DORMANT replaces the override with that state's fixed interval.
+- Entering ONLINE restores the default poll interval from settings.
+- RETRYING preserves the current interval until a transition to another state occurs.
 
 ## Known Expected Errors (Night / Inverter Off)
 

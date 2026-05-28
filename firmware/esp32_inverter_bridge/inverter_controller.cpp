@@ -52,12 +52,12 @@ static InverterLinkState desiredStateFromStreak(uint32_t streakMs) {
   return expectedState;
 }
 
-// Return poll interval for a given state. Used by runPollingTask().
-static uint32_t intervalForState(InverterLinkState s, uint32_t baseMs) {
+// Return the default poll interval for a given state.
+static uint32_t intervalForState(InverterLinkState s) {
   switch (s) {
     case InverterLinkState::BACKOFF:  return LINK_BACKOFF_INTERVAL_MS;
     case InverterLinkState::DORMANT:  return LINK_DORMANT_INTERVAL_MS;
-    default:                          return baseMs;
+    default:                          return WIFI_BRIDGE_POLL_INTERVAL_MS;
   }
 }
 }  // namespace
@@ -74,6 +74,18 @@ void InverterController::initialize() {
     dataMutex = xSemaphoreCreateMutex();
   }
 
+  // Register one poll-interval hook for all interval-owning states.
+  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::ONLINE,  updatePollFrequency);
+  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::BACKOFF, updatePollFrequency);
+  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::DORMANT, updatePollFrequency);
+
+  // Register transition hooks for ONLINE side effects.
+  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::STARTING, InverterLinkState::ONLINE, loadSettingsOnBoot);
+  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::BACKOFF,  InverterLinkState::ONLINE, updateAllInverterParam);
+  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::DORMANT,  InverterLinkState::ONLINE, updateAllInverterParam);
+
+  // Create polling task only after hooks are registered so they are ready
+  // before the task transitions STARTING -> ONLINE.
   if (pollingTaskHandle == nullptr) {
     xTaskCreatePinnedToCore(
       pollingTaskEntry,
@@ -85,19 +97,6 @@ void InverterController::initialize() {
       0
     );
   }
-
-  // Register state-entry hook: updates currentRetryIntervalMs on every state change.
-  // Uses an entry hook (fires on ANY transition into the target state) so a single
-  // registration per interval tier covers all possible predecessor states.
-  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::BACKOFF,  applyIntervalForState);
-  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::DORMANT,  applyIntervalForState);
-  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::ONLINE,   applyIntervalForState);
-  REGISTER_STATE_ENTRY_HOOK(InverterLinkState::RETRYING, applyIntervalForState);
-
-  // Register transition hooks for ONLINE side effects.
-  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::STARTING, InverterLinkState::ONLINE, loadSettingsOnBoot);
-  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::BACKOFF,  InverterLinkState::ONLINE, updateAllInverterParam);
-  REGISTER_STATE_CHANGE_HOOK(InverterLinkState::DORMANT,  InverterLinkState::ONLINE, updateAllInverterParam);
 
   isInitialized = true;
   appLogger.log("[INVERTER-CONTROLLER] Inverter controller initialized");
@@ -148,20 +147,21 @@ void InverterController::linkStateFromStreak(uint32_t streakMs) {
     return;
   }
 
+  setInverterState(expectedState);
+
   if (debugMode) {
     appLogger.log(String("[INVERTER-CONTROLLER] State: ") + toString(currentState) +
                   " -> " + toString(expectedState) +
                   "  streak=" + (streakMs / 1000) + "s" +
                   "  interval=" + (currentRetryIntervalMs / 1000) + "s");
   }
-  setInverterState(expectedState);
 }
 
 void InverterController::runPollingTask() {
   failureStartMs = 0;
-  // globalInverterState is already STARTING at boot; set interval explicitly
-  // since no state transition fires at boot (STARTING -> STARTING is a no-op).
-  currentRetryIntervalMs = intervalForState(InverterLinkState::STARTING, WIFI_BRIDGE_POLL_INTERVAL_MS);
+  // globalInverterState is already STARTING at boot. Initialize the poll interval
+  // once from settings; later transitions own any overrides.
+  currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
 
   while (true) {
     bool iterationOk = false;
@@ -300,29 +300,13 @@ uint32_t InverterController::getRetryIntervalMs() {
 void InverterController::setPollIntervalMs(uint32_t ms) {
   if (ms < 100) ms = 100;
   if (ms > 300000) ms = 300000;
-  basePollIntervalMs_ = ms;
-  // Re-apply interval for current state so it takes effect immediately
-  InverterLinkState current = getLinkState();
-  currentRetryIntervalMs = intervalForState(current, basePollIntervalMs_);
-  appLogger.log(String("[INVERTER-CONTROLLER] Base poll interval set to ") + ms + "ms");
+  currentRetryIntervalMs = ms;
+  appLogger.log(String("[INVERTER-CONTROLLER] Temporary poll interval override set to ") + ms + "ms");
 }
 
-// -----------------------------------------------------------------------------
-// applyIntervalForState — state-entry hook registered at initialize().
-//
-// Fires on every state transition (entry hook: any -> targetState).
-// Updates currentRetryIntervalMs to the interval appropriate for the new state.
-// This is the ONLY place currentRetryIntervalMs is written after boot.
-//
-//  to          interval
-//  ---------   --------------------------
-//  BACKOFF     LINK_BACKOFF_INTERVAL_MS  (1 min)
-//  DORMANT     LINK_DORMANT_INTERVAL_MS  (10 min)
-//  other       WIFI_BRIDGE_POLL_INTERVAL_MS (base, 20 s)
-// -----------------------------------------------------------------------------
-void InverterController::applyIntervalForState(InverterLinkState /*from*/,
-                                            InverterLinkState to) {
-  getInstance().currentRetryIntervalMs = intervalForState(to, getInstance().basePollIntervalMs_);
+void InverterController::updatePollFrequency(InverterLinkState /*from*/,
+                                          InverterLinkState to) {
+  getInstance().currentRetryIntervalMs = intervalForState(to);
 }
 
 // -----------------------------------------------------------------------------

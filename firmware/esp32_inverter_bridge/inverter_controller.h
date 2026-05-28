@@ -103,9 +103,9 @@ public:
   uint32_t getRetryIntervalMs();
 
   /**
-   * Set the base poll interval at runtime. Clamped to [100, 300000] ms.
-   * Takes effect on the next state-entry hook fire or immediately if
-   * the current state uses the base interval.
+    * Temporarily override the current poll interval at runtime.
+    * Clamped to [100, 300000] ms. The override remains in effect until
+    * the next natural link-state transition updates the interval.
    */
   void setPollIntervalMs(uint32_t ms);
 
@@ -155,9 +155,10 @@ private:
   // Returns false if the mutex could not be acquired within the configured timeout.
   bool incrementCounterLocked(uint32_t& counter);
 
-  // State-entry hook registered at initialize() time.
-  // Updates currentRetryIntervalMs whenever the FSM enters a new state.
-  static void applyIntervalForState(InverterLinkState from, InverterLinkState to);
+  // State hook registered at initialize() time for poll-interval control.
+  // Entering ONLINE/BACKOFF/DORMANT calls this function, which selects the
+  // appropriate interval from the current state.
+  static void updatePollFrequency(InverterLinkState from, InverterLinkState to);
 
   // Hook callbacks for state-dependent side effects.
   static void loadSettingsOnBoot(InverterLinkState from, InverterLinkState to);
@@ -201,7 +202,6 @@ private:
   // failureStartMs is written only by the polling task; reads from other tasks are atomic.
   uint32_t failureStartMs = 0;          // millis() when current streak began; 0 if none
   uint32_t currentRetryIntervalMs = WIFI_BRIDGE_POLL_INTERVAL_MS;
-  uint32_t basePollIntervalMs_ = WIFI_BRIDGE_POLL_INTERVAL_MS;  // runtime-adjustable base
 
   // Cached shadow + power-limit read back from the inverter.
   // Protected by dataMutex. *Known = false until first successful read.
