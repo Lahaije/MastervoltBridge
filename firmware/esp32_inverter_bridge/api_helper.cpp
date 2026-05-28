@@ -144,7 +144,6 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
     .addNumber("failure_streak_s", String(InverterController::getInstance().getFailureStreakMs() / 1000UL))
     .addNumber("poll_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
-    .addNumber("base_poll_interval_ms", String(InverterController::getInstance().getBasePollIntervalMs()))
     .build();
 }
 

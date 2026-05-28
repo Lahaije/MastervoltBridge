@@ -18,7 +18,7 @@ This guide covers everything needed to go from parts to a running bridge: hardwa
 
 ## 2. Wiring
 
-Connect the ENC28J60 to the ESP32 and wire the inverter WiFi control pin (GPIO 36). GPIO 36 drives the button input on the inverter's WiFi module (active HIGH, 150 ms pulse). Wire it through a transistor or opto-isolator if needed to match the inverter's logic level.
+Connect the ENC28J60 to the ESP32 and wire the inverter WiFi control pin (GPIO 36). GPIO 36 idles HIGH and drives an active-LOW button pulse on the inverter's WiFi module (50 ms pulse, 50 ms gap in double-pulse sequence). Wire it through a transistor or opto-isolator if needed to match the inverter's logic level.
 
 Full pin table, electrical notes, and how to change pins: [`docs/WIRING_README.md`](WIRING_README.md).
 

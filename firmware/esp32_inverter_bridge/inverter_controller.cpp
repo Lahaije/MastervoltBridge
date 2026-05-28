@@ -12,7 +12,6 @@
 
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
-constexpr bool ENABLE_INVERTER_POLLING = true;
 constexpr const char* MULTIPART_BOUNDARY = "FormBoundary7MA4YWxkTrZu0gW";
 
 // Encode a newline-separated "key=value\nkey=value" payload as a
@@ -75,7 +74,7 @@ void InverterController::initialize() {
     dataMutex = xSemaphoreCreateMutex();
   }
 
-  if (ENABLE_INVERTER_POLLING && pollingTaskHandle == nullptr) {
+  if (pollingTaskHandle == nullptr) {
     xTaskCreatePinnedToCore(
       pollingTaskEntry,
       "inverter_controller",
@@ -101,11 +100,7 @@ void InverterController::initialize() {
   REGISTER_STATE_CHANGE_HOOK(InverterLinkState::DORMANT,  InverterLinkState::ONLINE, updateAllInverterParam);
 
   isInitialized = true;
-  if (ENABLE_INVERTER_POLLING) {
-    appLogger.log("[INVERTER-CONTROLLER] Inverter controller initialized");
-  } else {
-    appLogger.log("[INVERTER-CONTROLLER] Inverter polling disabled (measurement mode)");
-  }
+  appLogger.log("[INVERTER-CONTROLLER] Inverter controller initialized");
 }
 
 void InverterController::shutdown() {
@@ -302,12 +297,8 @@ uint32_t InverterController::getRetryIntervalMs() {
   return currentRetryIntervalMs;
 }
 
-uint32_t InverterController::getBasePollIntervalMs() {
-  return basePollIntervalMs_;
-}
-
-void InverterController::setBasePollIntervalMs(uint32_t ms) {
-  if (ms < 5000) ms = 5000;
+void InverterController::setPollIntervalMs(uint32_t ms) {
+  if (ms < 100) ms = 100;
   if (ms > 300000) ms = 300000;
   basePollIntervalMs_ = ms;
   // Re-apply interval for current state so it takes effect immediately

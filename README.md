@@ -24,7 +24,7 @@ Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to 
 
 - ESP32-S3 development board
 - ENC28J60 Ethernet module (SPI)
-- WiFi wake circuit on GPIO 36 (active HIGH pulse)
+- WiFi wake circuit on GPIO 36 (idle HIGH, active-LOW pulse)
 - Connects to inverter access point: SSID `mastervolt-soladin-0103` / `10.0.0.1`
 - Ethernet IP assigned by DHCP; API available at `http://<ip>:8080`
 

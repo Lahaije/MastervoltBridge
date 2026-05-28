@@ -114,13 +114,12 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 <div class="card">
 <h2>Polling</h2>
 <div class="grid">
-<div class="k">Effective interval</div><div class="v" id="sPollInt">-</div>
-<div class="k">Base interval</div><div class="v" id="sBaseInt">-</div>
+<div class="k">Interval</div><div class="v" id="sPollInt">-</div>
 <div class="k">State</div><div class="v" id="sPollState">-</div>
 </div>
 <div class="row">
-<label for="iInterval">Base (s)</label>
-<input type="number" id="iInterval" min="5" max="300" step="1">
+<label for="iInterval">Interval (s)</label>
+<input type="number" id="iInterval" min="1" max="300" step="1">
 <button class="primary" id="bInterval">Apply</button>
 </div>
 <div class="msg" id="mInterval"></div>
@@ -154,7 +153,6 @@ async function refresh(){
       $('sLink').innerHTML=pill(info.inverter_link_state||'?',info.inverter_link_state==='ONLINE'?'ok':info.inverter_link_state==='DORMANT'?'bad':'warn');
       $('sStreak').textContent=(info.failure_streak_s||0)+' s';
       $('sPollInt').textContent=(info.poll_interval_ms/1000)+' s';
-      $('sBaseInt').textContent=(info.base_poll_interval_ms/1000)+' s';
       $('sPollState').textContent=info.inverter_link_state||'-';
     }catch(e){
       $('sPower').innerHTML='<span class="unknown">offline</span>';
@@ -201,8 +199,8 @@ $('bWifiOff').onclick=async()=>{
 
 $('bInterval').onclick=async()=>{
   const v=parseInt($('iInterval').value,10);
-  if(isNaN(v)||v<5||v>300){flash($('mInterval'),false,'Enter 5-300 seconds');return;}
-  try{const r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.base_poll_interval_ms/1000)+' s');refresh();}
+  if(isNaN(v)||v<1||v>300){flash($('mInterval'),false,'Enter 1-300 seconds');return;}
+  try{const r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.effective_interval_ms/1000)+' s');refresh();}
   catch(e){flash($('mInterval'),false,e.message);}
 };
 

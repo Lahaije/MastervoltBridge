@@ -56,9 +56,8 @@ public:
    *             inverter (cache updated). The readback value should match
    *             the desired value but the caller can verify via getShadow()
    *             / getPowerLimit() if needed.
-   *  Deferred — value validated, but could not be applied right now (POST
-   *             failed, or the *other* shared field is not yet cached so the
-   *             combined /postoptions form cannot be built safely). The
+  *  Deferred — value validated, but could not be applied right now (POST
+  *             failed). The
    *             desired value is queued; the polling task will retry it on
    *             the next successful /home telegram via applyPendingSettings().
    *             The cached read-back fields are NOT updated.
@@ -104,16 +103,11 @@ public:
   uint32_t getRetryIntervalMs();
 
   /**
-   * Get the base poll interval (used for ONLINE/RETRYING/STARTING states).
-   */
-  uint32_t getBasePollIntervalMs();
-
-  /**
-   * Set the base poll interval at runtime. Clamped to [5000, 300000] ms.
+   * Set the base poll interval at runtime. Clamped to [100, 300000] ms.
    * Takes effect on the next state-entry hook fire or immediately if
    * the current state uses the base interval.
    */
-  void setBasePollIntervalMs(uint32_t ms);
+  void setPollIntervalMs(uint32_t ms);
 
   /**
    * Cached shadow function state. Returns true if a value has been read from
@@ -217,8 +211,7 @@ private:
   uint16_t powerLimitW_ = 0;
 
   // Desired-state convergence: when an API set call cannot reach the inverter
-  // (or cannot safely build the combined /postoptions form because the *other*
-  // shared field is still unknown), the desired value is queued here and the
+  // the desired value is queued here and the
   // master flag is raised. The polling task drains it via applyPendingSettings()
   // on the next successful /home telegram. Protected by dataMutex.
   // pendingSettings_ is the master "anything to do?" flag — equivalent to

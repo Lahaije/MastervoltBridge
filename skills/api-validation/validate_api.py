@@ -5,7 +5,7 @@ API Validation Script — ESP32 Inverter Bridge
 Calls every GET endpoint on the live bridge, validates that:
   - HTTP status codes match documentation
   - Response bodies contain the expected JSON keys
-  - The discovery endpoint (GET /) lists all documented endpoints
+    - The discovery endpoint (GET /api) lists all documented endpoints
 
 Usage (from repo root):
     .venv/Scripts/python skills/api-validation/validate_api.py
@@ -16,7 +16,6 @@ Exit code: 0 = all checks passed, 1 = one or more checks failed.
 """
 
 import argparse
-import json
 import sys
 from typing import Any
 
@@ -33,6 +32,7 @@ except ImportError:
 # Every endpoint the documentation promises exists, with its HTTP method.
 DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/"),
+    ("GET",  "/api"),
     ("GET",  "/api/health"),
     ("GET",  "/api/logs"),
     ("GET",  "/api/info"),
@@ -42,6 +42,7 @@ DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("POST", "/wifi/off"),
     ("GET",  "/pulse"),
     ("POST", "/api/debug"),
+    ("POST", "/api/interval"),
 ]
 
 # For GET endpoints: required top-level JSON keys expected in 200 responses.
@@ -49,33 +50,43 @@ DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
 GET_CHECKS: list[dict[str, Any]] = [
     {
         "path": "/",
+        "description": "Web UI dashboard",
+        "kind": "html",
+    },
+    {
+        "path": "/api",
         "description": "API discovery",
         "required_keys": ["endpoints"],
         "allow_502": False,
+        "kind": "json",
     },
     {
         "path": "/api/health",
         "description": "Bridge health",
         "required_keys": ["wifi_connected", "ethernet_ip"],
         "allow_502": False,
+        "kind": "json",
     },
     {
         "path": "/api/logs",
         "description": "Log buffer",
         "required_keys": ["entries"],
         "allow_502": False,
+        "kind": "json",
     },
     {
         "path": "/api/info",
-        "description": "Inverter telemetry (may be 502 if inverter WiFi is off)",
-        "required_keys": ["power", "total_yield", "daily_yield", "inverter_link_state", "failure_streak_s"],
-        "allow_502": True,
+        "description": "Inverter telemetry cache",
+        "required_keys": ["power", "total_yield", "daily_yield", "inverter_link_state", "failure_streak_s", "poll_interval_ms", "base_poll_interval_ms"],
+        "allow_502": False,
+        "kind": "json",
     },
     {
         "path": "/pulse",
         "description": "GPIO wake pulse + forced reconnect",
         "required_keys": ["reconnected"],
         "allow_502": False,
+        "kind": "json",
     },
 ]
 
@@ -110,6 +121,17 @@ def get_json(base_url: str, path: str, timeout: int = 10) -> tuple[int, Any]:
         return -2, None
 
 
+def get_raw(base_url: str, path: str, timeout: int = 10) -> tuple[int, str, str]:
+    """GET path, return (status_code, content_type, text_body)."""
+    try:
+        r = requests.get(f"{base_url}{path}", timeout=timeout)
+        return r.status_code, r.headers.get("Content-Type", ""), r.text
+    except requests.exceptions.ConnectionError:
+        return -1, "", ""
+    except requests.exceptions.Timeout:
+        return -2, "", ""
+
+
 # ---------------------------------------------------------------------------
 # Checks
 # ---------------------------------------------------------------------------
@@ -129,16 +151,16 @@ def check_reachability(base_url: str) -> bool:
 
 def check_discovery(base_url: str, verbose: bool) -> tuple[bool, list[tuple[str, str]]]:
     """
-    GET / and compare the firmware-reported endpoint list against DOCUMENTED_ENDPOINTS.
+    GET /api and compare the firmware-reported endpoint list against DOCUMENTED_ENDPOINTS.
     Returns (all_ok, live_endpoint_list).
     """
-    print("\n[2] Discovery endpoint (GET /)")
-    status, body = get_json(base_url, "/")
+    print("\n[2] Discovery endpoint (GET /api)")
+    status, body = get_json(base_url, "/api")
     if status != 200 or not isinstance(body, dict):
-        check("GET / returns 200 JSON", False, f"HTTP {status}")
+        check("GET /api returns 200 JSON", False, f"HTTP {status}")
         return False, []
 
-    check("GET / returns 200 JSON", True)
+    check("GET /api returns 200 JSON", True)
 
     # Extract list of {method, path} from firmware discovery response
     raw_endpoints = body.get("endpoints", [])
@@ -178,10 +200,33 @@ def check_get_endpoints(base_url: str, verbose: bool) -> bool:
     for spec in GET_CHECKS:
         path = spec["path"]
         desc = spec["description"]
-        required_keys: list[str] = spec["required_keys"]
-        allow_502: bool = spec["allow_502"]
+        kind = spec.get("kind", "json")
 
         print(f"\n  {path}  —  {desc}")
+
+        if kind == "html":
+            status, content_type, text_body = get_raw(base_url, path)
+
+            if status == -1:
+                check("reachable", False, "connection error")
+                all_ok = False
+                continue
+            if status == -2:
+                check("reachable", False, "timeout")
+                all_ok = False
+                continue
+
+            ok = check(f"HTTP {status} (expected 200)", status == 200)
+            all_ok = all_ok and ok
+            type_ok = check("response is HTML", "text/html" in content_type.lower(),
+                            f"Content-Type: {content_type}")
+            all_ok = all_ok and type_ok
+            body_ok = check("response body is non-empty", len(text_body.strip()) > 0)
+            all_ok = all_ok and body_ok
+            continue
+
+        required_keys: list[str] = spec["required_keys"]
+        allow_502: bool = spec["allow_502"]
         status, body = get_json(base_url, path)
 
         if status == -1:
@@ -264,7 +309,7 @@ def main() -> int:
         print("Check Ethernet connection and verify the bridge IP/port.")
         return 1
 
-    discovery_ok, live_endpoints = check_discovery(base_url, args.verbose)
+    discovery_ok, _ = check_discovery(base_url, args.verbose)
     results["Discovery matches documentation"] = discovery_ok
 
     get_ok = check_get_endpoints(base_url, args.verbose)

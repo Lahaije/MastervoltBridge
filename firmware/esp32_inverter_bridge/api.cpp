@@ -20,7 +20,7 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
   {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"},
-  {"POST", "/api/interval", "Set base poll interval in ms: {\"interval\":20000} (range 5000-300000)"}
+  {"POST", "/api/interval", "Set base poll interval in ms: {\"interval\":20000} (range 100-300000)"}
 };
 
 void handleApiClient(EthernetClient& client) {
@@ -146,11 +146,11 @@ void handleApiClient(EthernetClient& client) {
       return;
     }
     int intervalMs = 0;
-    if (!parseStringToInt(rawInterval, intervalMs) || intervalMs < 5000 || intervalMs > 300000) {
-      sendHttpResponse(client, 400, "application/json", buildErrorJson("interval must be 5000-300000 ms"));
+    if (!parseStringToInt(rawInterval, intervalMs) || intervalMs < 100 || intervalMs > 300000) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("interval must be 100-300000 ms"));
       return;
     }
-    InverterController::getInstance().setBasePollIntervalMs((uint32_t)intervalMs);
+    InverterController::getInstance().setPollIntervalMs((uint32_t)intervalMs);
     String response = JsonBuilder()
       .addNumber("base_poll_interval_ms", String(intervalMs))
       .addNumber("effective_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))

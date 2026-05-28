@@ -26,7 +26,7 @@ This document provides project context for AI agents working on the ESP32 invert
 **Hardware**: ESP32-S3 + ENC28J60 Ethernet adapter
 - WiFi: Station mode → inverter SSID `mastervolt-soladin-0103` / `10.0.0.1`
 - Ethernet: DHCP client on home LAN → `192.168.1.48:8080`
-- GPIO 36: inverter WiFi wake pulse (active HIGH)
+- GPIO 36: inverter WiFi wake pulse (idle HIGH, active-LOW pulse)
 
 ## Architecture
 
@@ -36,7 +36,7 @@ This document provides project context for AI agents working on the ESP32 invert
 wifi_bridge.cpp/h (core network layer)
   ├── WifiConnectionManager singleton (ensureConnected, forceReconnect)
   ├── connectWifiDwell(), connectWifiAuto(), connectWifi(bool)
-  ├── fetchInverterData(method, path, body, ...)
+  ├── fetchInverterData(method, path, body, ..., contentType)
   └── deps: WiFi.h, HTTPClient.h, settings
 
 inverter_data.cpp/h (data model)
@@ -71,7 +71,7 @@ web_ui.h (self-contained HTML dashboard)
   └── WEB_UI_HTML[] PROGMEM raw literal (~7.7 KB), WEB_UI_HTML_LEN, static_assert < 16 KB
 
 esp32_inverter_bridge.ino (main entry)
-  └── starts ethernetBridgeStartTask() + InverterController::initialize()
+  └── starts ethernetBridgeInit() + InverterController::initialize()
 
 settings.cpp/h — all global constants (7 logical sections)
 logger.h — 1000-entry circular log buffer with ms timestamps
@@ -134,6 +134,8 @@ bool fetchPath(const String& path, String& responseBody, int& httpCode, String& 
 InverterLinkState getLinkState();
 uint32_t getFailureStreakMs();
 uint32_t getRetryIntervalMs();
+uint32_t getBasePollIntervalMs();
+void setBasePollIntervalMs(uint32_t ms);
 bool getShadow(bool& enabledOut);       // cached shadow function state
 bool getPowerLimit(uint16_t& wattsOut); // cached inverter power limit
 bool hasPendingSettings();              // true if deferred values are queued
@@ -181,7 +183,7 @@ Read `settings.h` directly for current values. Do not duplicate constant values 
 1. **Never call `WiFi.status()` directly** — use `WifiConnectionManager::getInstance().ensureConnected()`. It pulses and reconnects; `WiFi.status()` does neither.
 2. **Include order**: `inverter_controller.cpp` needs `wifi_bridge.h` before `fetchInverterData()`.
 3. **Mutex timeouts**: Keep lock time short. Threads waiting >10 ms will fail silently (`DATA_MUTEX_TIMEOUT_MS = 10` in `settings.cpp`).
-4. **502 = WiFi not connected** (usually). Check `/api/health` first; `/api/info` also returns 502 for ~20 s after boot until first poll completes.
+4. **502 = inverter call failed** (usually WiFi not connected). Check `/api/health` first. `/api/info` now always returns HTTP 200 (with empty telemetry fields before first successful poll).
 5. **Pulse state machine**: single press toggles WiFi. `/wifi/off` = one press (OFF). `/pulse` = double-press (OFF→ON). Calling `/pulse` while connected will disconnect then reconnect.
 6. **Power limit**: `setPower()` validates 0–`INVERTER_MAX_POWER_WATTS` before the HTTP request.
 7. **ENC28J60 crash on dead TCP write**: Writing to a disconnected `EthernetClient` via UIPEthernet crashes the device. Always check `client.connected()` before `client.write()` in streaming responses (see `sendLogsResponse()` abort guard).

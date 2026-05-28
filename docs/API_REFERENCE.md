@@ -23,6 +23,7 @@ http://192.168.1.48:8080
 | POST | /wifi/off | Single button press if WiFi is connected |
 | GET | /pulse | Recovery pulse + connection-time measurement |
 | POST | /api/debug | Enable or disable verbose HTTP 200 success logging |
+| POST | /api/interval | Set base poll interval (milliseconds) |
 
 ## GET /
 
@@ -82,6 +83,9 @@ Notes:
 
 Returns cached parsed inverter telemetry from /home.
 
+This endpoint always returns HTTP 200. If no poll has succeeded yet, telemetry
+string fields may be empty and `last_update_ms` will be 0.
+
 Response fields:
 
 | Field | Type | Description |
@@ -97,10 +101,7 @@ Response fields:
 | `daily_yield` | string | Daily energy in kWh, e.g. "12.811" |
 | `inverter_link_state` | string | FSM state: "STARTING", "ONLINE", "RETRYING", "BACKOFF", or "DORMANT" |
 | `failure_streak_s` | number | Seconds since last successful poll (0 when ONLINE) |
-
-Typical failure when inverter is unavailable:
-
-- 502 with error: No inverter telemetry data available yet
+| `poll_interval_ms` | number | Current effective polling interval in milliseconds |
 
 ## POST /api/power
 
@@ -228,11 +229,32 @@ Response:
 
 Debug mode starts as `true` at boot and is automatically set to `false` at the end of `setup()`. Use this endpoint to re-enable it temporarily during live debugging.
 
+## POST /api/interval
+
+Purpose:
+
+- Set the runtime base polling interval used by STARTING/ONLINE/RETRYING states.
+
+Body:
+
+{"interval":20000}
+
+Validation:
+
+- integer only
+- range 100 to 300000 (milliseconds)
+
+Response (applied):
+
+{"base_poll_interval_ms":20000,"effective_interval_ms":20000}
+
+When current FSM state is BACKOFF or DORMANT, `effective_interval_ms` may differ
+from the requested value until state returns to a base-interval state.
+
 ## Known Expected Errors (Night / Inverter Off)
 
 When inverter WiFi is not available:
 
-- GET /api/info -> 502
 - POST /api/power -> 502
 - POST /api/shadow -> 502
 - POST /api/inverter/fetch -> 502

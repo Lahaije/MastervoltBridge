@@ -21,9 +21,10 @@ Current firmware defaults are defined in firmware/esp32_inverter_bridge/settings
 
 Signal behavior:
 
-- Active pulse pattern
-- PULSE_HIGH_MS = 50
-- PULSE_GAP_MS = 50
+- Idle level: HIGH
+- Active pulse level: LOW (simulates inverter button press)
+- PULSE_HIGH_MS = 50 (active-LOW pulse width)
+- PULSE_GAP_MS = 50 (gap between two presses)
 
 ## Practical Notes
 

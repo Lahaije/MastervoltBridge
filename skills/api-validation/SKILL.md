@@ -31,16 +31,17 @@ Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 <checks>
 **1. Bridge reachability** — Calls `GET /api/health`. If unreachable, stops immediately with a clear error message.
 
-**2. Discovery cross-check (`GET /`)** — Verifies every documented endpoint appears in the firmware response, and every firmware endpoint appears in the documentation (catches silent additions).
+**2. Discovery cross-check (`GET /api`)** — Verifies every documented endpoint appears in the firmware response, and every firmware endpoint appears in the documentation (catches silent additions).
 
-**3. GET endpoint response validation** — For each GET endpoint, checks HTTP 200 (or 502 when inverter WiFi is off) and expected JSON keys:
+**3. GET endpoint response validation** — For each GET endpoint, checks HTTP 200 and expected payload shape/keys:
 
 | Endpoint | Expected keys |
 |---|---|
-| `GET /` | `endpoints` |
+| `GET /` | HTML response (`Content-Type: text/html`) |
+| `GET /api` | `endpoints` |
 | `GET /api/health` | `wifi_connected`, `ethernet_ip` |
 | `GET /api/logs` | `entries` |
-| `GET /api/info` | `power`, `total_yield`, `daily_yield` (or 502 if inverter offline) |
+| `GET /api/info` | `power`, `total_yield`, `daily_yield`, `poll_interval_ms`, `base_poll_interval_ms` |
 | `GET /pulse` | `reconnected` |
 </checks>
 
@@ -51,7 +52,6 @@ Exit code `0` = all checks passed. Exit code `1` = one or more failures.
 | Documented endpoint missing from firmware | `api.cpp` is missing the handler | Add endpoint to `api.cpp`, re-upload with firmware-upload skill |
 | Firmware endpoint missing from documentation | New endpoint added without updating docs | Update `docs/API_REFERENCE.md` and `AGENTS.md` endpoint table |
 | Response key missing | `api_helper.cpp` response changed, or docs are wrong | Align docs with firmware or restore the field |
-| `GET /api/info` returns 502 | Inverter WiFi is off (e.g. nighttime) | Expected — skip or rerun daytime |
 | Bridge not reachable | Ethernet disconnected or wrong IP | Check hardware and bridge IP |
 </interpreting_results>
 
