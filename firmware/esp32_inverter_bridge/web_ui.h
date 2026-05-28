@@ -133,6 +133,8 @@ const $=id=>document.getElementById(id);
 
 function pill(text,cls){return '<span class="pill '+cls+'">'+text+'</span>';}
 function flash(el,ok,msg){el.textContent=msg;el.className='msg '+(ok?'ok':'bad');setTimeout(()=>{if(el.textContent===msg)el.textContent='';},4000);}
+function hasFiniteNumber(v){return typeof v==='number' && Number.isFinite(v);}
+function fmtKwh(v){return hasFiniteNumber(v)?(v.toFixed(3)+' kWh'):'-';}
 
 async function jget(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
 async function jpost(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=null;try{d=await r.json();}catch(e){}if(!r.ok){const m=(d&&d.error)?d.error:('HTTP '+r.status);throw new Error(m);}return d||{};}
@@ -147,13 +149,29 @@ async function refresh(){
     try{
       const info=await jget('/api/info');
       $('sPower').textContent=info.power?(info.power+' W'):'-';
-      $('sDaily').textContent=info.daily_yield?(info.daily_yield+' kWh'):'-';
-      $('sTotal').textContent=info.total_yield?(info.total_yield+' kWh'):'-';
+      $('sDaily').textContent=fmtKwh(info.daily_yield);
+      $('sTotal').textContent=fmtKwh(info.total_yield);
       $('sOp').textContent=info.operating_status?(info.operating_status==='1'?'normal':'code '+info.operating_status):'-';
       $('sLink').innerHTML=pill(info.inverter_link_state||'?',info.inverter_link_state==='ONLINE'?'ok':info.inverter_link_state==='DORMANT'?'bad':'warn');
       $('sStreak').textContent=(info.failure_streak_s||0)+' s';
       $('sPollInt').textContent=(info.poll_interval_ms/1000)+' s';
       $('sPollState').textContent=info.inverter_link_state||'-';
+
+      const hasPowerLimit=hasFiniteNumber(info.power_limit_watts);
+      $('curPower').textContent=hasPowerLimit?(info.power_limit_watts+' W'):'unknown';
+      $('curPower').className=hasPowerLimit?'v':'v unknown';
+      if(hasPowerLimit && !$('iPower').value){
+        $('iPower').value=String(info.power_limit_watts);
+      }
+
+      if(typeof info.shadow_enabled==='boolean'){
+        $('curShadow').textContent=info.shadow_enabled?'enabled':'disabled';
+        $('curShadow').className='v';
+        $('iShadow').checked=info.shadow_enabled;
+      }else{
+        $('curShadow').textContent='unknown';
+        $('curShadow').className='v unknown';
+      }
     }catch(e){
       $('sPower').innerHTML='<span class="unknown">offline</span>';
       $('sDaily').innerHTML='<span class="unknown">-</span>';
@@ -161,6 +179,10 @@ async function refresh(){
       $('sOp').innerHTML='<span class="unknown">-</span>';
       $('sLink').innerHTML=pill('offline','bad');
       $('sStreak').textContent='-';
+      $('curPower').textContent='unknown';
+      $('curPower').className='v unknown';
+      $('curShadow').textContent='unknown';
+      $('curShadow').className='v unknown';
     }
     $('lastFetch').textContent='updated '+new Date().toLocaleTimeString();
   }catch(e){

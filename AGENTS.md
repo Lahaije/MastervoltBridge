@@ -108,8 +108,10 @@ struct HomeData {
   String inverterModel;       // "H500A0103"
   String inverterMacAddress;
   String instantaneousPower;  // watts, e.g. "674.547"
-  String lifetimeEnergy;      // kWh,   e.g. "8566.628"
-  String dailySessionEnergy;  // kWh,   e.g. "12.811"
+  float lifetimeEnergyKwh;    // kWh,   e.g. 8566.628
+  float dailySessionEnergyKwh;// kWh,   e.g. 12.811
+  bool hasLifetimeEnergy;
+  bool hasDailySessionEnergy;
   bool isValid() const;
 };
 ```

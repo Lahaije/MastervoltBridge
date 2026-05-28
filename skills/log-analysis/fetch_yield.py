@@ -18,6 +18,20 @@ import sys
 import urllib.request
 
 
+def parse_optional_float(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_yield(base_url: str, timeout: float) -> int:
     url = f"{base_url.rstrip('/')}/api/info"
     req = urllib.request.Request(url=url, method="GET")
@@ -32,26 +46,17 @@ def fetch_yield(base_url: str, timeout: float) -> int:
 
     data = json.loads(raw)
 
-    daily_raw = data.get("daily_yield", "")
-    total_raw = data.get("total_yield", "")
+    daily_raw = data.get("daily_yield", None)
+    total_raw = data.get("total_yield", None)
     power_raw = data.get("power", "")
 
-    if not daily_raw:
+    daily = parse_optional_float(daily_raw)
+    total = parse_optional_float(total_raw)
+    power = parse_optional_float(power_raw)
+
+    if daily is None:
         print("No yield data available (inverter may be offline).")
         return 1
-
-    try:
-        daily = float(daily_raw)
-    except ValueError:
-        daily = None
-    try:
-        total = float(total_raw)
-    except ValueError:
-        total = None
-    try:
-        power = float(power_raw)
-    except ValueError:
-        power = None
 
     print("Inverter Yield")
     print("--------------")

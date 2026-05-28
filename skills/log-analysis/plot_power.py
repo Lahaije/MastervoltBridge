@@ -33,6 +33,7 @@ from analyze_bridge_logs import (  # noqa: E402
     group_into_episodes,
     parse_attempts,
     parse_backoff_events,
+    parse_control_events,
     parse_polls,
     parse_state_change_events,
 )
@@ -50,6 +51,7 @@ def build_plot(
     out_path: Path,
     backoff_events=None,
     state_change_events=None,
+    control_events=None,
     state_label_mode: str = "major",
     show: bool = False,
 ) -> None:
@@ -183,11 +185,10 @@ def build_plot(
             if state_label_mode == "major" and (idx % label_stride) != 0:
                 continue
             label_y = y_top if idx % 2 == 0 else y_alt
-            interval_text = f" ({ev.interval_seconds}s)" if ev.interval_seconds is not None else ""
             ax.text(
                 x_min,
                 label_y,
-                f"{ev.from_state}->{ev.to_state}{interval_text}",
+                f"{ev.to_state}",
                 rotation=90,
                 va="top",
                 ha="left",
@@ -196,6 +197,43 @@ def build_plot(
                 zorder=5,
             )
             last_label_x = x_min
+
+    # --- Generic control/event labels ---
+    if control_events:
+        event_styles = {
+            "power_update_request": ("PWR_REQ", "#ffb74d", y_ref * 0.50),
+            "power_limit_active": ("PWR_SET", "#ffd180", y_ref * 0.46),
+            "shadow_update_request": ("SHADOW", "#ce93d8", y_ref * 0.42),
+            "pulse_request": ("PULSE", "#f48fb1", y_ref * 0.38),
+            "wifi_off_request": ("WIFI_OFF", "#ef9a9a", y_ref * 0.34),
+            "inverter_fetch_failed": ("FETCH_FAIL", "#ef5350", y_ref * 0.30),
+            "inverter_recovered": ("RECOVERED", "#81c784", y_ref * 0.26),
+        }
+
+        last_event_label_x = {}
+        for ev in sorted(control_events, key=lambda x: x.timestamp_ms):
+            style = event_styles.get(ev.kind)
+            if not style:
+                continue
+            label, color, y_pos = style
+            x_min = ev.timestamp_ms / 60_000
+            # Keep dense event bursts readable.
+            min_spacing = 1.5
+            if x_min - last_event_label_x.get(label, -10_000) < min_spacing:
+                continue
+            ax.axvline(x_min, color=color, linestyle=(0, (2, 3)), linewidth=0.7, alpha=0.55, zorder=3)
+            ax.text(
+                x_min,
+                y_pos,
+                label,
+                rotation=90,
+                va="top",
+                ha="right",
+                fontsize=5.8,
+                color=color,
+                zorder=6,
+            )
+            last_event_label_x[label] = x_min
 
     # --- Peak annotation ---
     peak_w = max(powers_w)
@@ -291,6 +329,7 @@ def main() -> int:
     attempts = parse_attempts(entries)
     backoff_events = parse_backoff_events(entries)
     state_change_events = parse_state_change_events(entries)
+    control_events = parse_control_events(entries)
     episodes = group_into_episodes(attempts)
 
     print(f"Fetched {len(entries)} entries — {len(polls)} polls, {skipped} skipped, {len(episodes)} episodes")
@@ -307,6 +346,7 @@ def main() -> int:
         out_path,
         backoff_events=backoff_events,
         state_change_events=state_change_events,
+        control_events=control_events,
         state_label_mode=args.state_labels,
         show=args.show,
     )

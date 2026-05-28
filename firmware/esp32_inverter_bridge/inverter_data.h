@@ -11,18 +11,21 @@
  * 
  * Format: Line 1\nLine 2\n...\nLine 8\n
  * 
- * All raw fields are stored as String; helper methods provide typed access.
+ * Status/model/power fields are stored as String; yield fields are parsed as
+ * numeric values with explicit validity flags.
  */
 struct HomeData {
-  // Raw fields from /home endpoint
+  // Parsed fields from /home endpoint
   String operatingStatus;
   String errorAlarmCode;
   String operatingMode;
   String inverterModel;
   String inverterMacAddress;
   String instantaneousPower;
-  String lifetimeEnergy;
-  String dailySessionEnergy;
+  float lifetimeEnergyKwh = 0.0f;
+  float dailySessionEnergyKwh = 0.0f;
+  bool hasLifetimeEnergy = false;
+  bool hasDailySessionEnergy = false;
 
   /**
    * Check if this struct has valid data (at least one field populated).

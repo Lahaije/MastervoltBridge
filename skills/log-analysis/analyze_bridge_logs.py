@@ -22,6 +22,7 @@ to refer to log entries when communicating about timestamps.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import re
 import statistics
@@ -30,6 +31,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from log_parser import parse_logs
 
 
 def format_ms(ms: int) -> str:
@@ -197,29 +200,24 @@ _INVERTER_PREFIX_RE = r"INVERTER-(?:CONTROLLER|MONITOR)"
 _POLL_RE = re.compile(rf"\[{_INVERTER_PREFIX_RE}\] Poll #(\d+): Status=(\S+) Power=([\d.]+)W")
 _BACKOFF_RE = re.compile(rf"\[{_INVERTER_PREFIX_RE}\] Backoff: retry interval -> (\d+)s")
 _LINK_STATE_RE = re.compile(
-    rf"\[{_INVERTER_PREFIX_RE}\] State: ([A-Z]+) -> ([A-Z]+)"
-    r"\s+streak=(\d+)s\s+interval=(\d+)s"
+    rf"\[{_INVERTER_PREFIX_RE}\]\s+(?:Link state|State):\s+([A-Z]+)\s+->\s+([A-Z]+)"
+    r"(?:\s*\(streak=(\d+)s,\s*interval=(\d+)s\)|\s+streak=(\d+)s\s+interval=(\d+)s)"
 )
 
 
 def parse_polls(entries: List[Dict]) -> Tuple[List[PollEntry], int]:
     """Return (poll_entries, skipped_count) from log entries."""
-    polls: List[PollEntry] = []
-    skipped = 0
-    for e in entries:
-        msg = str(e.get("message", ""))
-        ts = int(e.get("timestamp_ms", 0))
-        m = _POLL_RE.search(msg)
-        if m:
-            polls.append(PollEntry(
-                timestamp_ms=ts,
-                poll_number=int(m.group(1)),
-                status=m.group(2),
-                power_w=float(m.group(3)),
-            ))
-        elif "No WiFi connection; skipping poll iteration" in msg:
-            skipped += 1
-    return polls, skipped
+    parsed = parse_logs(entries)
+    polls = [
+        PollEntry(
+            timestamp_ms=p.timestamp_ms,
+            poll_number=p.poll_number,
+            status=p.status,
+            power_w=p.power_w,
+        )
+        for p in parsed.power_samples
+    ]
+    return polls, parsed.skipped_polls
 
 
 def parse_backoff_events(entries: List[Dict]) -> List[BackoffEvent]:
@@ -242,13 +240,15 @@ def parse_state_change_events(entries: List[Dict]) -> List[StateChangeEvent]:
         ts = int(e.get("timestamp_ms", 0))
         m = _LINK_STATE_RE.search(msg)
         if m:
+            streak_s = int(m.group(3) or m.group(5))
+            interval_s = int(m.group(4) or m.group(6))
             events.append(
                 StateChangeEvent(
                     timestamp_ms=ts,
                     from_state=m.group(1),
                     to_state=m.group(2),
-                    streak_seconds=int(m.group(3)),
-                    interval_seconds=int(m.group(4)),
+                    streak_seconds=streak_s,
+                    interval_seconds=interval_s,
                 )
             )
     return events
@@ -259,51 +259,11 @@ def parse_control_events(entries: List[Dict]) -> List[ControlEvent]:
 
     Normal poll power readings are intentionally excluded from this list.
     """
-    events: List[ControlEvent] = []
-
-    # API/user-triggered power update attempts.
-    api_power_re = re.compile(r"\[API\]\s+POST\s+/api/power")
-
-    # Controller-observed active power-limit value.
-    power_limit_read_re = re.compile(r"Power limit read:\s*(\d+)W")
-
-    # Other control events that are useful during incident analysis.
-    queued_power_re = re.compile(r"Queued power")
-    delivered_power_re = re.compile(r"power command delivered", re.IGNORECASE)
-    set_power_re = re.compile(r"setPower", re.IGNORECASE)
-    api_shadow_re = re.compile(r"\[API\]\s+POST\s+/api/shadow")
-
-    for e in entries:
-        msg = str(e.get("message", ""))
-        ts = int(e.get("timestamp_ms", 0))
-
-        if api_power_re.search(msg):
-            events.append(ControlEvent(ts, "power_update_request", msg))
-            continue
-
-        power_m = power_limit_read_re.search(msg)
-        if power_m:
-            watts = int(power_m.group(1))
-            events.append(ControlEvent(ts, "power_limit_active", f"Power limit active: {watts}W"))
-            continue
-
-        if queued_power_re.search(msg):
-            events.append(ControlEvent(ts, "power_update_queued", msg))
-            continue
-
-        if delivered_power_re.search(msg):
-            events.append(ControlEvent(ts, "power_update_delivered", msg))
-            continue
-
-        if set_power_re.search(msg):
-            events.append(ControlEvent(ts, "power_set_result", msg))
-            continue
-
-        if api_shadow_re.search(msg):
-            events.append(ControlEvent(ts, "shadow_update_request", msg))
-            continue
-
-    return events
+    parsed = parse_logs(entries)
+    return [
+        ControlEvent(timestamp_ms=ev.timestamp_ms, kind=ev.kind, details=ev.message)
+        for ev in parsed.events
+    ]
 
 
 def print_control_events(events: List[ControlEvent]) -> None:
@@ -316,6 +276,18 @@ def print_control_events(events: List[ControlEvent]) -> None:
 
     for ev in sorted(events, key=lambda x: x.timestamp_ms):
         print(f"  {format_ms(ev.timestamp_ms)}  [{ev.kind}] {ev.details}")
+
+
+def print_power_series(polls: List[PollEntry]) -> None:
+    """Print timestamped power output for each poll reading."""
+    print("\nPower series")
+    print("------------")
+    if not polls:
+        print("No poll power readings found in selected log entries.")
+        return
+
+    for p in polls:
+        print(f"  {format_ms(p.timestamp_ms)}  poll={p.poll_number}  status={p.status}  power={p.power_w:.3f}W")
 
 
 def group_into_episodes(attempts: List[Attempt]) -> List[Episode]:
@@ -481,6 +453,12 @@ def main() -> int:
     parser.add_argument("--since-ms", type=int, default=None, help="Only analyze entries at/after timestamp_ms")
     parser.add_argument("--limit", type=int, default=None, help="Only analyze last N entries")
     parser.add_argument("--print-all", action="store_true", help="Print all log entries with formatted timestamps before the analysis")
+    parser.add_argument("--print-power-series", action="store_true", help="Print timestamped power values for each poll")
+    parser.add_argument(
+        "--save-parsed-json",
+        default=None,
+        help="Optional path to save parsed event list + power series JSON",
+    )
     args = parser.parse_args()
 
     try:
@@ -524,6 +502,18 @@ def main() -> int:
     print_session_summary(entries, polls, skipped, episodes, backoff_events)
     summarize(attempts, episodes)
     print_control_events(control_events)
+    if args.print_power_series:
+        print_power_series(polls)
+
+    if args.save_parsed_json:
+        out_path = Path(args.save_parsed_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_payload = {
+            "events": [dataclasses.asdict(e) for e in control_events],
+            "power_series": [dataclasses.asdict(p) for p in polls],
+        }
+        out_path.write_text(json.dumps(out_payload, indent=2), encoding="utf-8")
+        print(f"Saved parsed output to: {out_path}")
     return 0
 
 

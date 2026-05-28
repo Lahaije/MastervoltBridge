@@ -84,7 +84,7 @@ Notes:
 Returns cached parsed inverter telemetry from /home.
 
 This endpoint always returns HTTP 200. If no poll has succeeded yet, telemetry
-string fields may be empty and `last_update_ms` will be 0.
+string fields may be empty, yield fields may be `null`, and `last_update_ms` will be 0.
 
 Response fields:
 
@@ -97,11 +97,13 @@ Response fields:
 | `inverter_model` | string | e.g. "H500A0103" |
 | `inverter_mac_address` | string | Inverter MAC |
 | `power` | string | Current output power in watts, e.g. "674.547" |
-| `total_yield` | string | Lifetime energy in kWh, e.g. "8566.628" |
-| `daily_yield` | string | Daily energy in kWh, e.g. "12.811" |
+| `total_yield` | number\|null | Lifetime energy in kWh, e.g. `8566.628`; `null` when unavailable |
+| `daily_yield` | number\|null | Daily energy in kWh, e.g. `12.811`; `null` when unavailable |
 | `inverter_link_state` | string | FSM state: "STARTING", "ONLINE", "RETRYING", "BACKOFF", or "DORMANT" |
 | `failure_streak_s` | number | Seconds since last successful poll (0 when ONLINE) |
 | `poll_interval_ms` | number | Current polling interval in milliseconds |
+| `power_limit_watts` | number\|null | Cached inverter power limit in watts from `/power`; `null` until first successful settings read |
+| `shadow_enabled` | boolean\|null | Cached inverter shadow state from `/shadow`; `null` until first successful settings read |
 
 ## POST /api/power
 

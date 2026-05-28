@@ -21,6 +21,7 @@ from analyze_bridge_logs import (  # noqa: E402
     group_into_episodes,
     parse_attempts,
     parse_backoff_events,
+    parse_control_events,
     parse_polls,
     parse_state_change_events,
     print_session_summary,
@@ -70,6 +71,7 @@ def main() -> int:
     polls, skipped = parse_polls(entries)
     backoff_events = parse_backoff_events(entries)
     state_change_events = parse_state_change_events(entries)
+    control_events = parse_control_events(entries)
     episodes = group_into_episodes(attempts)
 
     print_session_summary(entries, polls, skipped, episodes, backoff_events)
@@ -86,6 +88,7 @@ def main() -> int:
         out_path,
         backoff_events=backoff_events,
         state_change_events=state_change_events,
+        control_events=control_events,
         state_label_mode=args.state_labels,
         show=args.show,
     )

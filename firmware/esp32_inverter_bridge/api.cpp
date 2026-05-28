@@ -159,7 +159,8 @@ void handleApiClient(EthernetClient& client) {
   }
   
   if (method == "GET" && path == "/api/info") {
-    // Always return cached telemetry — empty strings if no poll has succeeded yet.
+    // Always return cached telemetry. Yield fields are numeric when available,
+    // otherwise null if no successful parse has occurred yet.
     // Consumers decide how to handle missing data; the bridge just reports state.
     HomeData inverterData = getInverterData();
     unsigned long lastUpdateMs = InverterController::getInstance().getLastUpdateMs();

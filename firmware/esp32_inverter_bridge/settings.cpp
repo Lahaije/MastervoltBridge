@@ -81,3 +81,8 @@ EthernetServer apiServer(API_PORT);
 Logger appLogger;
 int lastInverterStatusCode = -1;
 bool debugMode = true;
+
+// =============================================================================
+// Firmware Version
+// =============================================================================
+const char* FIRMWARE_VERSION = "0.1.0-alpha1";

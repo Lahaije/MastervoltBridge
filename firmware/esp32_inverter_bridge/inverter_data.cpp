@@ -1,25 +1,25 @@
 #include "inverter_data.h"
 
+#include <math.h>
+
 #include "inverter_controller.h"
 #include "logger.h"
 
 namespace {
 
-String normalizeDecimalString(const String& input) {
+bool parseFloatField(const String& input, float& valueOut) {
   String trimmed = input;
   trimmed.trim();
 
   if (trimmed.length() == 0) {
-    return "";
+    return false;
   }
 
   int pos = 0;
-  bool isNegative = false;
   if (trimmed[pos] == '+' || trimmed[pos] == '-') {
-    isNegative = (trimmed[pos] == '-');
     pos++;
     if (pos >= (int)trimmed.length()) {
-      return input;
+      return false;
     }
   }
 
@@ -29,50 +29,28 @@ String normalizeDecimalString(const String& input) {
     char c = trimmed[i];
     if (c == '.') {
       if (dotIndex >= 0) {
-        return input;
+        return false;
       }
       dotIndex = i;
       continue;
     }
     if (!isDigit(c)) {
-      return input;
+      return false;
     }
     hasDigit = true;
   }
 
   if (!hasDigit) {
-    return input;
+    return false;
   }
 
-  const int integerStart = pos;
-  const int integerEnd = (dotIndex >= 0) ? dotIndex : (int)trimmed.length();
-  const int fractionStart = (dotIndex >= 0) ? dotIndex + 1 : -1;
-
-  int firstNonZero = integerStart;
-  while (firstNonZero < integerEnd && trimmed[firstNonZero] == '0') {
-    firstNonZero++;
+  float parsed = trimmed.toFloat();
+  if (!isfinite(parsed)) {
+    return false;
   }
 
-  String normalized;
-  if (isNegative) {
-    normalized += '-';
-  }
-
-  // Keep a single zero for values like 0000.123 or 0000.
-  if (firstNonZero >= integerEnd) {
-    normalized += '0';
-  } else {
-    normalized += trimmed.substring(firstNonZero, integerEnd);
-  }
-
-  if (dotIndex >= 0) {
-    normalized += '.';
-    if (fractionStart < (int)trimmed.length()) {
-      normalized += trimmed.substring(fractionStart);
-    }
-  }
-
-  return normalized;
+  valueOut = parsed;
+  return true;
 }
 
 }  // namespace
@@ -88,8 +66,10 @@ void HomeData::clear() {
   inverterModel = "";
   inverterMacAddress = "";
   instantaneousPower = "";
-  lifetimeEnergy = "";
-  dailySessionEnergy = "";
+  lifetimeEnergyKwh = 0.0f;
+  dailySessionEnergyKwh = 0.0f;
+  hasLifetimeEnergy = false;
+  hasDailySessionEnergy = false;
 }
 
 HomeData getInverterData() {
@@ -157,8 +137,8 @@ bool parseHomeResponse(const String& rawResponse, HomeData& dataOut) {
   dataOut.inverterModel = extractLine(3);
   dataOut.inverterMacAddress = extractLine(4);
   dataOut.instantaneousPower = extractLine(5);
-  dataOut.lifetimeEnergy = normalizeDecimalString(extractLine(6));
-  dataOut.dailySessionEnergy = normalizeDecimalString(extractLine(7));
+  dataOut.hasLifetimeEnergy = parseFloatField(extractLine(6), dataOut.lifetimeEnergyKwh);
+  dataOut.hasDailySessionEnergy = parseFloatField(extractLine(7), dataOut.dailySessionEnergyKwh);
 
   return dataOut.isValid();
 }

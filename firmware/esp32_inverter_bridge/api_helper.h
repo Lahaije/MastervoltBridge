@@ -50,10 +50,58 @@ public:
 
   /**
    * Add a numeric field (unescaped, as-is).
+   * If check_non_zero is true and the numeric value is exactly zero,
+   * emits JSON null instead of 0.
    */
-  JsonBuilder& addNumber(const String& key, const String& value) {
+  JsonBuilder& addNumber(const String& key, const String& value, bool check_non_zero = false) {
+    String normalized = value;
+    normalized.trim();
+
+    bool emitNull = false;
+    if (check_non_zero && normalized.length() > 0) {
+      int pos = 0;
+      if (normalized[0] == '+' || normalized[0] == '-') {
+        pos = 1;
+      }
+
+      bool seenDigit = false;
+      bool seenDot = false;
+      bool allDigitsZero = true;
+      bool isValidSimpleNumber = (pos < (int)normalized.length());
+
+      for (int i = pos; i < (int)normalized.length() && isValidSimpleNumber; i++) {
+        char c = normalized[i];
+        if (c == '.') {
+          if (seenDot) {
+            isValidSimpleNumber = false;
+          } else {
+            seenDot = true;
+          }
+          continue;
+        }
+
+        if (!isDigit(c)) {
+          isValidSimpleNumber = false;
+          continue;
+        }
+
+        seenDigit = true;
+        if (c != '0') {
+          allDigitsZero = false;
+        }
+      }
+
+      if (isValidSimpleNumber && seenDigit && allDigitsZero) {
+        emitNull = true;
+      }
+    }
+
     if (needsComma) json += ",";
-    json += "\"" + key + "\":" + value;
+    if (emitNull) {
+      json += "\"" + key + "\":null";
+    } else {
+      json += "\"" + key + "\":" + normalized;
+    }
     needsComma = true;
     return *this;
   }
@@ -77,6 +125,16 @@ public:
     needsComma = true;
     return *this;
   }
+
+  /**
+   * Add power limit field: fetches live from controller, emits watts if known or null.
+   */
+  JsonBuilder& addPowerLimit();
+
+  /**
+   * Add shadow enabled field: fetches live from controller, emits boolean if known or null.
+   */
+  JsonBuilder& addShadow();
 
   /**
    * Finalize and return the JSON object.

@@ -1,10 +1,20 @@
 #include "api_helper.h"
 
+#include <math.h>
+
 #include <WiFi.h>
 #include "settings.h"
 #include "logger.h"
 #include "inverter_data.h"
 #include "inverter_controller.h"
+
+namespace {
+
+String formatKwh(float value) {
+  return String(value, 3);
+}
+
+}  // namespace
 
 String jsonEscape(const String& input) {
   String out;
@@ -131,7 +141,9 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
 }
 
 String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
-  return JsonBuilder()
+  JsonBuilder json;
+  json
+    .addString("firmware_version", String(FIRMWARE_VERSION))
     .addNumber("last_update_ms", String(lastUpdateMs))
     .addString("operating_status", data.operatingStatus)
     .addString("error_alarm_code", data.errorAlarmCode)
@@ -139,12 +151,53 @@ String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
     .addString("inverter_model", data.inverterModel)
     .addString("inverter_mac_address", data.inverterMacAddress)
     .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
-    .addString("total_yield", data.lifetimeEnergy)  // Total lifetime yield (via get_Total_Yield())
-    .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
     .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
     .addNumber("failure_streak_s", String(InverterController::getInstance().getFailureStreakMs() / 1000UL))
     .addNumber("poll_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
-    .build();
+    .addPowerLimit()
+    .addShadow();
+
+  if (data.hasLifetimeEnergy && isfinite(data.lifetimeEnergyKwh)) {
+    json.addNumber("total_yield", formatKwh(data.lifetimeEnergyKwh), true);
+  } else {
+    json.addNull("total_yield");
+  }
+
+  if (data.hasDailySessionEnergy && isfinite(data.dailySessionEnergyKwh)) {
+    json.addNumber("daily_yield", formatKwh(data.dailySessionEnergyKwh), true);
+  } else {
+    json.addNull("daily_yield");
+  }
+
+  return json.build();
+}
+
+JsonBuilder& JsonBuilder::addPowerLimit() {
+  uint16_t watts = 0;
+  const bool known = InverterController::getInstance().getPowerLimit(watts);
+  if (needsComma) json += ",";
+  json += "\"power_limit_watts\":";
+  if (known) {
+    json += String(watts);
+  } else {
+    json += "null";
+  }
+  needsComma = true;
+  return *this;
+}
+
+JsonBuilder& JsonBuilder::addShadow() {
+  bool enabled = false;
+  const bool known = InverterController::getInstance().getShadow(enabled);
+  if (needsComma) json += ",";
+  json += "\"shadow_enabled\":";
+  if (known) {
+    json += (enabled ? "true" : "false");
+  } else {
+    json += "null";
+  }
+  needsComma = true;
+  return *this;
 }
 
 String buildHealthJson() {

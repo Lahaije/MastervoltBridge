@@ -99,4 +99,7 @@ extern int lastInverterStatusCode;
 // of setup() to suppress routine poll noise during normal operation.
 extern bool debugMode;
 
+// Firmware version
+extern const char* FIRMWARE_VERSION;
+
 #endif // SETTINGS_H
