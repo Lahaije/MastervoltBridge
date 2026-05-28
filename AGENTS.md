@@ -19,6 +19,27 @@ This document provides project context for AI agents working on the ESP32 invert
 **Python venv**: Always activate before running scripts: `& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1`  
 **Package installs**: Use `uv pip install <pkg>` (not plain pip).
 
+## Firmware Versioning & Release Workflow
+
+Every firmware release is tracked via git commit for exact reproducibility.
+
+**Before flashing firmware:**
+1. Commit all code changes: `git commit -m "description"`
+2. Get commit ID and current date:
+   ```powershell
+   $commit = git rev-parse HEAD | Select-Object -First 7
+   $date = Get-Date -Format "yyyyMMdd"
+   ```
+3. Update `firmware/esp32_inverter_bridge/settings.cpp`:
+   - Find: `const char* FIRMWARE_VERSION = "..."`
+   - Replace with: `"0.1.0-{$date}-{$commit}"` (e.g., `"0.1.0-20260528-f09de5c"`)
+4. Run: `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py`
+
+**Version format:** `<semver>-<YYYYMMDD>-<commit_short_hash>`
+- Allows exact git checkout of any flashed firmware
+- Visible in web UI header and `/api/info` endpoint
+- Ensures traceability: commit → version → flashed device
+
 ## Project Summary
 
 **What**: Bridge firmware connecting WiFi-only inverters (Mastervolt SOLADIN 1500) to Home Assistant via Ethernet.
