@@ -97,7 +97,7 @@ Response fields:
 | `inverter_model` | string | e.g. "H500A0103" |
 | `inverter_mac_address` | string | Inverter MAC |
 | `power` | string | Current output power in watts, e.g. "674.547" |
-| `total_yield` | string | Lifetime energy in kWh, e.g. "08566.628" |
+| `total_yield` | string | Lifetime energy in kWh, e.g. "8566.628" |
 | `daily_yield` | string | Daily energy in kWh, e.g. "12.811" |
 | `inverter_link_state` | string | FSM state: "STARTING", "ONLINE", "RETRYING", "BACKOFF", or "DORMANT" |
 | `failure_streak_s` | number | Seconds since last successful poll (0 when ONLINE) |

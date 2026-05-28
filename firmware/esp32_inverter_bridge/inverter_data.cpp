@@ -3,6 +3,80 @@
 #include "inverter_controller.h"
 #include "logger.h"
 
+namespace {
+
+String normalizeDecimalString(const String& input) {
+  String trimmed = input;
+  trimmed.trim();
+
+  if (trimmed.length() == 0) {
+    return "";
+  }
+
+  int pos = 0;
+  bool isNegative = false;
+  if (trimmed[pos] == '+' || trimmed[pos] == '-') {
+    isNegative = (trimmed[pos] == '-');
+    pos++;
+    if (pos >= (int)trimmed.length()) {
+      return input;
+    }
+  }
+
+  int dotIndex = -1;
+  bool hasDigit = false;
+  for (int i = pos; i < (int)trimmed.length(); i++) {
+    char c = trimmed[i];
+    if (c == '.') {
+      if (dotIndex >= 0) {
+        return input;
+      }
+      dotIndex = i;
+      continue;
+    }
+    if (!isDigit(c)) {
+      return input;
+    }
+    hasDigit = true;
+  }
+
+  if (!hasDigit) {
+    return input;
+  }
+
+  const int integerStart = pos;
+  const int integerEnd = (dotIndex >= 0) ? dotIndex : (int)trimmed.length();
+  const int fractionStart = (dotIndex >= 0) ? dotIndex + 1 : -1;
+
+  int firstNonZero = integerStart;
+  while (firstNonZero < integerEnd && trimmed[firstNonZero] == '0') {
+    firstNonZero++;
+  }
+
+  String normalized;
+  if (isNegative) {
+    normalized += '-';
+  }
+
+  // Keep a single zero for values like 0000.123 or 0000.
+  if (firstNonZero >= integerEnd) {
+    normalized += '0';
+  } else {
+    normalized += trimmed.substring(firstNonZero, integerEnd);
+  }
+
+  if (dotIndex >= 0) {
+    normalized += '.';
+    if (fractionStart < (int)trimmed.length()) {
+      normalized += trimmed.substring(fractionStart);
+    }
+  }
+
+  return normalized;
+}
+
+}  // namespace
+
 bool HomeData::isValid() const {
   return operatingStatus.length() > 0;
 }
@@ -83,8 +157,8 @@ bool parseHomeResponse(const String& rawResponse, HomeData& dataOut) {
   dataOut.inverterModel = extractLine(3);
   dataOut.inverterMacAddress = extractLine(4);
   dataOut.instantaneousPower = extractLine(5);
-  dataOut.lifetimeEnergy = extractLine(6);
-  dataOut.dailySessionEnergy = extractLine(7);
+  dataOut.lifetimeEnergy = normalizeDecimalString(extractLine(6));
+  dataOut.dailySessionEnergy = normalizeDecimalString(extractLine(7));
 
   return dataOut.isValid();
 }

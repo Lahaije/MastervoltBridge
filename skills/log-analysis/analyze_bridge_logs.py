@@ -79,6 +79,15 @@ class StateChangeEvent:
 
 
 @dataclass
+class ControlEvent:
+    """A non-poll operational event extracted from logs."""
+
+    timestamp_ms: int
+    kind: str
+    details: str
+
+
+@dataclass
 class Episode:
     """A disconnection episode: consecutive reconnect attempts with no normal poll between them."""
     number: int
@@ -243,6 +252,70 @@ def parse_state_change_events(entries: List[Dict]) -> List[StateChangeEvent]:
                 )
             )
     return events
+
+
+def parse_control_events(entries: List[Dict]) -> List[ControlEvent]:
+    """Parse non-poll operational events, including power-limit updates.
+
+    Normal poll power readings are intentionally excluded from this list.
+    """
+    events: List[ControlEvent] = []
+
+    # API/user-triggered power update attempts.
+    api_power_re = re.compile(r"\[API\]\s+POST\s+/api/power")
+
+    # Controller-observed active power-limit value.
+    power_limit_read_re = re.compile(r"Power limit read:\s*(\d+)W")
+
+    # Other control events that are useful during incident analysis.
+    queued_power_re = re.compile(r"Queued power")
+    delivered_power_re = re.compile(r"power command delivered", re.IGNORECASE)
+    set_power_re = re.compile(r"setPower", re.IGNORECASE)
+    api_shadow_re = re.compile(r"\[API\]\s+POST\s+/api/shadow")
+
+    for e in entries:
+        msg = str(e.get("message", ""))
+        ts = int(e.get("timestamp_ms", 0))
+
+        if api_power_re.search(msg):
+            events.append(ControlEvent(ts, "power_update_request", msg))
+            continue
+
+        power_m = power_limit_read_re.search(msg)
+        if power_m:
+            watts = int(power_m.group(1))
+            events.append(ControlEvent(ts, "power_limit_active", f"Power limit active: {watts}W"))
+            continue
+
+        if queued_power_re.search(msg):
+            events.append(ControlEvent(ts, "power_update_queued", msg))
+            continue
+
+        if delivered_power_re.search(msg):
+            events.append(ControlEvent(ts, "power_update_delivered", msg))
+            continue
+
+        if set_power_re.search(msg):
+            events.append(ControlEvent(ts, "power_set_result", msg))
+            continue
+
+        if api_shadow_re.search(msg):
+            events.append(ControlEvent(ts, "shadow_update_request", msg))
+            continue
+
+    return events
+
+
+def print_control_events(events: List[ControlEvent]) -> None:
+    """Print parsed non-poll events in chronological order."""
+    print("\nNon-poll event list")
+    print("-------------------")
+    if not events:
+        print("No non-poll control events found in selected log entries.")
+        return
+
+    for ev in sorted(events, key=lambda x: x.timestamp_ms):
+        print(f"  {format_ms(ev.timestamp_ms)}  [{ev.kind}] {ev.details}")
 
 
 def group_into_episodes(attempts: List[Attempt]) -> List[Episode]:
@@ -445,10 +518,12 @@ def main() -> int:
     attempts = parse_attempts(entries)
     polls, skipped = parse_polls(entries)
     backoff_events = parse_backoff_events(entries)
+    control_events = parse_control_events(entries)
     episodes = group_into_episodes(attempts)
 
     print_session_summary(entries, polls, skipped, episodes, backoff_events)
     summarize(attempts, episodes)
+    print_control_events(control_events)
     return 0
 
 
