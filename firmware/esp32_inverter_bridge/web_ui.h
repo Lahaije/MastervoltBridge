@@ -8,246 +8,112 @@
 // Talks to the existing /api/* JSON endpoints.
 // PROGMEM places blob in flash; served via chunked writes to avoid heap copy.
 
-static const char WEB_UI_HTML[] PROGMEM = R"HTML(<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+static const char WEB_UI_HTML[] PROGMEM = R"HTML(<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mastervolt Bridge</title>
 <style>
 :root{--bg:#111;--card:#1c1c1c;--fg:#eee;--muted:#888;--accent:#4ea8ff;--ok:#3ecf6c;--bad:#ff5a5a;--warn:#f5b342}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;font-size:15px;line-height:1.4}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;font-size:15px;line-height:1.4}
 header{padding:14px 20px;background:#000;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center}
-header h1{margin:0;font-size:18px;font-weight:600}
-header .live{font-size:12px;color:var(--muted)}
+header h1{margin:0;font-size:18px;font-weight:600}header .live{font-size:12px;color:var(--muted)}
 main{max-width:780px;margin:0 auto;padding:14px}
-.card{background:var(--card);border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:14px}
-.card h2{margin:0 0 10px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+section{background:var(--card);border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:14px}
+section h2{margin:0 0 10px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px}
-.grid .k{color:var(--muted);font-size:13px}
-.grid .v{font-variant-numeric:tabular-nums}
-.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
-.row label{flex:0 0 140px;color:var(--muted);font-size:13px}
-.row input[type=number]{flex:1;min-width:100px;background:#0c0c0c;border:1px solid #333;color:var(--fg);padding:6px 8px;border-radius:4px;font:inherit}
-.row input[type=checkbox]{width:18px;height:18px}
-button{background:#2a2a2a;border:1px solid #3a3a3a;color:var(--fg);padding:6px 12px;border-radius:4px;font:inherit;cursor:pointer}
-button:hover{background:#333}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-button.warn{background:var(--warn);border-color:var(--warn);color:#000}
+.grid i{color:var(--muted);font-size:13px;font-style:normal}.grid b{font-weight:normal;font-variant-numeric:tabular-nums}
+p{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}p label{flex:0 0 140px;color:var(--muted);font-size:13px}
+p input[type=number]{background:#0c0c0c;border:1px solid #333;color:var(--fg);padding:6px 8px;border-radius:4px;font:inherit}
+p input[type=checkbox]{width:18px;height:18px}
+.n{flex:0 0 5ch;min-width:unset}
+button{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:6px 12px;border-radius:4px;font:inherit;cursor:pointer}
+button:hover{opacity:.85}
 .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
-.pill.ok{background:#13351f;color:var(--ok)}
-.pill.bad{background:#391616;color:var(--bad)}
-.pill.warn{background:#3a2a10;color:var(--warn)}
-.pill.muted{background:#222;color:var(--muted)}
-.msg{margin-top:8px;font-size:13px;min-height:18px}
-.msg.ok{color:var(--ok)}
-.msg.bad{color:var(--bad)}
-.unknown{color:var(--muted);font-style:italic}
-.hidden{display:none}
+.pill.ok{background:#13351f;color:var(--ok)}.pill.bad{background:#391616;color:var(--bad)}.pill.warn{background:#3a2a10;color:var(--warn)}
+.msg{margin-top:8px;font-size:13px;min-height:18px}.msg.ok{color:var(--ok)}.msg.bad{color:var(--bad)}
+.unk{color:var(--muted);font-style:italic}[hidden]{display:none}
+#fwVersion{font-size:12px;color:var(--muted);margin-top:2px}
 footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
-</style>
-</head>
-<body>
-<header>
-<div>
-  <h1>Mastervolt Bridge</h1>
-  <div style="font-size:12px;color:var(--muted);margin-top:2px;" id="fwVersion">-</div>
-</div>
-<span class="live" id="lastFetch">connecting...</span>
-</header>
+</style></head><body>
+<header><div><h1>Mastervolt Bridge</h1><div id="fwVersion">-</div></div><span class="live" id="lastFetch">connecting...</span></header>
 <main>
-
-<div class="card">
-<h2>Inverter Status</h2>
-<div class="grid">
-<div class="k">Power</div><div class="v" id="sPower">-</div>
-<div class="k">Daily yield</div><div class="v" id="sDaily">-</div>
-<div class="k">Total yield</div><div class="v" id="sTotal">-</div>
-<div class="k">Operating</div><div class="v" id="sOp">-</div>
-<div class="k">Link state</div><div class="v" id="sLink">-</div>
-<div class="k">Failure streak</div><div class="v" id="sStreak">-</div>
-<div class="k">WiFi</div><div class="v" id="sWifi">-</div>
-<div class="k">Ethernet</div><div class="v" id="sEth">-</div>
-</div>
-</div>
-
-<div class="card">
-<h2>Polling</h2>
-<div class="row">
-<label for="iInterval">Interval (s)</label>
-<input type="number" id="iInterval" min="1" max="300" step="1" style="flex:0 0 5ch;min-width:unset">
-<button class="primary" id="bInterval">Apply</button>
-</div>
-<div class="msg" id="mInterval"></div>
-</div>
-
-<div class="card">
-<h2>Power Limit</h2>
-<div class="row" id="rowPowerUnknown">
-<label>Status</label>
-<span class="v unknown" id="curPower">unknown</span>
-</div>
-<div class="row hidden" id="rowPowerForm">
-<label for="iPower">Power limit (W)</label>
-<input type="number" id="iPower" min="0" max="1575" step="1">
-<button class="primary" id="bPower">Apply</button>
-</div>
-<div class="msg" id="mPower"></div>
-</div>
-
-<div class="card">
-<h2>Shadow Function</h2>
-<div class="row" id="rowShadowUnknown">
-<label>Status</label>
-<span class="v unknown" id="curShadow">unknown</span>
-</div>
-<div class="row hidden" id="rowShadowForm">
-<label for="iShadow">Enabled</label>
-<input type="checkbox" id="iShadow">
-<button class="primary" id="bShadow">Apply</button>
-</div>
-<div class="msg" id="mShadow"></div>
-</div>
-
-<div class="card">
-<h2>Actions</h2>
-<div class="row">
-<label for="iDebug">Debug logs</label>
-<input type="checkbox" id="iDebug">
-<button id="bDebug">Apply</button>
-</div>
-<div class="row">
-<label></label>
-<button id="bPulse">Wake Pulse</button>
-<button id="bWifiOff" class="warn">Inverter WiFi Off</button>
-</div>
-<div class="msg" id="mAction"></div>
-</div>
-
+<section><h2>Inverter Status</h2><div class="grid">
+<i>Power</i><b id="sPower">-</b>
+<i>Daily yield</i><b id="sDaily">-</b>
+<i>Total yield</i><b id="sTotal">-</b>
+<i>Operating</i><b id="sOp">-</b>
+<i>Link state</i><b id="sLink">-</b>
+<i>Failure streak</i><b id="sStreak">-</b>
+<i>WiFi</i><b id="sWifi">-</b>
+<i>Ethernet</i><b id="sEth">-</b>
+</div></section>
+<section><h2>Polling</h2>
+<p><label for="iInterval">Interval (s)</label><input type="number" id="iInterval" min=1 max=300 class=n><button id="bInterval">Apply</button></p>
+<p class=msg id="mInterval"></p></section>
+<section><h2>Power Limit</h2>
+<p id="rowPowerUnknown"><label>Status</label><span class="unk" id="curPower">unknown</span></p>
+<p id="rowPowerForm" hidden><label for="iPower">Power limit (W)</label><input type="number" id="iPower" min=0 max=1575 class=n><button id="bPower">Apply</button></p>
+<p class=msg id="mPower"></p></section>
+<section><h2>Shadow Function</h2>
+<p id="rowShadowUnknown"><label>Status</label><span class="unk" id="curShadow">unknown</span></p>
+<p id="rowShadowForm" hidden><label for="iShadow">Enabled</label><input type="checkbox" id="iShadow"><button id="bShadow">Apply</button></p>
+<p class=msg id="mShadow"></p></section>
+<section><h2>Actions</h2>
+<p><label for="iDebug">Debug logs</label><input type="checkbox" id="iDebug"><button id="bDebug">Apply</button></p>
+<p class=msg id="mAction"></p></section>
 </main>
 <footer>API at <a href="/api" style="color:var(--accent)">/api</a></footer>
-
 <script>
 const $=id=>document.getElementById(id);
-
-function pill(text,cls){return '<span class="pill '+cls+'">'+text+'</span>';}
+const UH='<span class="unk">-</span>';
+function pill(t,c){return'<span class="pill '+c+'">'+t+'</span>';}
 function flash(el,ok,msg){el.textContent=msg;el.className='msg '+(ok?'ok':'bad');setTimeout(()=>{if(el.textContent===msg)el.textContent='';},4000);}
-function hasFiniteNumber(v){return typeof v==='number' && Number.isFinite(v);}
-function fmtKwh(v){return hasFiniteNumber(v)?(v.toFixed(3)+' kWh'):'-';}
-function setShown(id,shown){$(id).classList.toggle('hidden',!shown);}
-function syncPowerLimit(info){
-  const hasPowerLimit=hasFiniteNumber(info.power_limit_watts);
-  setShown('rowPowerUnknown',!hasPowerLimit);
-  setShown('rowPowerForm',hasPowerLimit);
-  if(hasPowerLimit){
-    $('curPower').textContent='';
-    $('curPower').className='v';
-    $('iPower').value=String(info.power_limit_watts);
-  }else{
-    $('curPower').textContent='unknown';
-    $('curPower').className='v unknown';
-    $('iPower').value='';
-  }
+function fin(v){return typeof v==='number'&&isFinite(v);}
+function focused(id){return document.activeElement===$(id);}
+function fmtKwh(v){return fin(v)?(v.toFixed(3)+' kWh'):'-';}
+function syncToggle(known,unknownRow,formRow,statusEl,inputId,val,isBool){
+  $(unknownRow).hidden=known;$(formRow).hidden=!known;
+  if(known){statusEl.textContent='';statusEl.className='';if(!focused(inputId)){if(isBool)$(inputId).checked=val;else $(inputId).value=val;}}
+  else{statusEl.textContent='unknown';statusEl.className='unk';if(isBool)$(inputId).checked=false;else $(inputId).value='';}
 }
-function syncShadow(info){
-  const hasShadow=typeof info.shadow_enabled==='boolean';
-  setShown('rowShadowUnknown',!hasShadow);
-  setShown('rowShadowForm',hasShadow);
-  if(hasShadow){
-    $('curShadow').textContent='';
-    $('curShadow').className='v';
-    $('iShadow').checked=info.shadow_enabled;
-  }else{
-    $('curShadow').textContent='unknown';
-    $('curShadow').className='v unknown';
-    $('iShadow').checked=false;
-  }
-}
-
-async function jget(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
-async function jpost(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=null;try{d=await r.json();}catch(e){}if(!r.ok){const m=(d&&d.error)?d.error:('HTTP '+r.status);throw new Error(m);}return d||{};}
-
+function syncPower(i){syncToggle(fin(i.power_limit_watts),'rowPowerUnknown','rowPowerForm',$('curPower'),'iPower',i.power_limit_watts,false);}
+function syncShadow(i){syncToggle(typeof i.shadow_enabled==='boolean','rowShadowUnknown','rowShadowForm',$('curShadow'),'iShadow',i.shadow_enabled,true);}
+async function jget(u){var r=await fetch(u,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
+async function jpost(u,b){var r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});var d=null;try{d=await r.json();}catch(e){}if(!r.ok)throw new Error((d&&d.error)||'HTTP '+r.status);return d||{};}
 async function refresh(){
   try{
-    const health=await jget('/api/health');
-    $('sWifi').innerHTML=health.wifi_connected?pill('connected '+health.wifi_ip,'ok'):pill('disconnected','bad');
-    $('sEth').textContent=health.ethernet_ip||'-';
-    $('iDebug').checked=!!health.debug_mode;
-
+    var h=await jget('/api/health');
+    $('sWifi').innerHTML=h.wifi_connected?pill('connected '+h.wifi_ip,'ok'):pill('disconnected','bad');
+    $('sEth').textContent=h.ethernet_ip||'-';$('iDebug').checked=!!h.debug_mode;
     try{
-      const info=await jget('/api/info');
-      if(info.firmware_version){
-        $('fwVersion').textContent='Firmware: '+info.firmware_version;
-      }
-      $('sPower').textContent=info.power?(info.power+' W'):'-';
-      $('sDaily').textContent=fmtKwh(info.daily_yield);
-      $('sTotal').textContent=fmtKwh(info.total_yield);
-      $('sOp').textContent=info.operating_status?(info.operating_status==='1'?'normal':'code '+info.operating_status):'-';
-      $('sLink').innerHTML=pill(info.inverter_link_state||'?',info.inverter_link_state==='ONLINE'?'ok':info.inverter_link_state==='DORMANT'?'bad':'warn');
-      $('sStreak').textContent=(info.failure_streak_s||0)+' s';
-      $('iInterval').value=String(Math.round(info.poll_interval_ms/1000));
-
-      syncPowerLimit(info);
-      syncShadow(info);
+      var i=await jget('/api/info');
+      if(i.firmware_version)$('fwVersion').textContent='Firmware: '+i.firmware_version;
+      $('sPower').textContent=i.power?(i.power+' W'):'-';
+      $('sDaily').textContent=fmtKwh(i.daily_yield);$('sTotal').textContent=fmtKwh(i.total_yield);
+      $('sOp').textContent=i.operating_status?(i.operating_status==='1'?'normal':'code '+i.operating_status):'-';
+      $('sLink').innerHTML=pill(i.inverter_link_state||'?',i.inverter_link_state==='ONLINE'?'ok':i.inverter_link_state==='DORMANT'?'bad':'warn');
+      $('sStreak').textContent=(i.failure_streak_s||0)+' s';
+      if(!focused('iInterval'))$('iInterval').value=Math.round(i.poll_interval_ms/1000);
+      syncPower(i);syncShadow(i);
     }catch(e){
-      $('sPower').innerHTML='<span class="unknown">offline</span>';
-      $('sDaily').innerHTML='<span class="unknown">-</span>';
-      $('sTotal').innerHTML='<span class="unknown">-</span>';
-      $('sOp').innerHTML='<span class="unknown">-</span>';
-      $('sLink').innerHTML=pill('offline','bad');
-      $('sStreak').textContent='-';
-      syncPowerLimit({});
-      syncShadow({});
+      $('sPower').innerHTML='<span class="unk">offline</span>';
+      $('sDaily').innerHTML=UH;$('sTotal').innerHTML=UH;$('sOp').innerHTML=UH;
+      $('sLink').innerHTML=pill('offline','bad');$('sStreak').textContent='-';
+      syncPower({});syncShadow({});
     }
     $('lastFetch').textContent='updated '+new Date().toLocaleTimeString();
-  }catch(e){
-    $('lastFetch').textContent='error: '+e.message;
-  }
+  }catch(e){$('lastFetch').textContent='error: '+e.message;}
 }
-
-$('bPower').onclick=async()=>{
-  const v=parseInt($('iPower').value,10);
-  try{const r=await jpost('/api/power',{power:v});flash($('mPower'),true,r.deferred?'Deferred: '+r.reason:'Power set to '+v+' W');refresh();}
-  catch(e){flash($('mPower'),false,e.message);}
-};
-
-$('bShadow').onclick=async()=>{
-  const v=$('iShadow').checked;
-  try{const r=await jpost('/api/shadow',{enabled:v});flash($('mShadow'),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refresh();}
-  catch(e){flash($('mShadow'),false,e.message);}
-};
-
-$('bDebug').onclick=async()=>{
-  const v=$('iDebug').checked;
-  try{await jpost('/api/debug',{debug:v});flash($('mAction'),true,'Debug '+(v?'on':'off'));refresh();}
-  catch(e){flash($('mAction'),false,e.message);}
-};
-
-$('bPulse').onclick=async()=>{
-  try{const r=await jget('/pulse');flash($('mAction'),r.reconnected,'Pulse: '+(r.reconnected?'reconnected':'no connection'));refresh();}
-  catch(e){flash($('mAction'),false,e.message);}
-};
-
-$('bWifiOff').onclick=async()=>{
-  if(!confirm('Turn inverter WiFi off?'))return;
-  try{const r=await jpost('/wifi/off',{});flash($('mAction'),true,r.pressed?'WiFi-off sent':'already disconnected');}
-  catch(e){flash($('mAction'),false,e.message);}
-};
-
-$('bInterval').onclick=async()=>{
-  const v=parseInt($('iInterval').value,10);
+$('bPower').onclick=async()=>{var v=parseInt($('iPower').value,10);
+  try{var r=await jpost('/api/power',{power:v});flash($('mPower'),true,r.deferred?'Deferred: '+r.reason:'Power set to '+v+' W');refresh();}catch(e){flash($('mPower'),false,e.message);}};
+$('bShadow').onclick=async()=>{var v=$('iShadow').checked;
+  try{var r=await jpost('/api/shadow',{enabled:v});flash($('mShadow'),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refresh();}catch(e){flash($('mShadow'),false,e.message);}};
+$('bDebug').onclick=async()=>{var v=$('iDebug').checked;
+  try{await jpost('/api/debug',{debug:v});flash($('mAction'),true,'Debug '+(v?'on':'off'));refresh();}catch(e){flash($('mAction'),false,e.message);}};
+$('bInterval').onclick=async()=>{var v=parseInt($('iInterval').value,10);
   if(isNaN(v)||v<1||v>300){flash($('mInterval'),false,'Enter 1-300 seconds');return;}
-  try{const r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refresh();}
-  catch(e){flash($('mInterval'),false,e.message);}
-};
-
-refresh();
-setInterval(refresh,5000);
-</script>
-</body>
-</html>
-)HTML";
+  try{var r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refresh();}catch(e){flash($('mInterval'),false,e.message);}};
+refresh();setInterval(refresh,5000);
+</script></body></html>)HTML";
 
 // Compile-time length (excludes null terminator)
 static constexpr size_t WEB_UI_HTML_LEN = sizeof(WEB_UI_HTML) - 1;
