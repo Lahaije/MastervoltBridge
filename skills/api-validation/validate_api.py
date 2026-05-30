@@ -33,6 +33,7 @@ except ImportError:
 DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/"),
     ("GET",  "/api"),
+    ("GET",  "/api/device"),
     ("GET",  "/api/health"),
     ("GET",  "/api/logs"),
     ("GET",  "/api/info"),
@@ -61,9 +62,16 @@ GET_CHECKS: list[dict[str, Any]] = [
         "kind": "json",
     },
     {
+        "path": "/api/device",
+        "description": "Device identity",
+        "required_keys": ["firmware_version", "inverter_model", "ethernet_ip", "wifi_ssid", "inverter_host"],
+        "allow_502": False,
+        "kind": "json",
+    },
+    {
         "path": "/api/health",
         "description": "Bridge health",
-        "required_keys": ["wifi_connected", "ethernet_ip"],
+        "required_keys": ["wifi_connected", "inverter_link_state", "operating_status", "debug_mode"],
         "allow_502": False,
         "kind": "json",
     },
@@ -77,7 +85,7 @@ GET_CHECKS: list[dict[str, Any]] = [
     {
         "path": "/api/info",
         "description": "Inverter telemetry cache",
-        "required_keys": ["power", "total_yield", "daily_yield", "inverter_link_state", "failure_streak_s", "poll_interval_ms"],
+        "required_keys": ["power", "total_yield", "daily_yield", "failure_streak_s", "poll_interval_ms"],
         "allow_502": False,
         "kind": "json",
     },

@@ -14,9 +14,10 @@ http://192.168.1.48:8080
 |---|---|---|
 | GET | / | Web UI dashboard (self-contained HTML) |
 | GET | /api | API discovery JSON |
-| GET | /api/health | Bridge network/inverter status |
+| GET | /api/device | Stable identity: firmware version, model, MACs, IPs |
+| GET | /api/health | Bridge diagnostics: link state, operating status, WiFi, debug mode |
 | GET | /api/logs | Log buffer (up to 1000 entries) |
-| GET | /api/info | Cached inverter /home telemetry |
+| GET | /api/info | Real-time telemetry: power, yields, tunables |
 | POST | /api/power | Set inverter power |
 | POST | /api/shadow | Enable/disable inverter shadow function |
 | POST | /api/inverter/fetch | Fetch inverter endpoint |
@@ -35,8 +36,12 @@ Implementation details:
 - Served in 512-byte chunks via `sendFlashHtmlResponse()` with `client.connected()` checks.
 - Content-Length derived from `sizeof(WEB_UI_HTML) - 1` (compile-time).
 - CSS and JS inline — single request, no external assets.
-- JS auto-refreshes `/api/health` + `/api/info` every 5 seconds (serialized, not parallel).
-- `/api/info` always returns HTTP 200; before first successful poll, telemetry fields may be empty.
+
+UI refresh strategy:
+
+- `/api/device` fetched once on page load (stable identity).
+- `/api/health` refreshed every 60 seconds (diagnostics).
+- `/api/info` refreshed every 5 seconds (real-time telemetry).
 
 UI controls:
 
@@ -53,17 +58,38 @@ Returns discovery JSON listing all available endpoints.
 - Stable machine-readable endpoint for automation and tooling.
 - GET / serves HTML; GET /api remains JSON.
 
+## GET /api/device
+
+Returns stable device identity. These values only change on reboot, reflash, or network reconfiguration.
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `firmware_version` | string | Firmware version in `<semver>-<YYYYMMDD>-<commit>` format |
+| `inverter_model` | string | e.g. "H500A0103"; empty before first successful poll |
+| `inverter_mac_address` | string | Inverter WiFi MAC; empty before first successful poll |
+| `wifi_ssid` | string | Target inverter WiFi SSID |
+| `wifi_ip` | string | Bridge WiFi IP ("0.0.0.0" when disconnected) |
+| `ethernet_ip` | string | Bridge Ethernet IP (DHCP) |
+| `inverter_host` | string | Inverter HTTP host IP |
+
 ## GET /api/health
 
-Returns bridge state, including:
+Returns bridge diagnostics and inverter operating state.
 
-- wifi_connected
-- wifi_ssid
-- wifi_ip
-- ethernet_ip
-- inverter_host
-- last_inverter_status
-- debug_mode
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `operating_status` | string | "1" = normal; empty before first poll |
+| `operating_mode` | string | "1" = production; empty before first poll |
+| `error_alarm_code` | string | "0" = no error; empty before first poll |
+| `wifi_connected` | boolean | Whether bridge WiFi is currently connected to inverter |
+| `inverter_link_state` | string | FSM state: "STARTING", "ONLINE", "RETRYING", "BACKOFF", or "DORMANT" |
+| `last_update_ms` | number | Bridge uptime ms of last successful poll (0 if never polled) |
+| `last_inverter_status` | number | Last HTTP status from inverter (-1 if never contacted) |
+| `debug_mode` | boolean | Whether verbose HTTP 200 logging is enabled |
 
 When inverter is unavailable, this endpoint still works.
 
@@ -81,29 +107,22 @@ Notes:
 
 ## GET /api/info
 
-Returns cached parsed inverter telemetry from /home.
+Returns real-time inverter telemetry and tunable parameters.
 
-This endpoint always returns HTTP 200. If no poll has succeeded yet, telemetry
-string fields may be empty, yield fields may be `null`, and `last_update_ms` will be 0.
+This endpoint always returns HTTP 200. If no poll has succeeded yet,
+`power` will be 0, yield fields will be `null`, and tunable fields may be `null`.
 
 Response fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `last_update_ms` | number | Bridge uptime ms of last successful poll |
-| `operating_status` | string | "1" = normal |
-| `error_alarm_code` | string | "0" = no error |
-| `operating_mode` | string | "1" = production |
-| `inverter_model` | string | e.g. "H500A0103" |
-| `inverter_mac_address` | string | Inverter MAC |
-| `power` | string | Current output power in watts, e.g. "674.547" |
-| `total_yield` | number\|null | Lifetime energy in kWh, e.g. `8566.628`; `null` when unavailable |
-| `daily_yield` | number\|null | Daily energy in kWh, e.g. `12.811`; `null` when unavailable |
-| `inverter_link_state` | string | FSM state: "STARTING", "ONLINE", "RETRYING", "BACKOFF", or "DORMANT" |
+| `power` | number | Current output power in watts, e.g. 674.547 |
 | `failure_streak_s` | number | Seconds since last successful poll (0 when ONLINE) |
 | `poll_interval_ms` | number | Current polling interval in milliseconds |
-| `power_limit_watts` | number\|null | Cached inverter power limit in watts from `/power`; `null` until first successful settings read |
-| `shadow_enabled` | boolean\|null | Cached inverter shadow state from `/shadow`; `null` until first successful settings read |
+| `power_limit_watts` | number\|null | Cached inverter power limit in watts; `null` until first successful settings read |
+| `shadow_enabled` | boolean\|null | Cached inverter shadow state; `null` until first successful settings read |
+| `total_yield` | number\|null | Lifetime energy in kWh, e.g. `8566.628`; `null` when unavailable |
+| `daily_yield` | number\|null | Daily energy in kWh, e.g. `12.811`; `null` when unavailable |
 
 ## POST /api/power
 
@@ -274,7 +293,9 @@ Still expected to respond:
 
 - /
 - /api
+- /api/device
 - /api/health
+- /api/info
 - /api/logs
 - /wifi/off
 - /pulse

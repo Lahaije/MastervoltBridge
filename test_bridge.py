@@ -30,8 +30,23 @@ health = r.json()
 for key, value in health.items():
     print(f"  {key}: {value}")
 # Validate expected keys
-for key in ["wifi_connected", "wifi_ssid", "wifi_ip", "ethernet_ip", "inverter_host", "last_inverter_status", "debug_mode"]:
+for key in ["operating_status", "operating_mode", "error_alarm_code", "wifi_connected",
+            "inverter_link_state", "last_update_ms", "last_inverter_status", "debug_mode"]:
     assert key in health, f"Missing key '{key}' in /api/health"
+print()
+
+# --- GET /api/device ---
+print("=== GET /api/device ===")
+r = requests.get(f"{BASE}/api/device", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+device = r.json()
+for key, value in device.items():
+    print(f"  {key}: {value}")
+# Validate expected keys
+for key in ["firmware_version", "inverter_model", "inverter_mac_address", "wifi_ssid",
+            "wifi_ip", "ethernet_ip", "inverter_host"]:
+    assert key in device, f"Missing key '{key}' in /api/device"
+assert device["firmware_version"].startswith("0.1.0-"), f"Unexpected firmware version format: {device['firmware_version']}"
 print()
 
 # --- GET /api/info ---
@@ -42,8 +57,8 @@ info = r.json()
 for key, value in info.items():
     print(f"  {key}: {value}")
 # Validate expected keys
-for key in ["last_update_ms", "operating_status", "power", "total_yield", "daily_yield",
-            "inverter_link_state", "failure_streak_s"]:
+for key in ["power", "failure_streak_s", "poll_interval_ms", "power_limit_watts",
+            "shadow_enabled", "total_yield", "daily_yield"]:
     if key not in info:
         print(f"  FAIL: Missing key '{key}'")
         failed = True

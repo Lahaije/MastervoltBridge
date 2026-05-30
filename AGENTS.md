@@ -37,7 +37,7 @@ Every firmware release is tracked via git commit for exact reproducibility.
 
 **Version format:** `<semver>-<YYYYMMDD>-<commit_short_hash>`
 - Allows exact git checkout of any flashed firmware
-- Visible in web UI header and `/api/info` endpoint
+- Visible in web UI header and `/api/device` endpoint
 - Ensures traceability: commit → version → flashed device
 
 ## Project Summary
@@ -86,7 +86,7 @@ api.cpp / api.h (request routing)
   └── deps: api_helper, InverterController, inverter_data, web_ui
 
 api_helper.cpp/h (HTTP/JSON utilities)
-  └── sendHttpResponse(), sendFlashHtmlResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), etc.
+  └── sendHttpResponse(), sendFlashHtmlResponse(), sendLogsResponse(), buildHealthJson(), buildInfoJson(), buildDeviceJson(), etc.
 
 web_ui.h (self-contained HTML dashboard)
   └── WEB_UI_HTML[] PROGMEM raw literal (~7.7 KB), WEB_UI_HTML_LEN, static_assert < 16 KB
@@ -137,7 +137,7 @@ struct HomeData {
 };
 ```
 
-> Note: JSON field names in `/api/info` responses differ — `power`, `total_yield`, `daily_yield` (see `api_helper.cpp::buildInfoJson`).
+> Note: JSON field names in `/api/info` responses differ — `power`, `total_yield`, `daily_yield` (see `api_helper.cpp::buildInfoJson`). Device identity fields (model, MAC) are in `/api/device`.
 
 Parsed from inverter `GET /home`: 8 newline-delimited fields.
 
