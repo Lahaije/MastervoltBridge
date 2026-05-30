@@ -11,9 +11,10 @@
 const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/", "Web UI dashboard"},
   {"GET", "/api", "API discovery and endpoint overview"},
-  {"GET", "/api/health", "Bridge connectivity state: WiFi, Ethernet, inverter host, IPs"},
+  {"GET", "/api/device", "Stable identity: firmware version, model, MACs, IPs"},
+  {"GET", "/api/health", "Bridge diagnostics: link state, operating status, WiFi, debug mode"},
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
-  {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
+  {"GET", "/api/info", "Real-time telemetry: power, yields, tunables (poll every 5s)"},
   {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W). Returns 202 if queued for delayed apply."},
   {"POST", "/api/shadow", "Enable or disable inverter shadow function: {\"enabled\":true|false}. Returns 202 if queued for delayed apply."},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
@@ -94,7 +95,14 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/api/health") {
-    sendHttpResponse(client, 200, "application/json", buildHealthJson());
+    HomeData inverterData = getInverterData();
+    sendHttpResponse(client, 200, "application/json", buildHealthJson(inverterData));
+    return;
+  }
+
+  if (method == "GET" && path == "/api/device") {
+    HomeData inverterData = getInverterData();
+    sendHttpResponse(client, 200, "application/json", buildDeviceJson(inverterData));
     return;
   }
 
@@ -153,8 +161,7 @@ void handleApiClient(EthernetClient& client) {
   if (method == "GET" && path == "/api/info") {
     // Return cached telemetry; yield fields are null until first successful parse.
     HomeData inverterData = getInverterData();
-    unsigned long lastUpdateMs = InverterController::getInstance().getLastUpdateMs();
-    sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs));
+    sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData));
     return;
   }
 

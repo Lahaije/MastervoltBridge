@@ -140,20 +140,13 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
   return urlOut.length() > 0;
 }
 
-String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
+String buildInfoJson(const HomeData& data) {
   JsonBuilder json;
   const float powerW = (data.hasPower && isfinite(data.instantaneousPowerW))
                          ? data.instantaneousPowerW
                          : 0.0f;
   json
-    .addNumber("last_update_ms", String(lastUpdateMs))
-    .addString("operating_status", data.operatingStatus)
-    .addString("error_alarm_code", data.errorAlarmCode)
-    .addString("operating_mode", data.operatingMode)
-    .addString("inverter_model", data.inverterModel)
-    .addString("inverter_mac_address", data.inverterMacAddress)
     .addNumber("power", String(powerW, 3))
-    .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
     .addNumber("failure_streak_s", String(InverterController::getInstance().getFailureStreakMs() / 1000UL))
     .addNumber("poll_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
     .addPowerLimit()
@@ -202,15 +195,28 @@ JsonBuilder& JsonBuilder::addShadow() {
   return *this;
 }
 
-String buildHealthJson() {
+String buildHealthJson(const HomeData& data) {
   return JsonBuilder()
+    .addString("operating_status", data.operatingStatus)
+    .addString("operating_mode", data.operatingMode)
+    .addString("error_alarm_code", data.errorAlarmCode)
     .addBool("wifi_connected", WiFi.status() == WL_CONNECTED)
+    .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
+    .addNumber("last_update_ms", String(InverterController::getInstance().getLastUpdateMs()))
+    .addNumber("last_inverter_status", String(lastInverterStatusCode))
+    .addBool("debug_mode", debugMode)
+    .build();
+}
+
+String buildDeviceJson(const HomeData& data) {
+  return JsonBuilder()
+    .addString("firmware_version", String(FIRMWARE_VERSION))
+    .addString("inverter_model", data.inverterModel)
+    .addString("inverter_mac_address", data.inverterMacAddress)
     .addString("wifi_ssid", String(INVERTER_WIFI_SSID))
     .addString("wifi_ip", WiFi.localIP().toString())
     .addString("ethernet_ip", Ethernet.localIP().toString())
     .addString("inverter_host", String(INVERTER_HOST))
-    .addNumber("last_inverter_status", String(lastInverterStatusCode))
-    .addBool("debug_mode", debugMode)
     .build();
 }
 

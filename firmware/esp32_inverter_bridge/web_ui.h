@@ -79,40 +79,43 @@ function syncPower(i){syncToggle(fin(i.power_limit_watts),'rowPowerUnknown','row
 function syncShadow(i){syncToggle(typeof i.shadow_enabled==='boolean','rowShadowUnknown','rowShadowForm',$('curShadow'),'iShadow',i.shadow_enabled,true);}
 async function jget(u){var r=await fetch(u,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
 async function jpost(u,b){var r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});var d=null;try{d=await r.json();}catch(e){}if(!r.ok)throw new Error((d&&d.error)||'HTTP '+r.status);return d||{};}
-async function refresh(){
-  try{
-    var h=await jget('/api/health');
-    $('sWifi').innerHTML=h.wifi_connected?pill('connected '+h.wifi_ip,'ok'):pill('disconnected','bad');
-    $('sEth').textContent=h.ethernet_ip||'-';$('iDebug').checked=!!h.debug_mode;
-    try{
-      var i=await jget('/api/info');
-      if(i.firmware_version)$('fwVersion').textContent='Firmware: '+i.firmware_version;
-      $('sPower').textContent=i.power?(i.power+' W'):'-';
-      $('sDaily').textContent=fmtKwh(i.daily_yield);$('sTotal').textContent=fmtKwh(i.total_yield);
-      $('sOp').textContent=i.operating_status?(i.operating_status==='1'?'normal':'code '+i.operating_status):'-';
-      $('sLink').innerHTML=pill(i.inverter_link_state||'?',i.inverter_link_state==='ONLINE'?'ok':i.inverter_link_state==='DORMANT'?'bad':'warn');
-      $('sStreak').textContent=(i.failure_streak_s||0)+' s';
-      if(!focused('iInterval'))$('iInterval').value=Math.round(i.poll_interval_ms/1000);
-      syncPower(i);syncShadow(i);
-    }catch(e){
-      $('sPower').innerHTML='<span class="unk">offline</span>';
-      $('sDaily').innerHTML=UH;$('sTotal').innerHTML=UH;$('sOp').innerHTML=UH;
-      $('sLink').innerHTML=pill('offline','bad');$('sStreak').textContent='-';
-      syncPower({});syncShadow({});
-    }
+async function loadDevice(){
+  try{var d=await jget('/api/device');
+    if(d.firmware_version)$('fwVersion').textContent='Firmware: '+d.firmware_version;
+    $('sEth').textContent=d.ethernet_ip||'-';
+  }catch(e){}}
+async function refreshHealth(){
+  try{var h=await jget('/api/health');
+    $('sWifi').innerHTML=h.wifi_connected?pill('connected','ok'):pill('disconnected','bad');
+    $('iDebug').checked=!!h.debug_mode;
+    $('sOp').textContent=h.operating_status?(h.operating_status==='1'?'normal':'code '+h.operating_status):'-';
+    $('sLink').innerHTML=pill(h.inverter_link_state||'?',h.inverter_link_state==='ONLINE'?'ok':h.inverter_link_state==='DORMANT'?'bad':'warn');
+  }catch(e){}}
+async function refreshInfo(){
+  try{var i=await jget('/api/info');
+    $('sPower').textContent=i.power?(i.power+' W'):'-';
+    $('sDaily').textContent=fmtKwh(i.daily_yield);$('sTotal').textContent=fmtKwh(i.total_yield);
+    $('sStreak').textContent=(i.failure_streak_s||0)+' s';
+    if(!focused('iInterval'))$('iInterval').value=Math.round(i.poll_interval_ms/1000);
+    syncPower(i);syncShadow(i);
     $('lastFetch').textContent='updated '+new Date().toLocaleTimeString();
-  }catch(e){$('lastFetch').textContent='error: '+e.message;}
-}
+  }catch(e){
+    $('sPower').innerHTML='<span class="unk">offline</span>';
+    $('sDaily').innerHTML=UH;$('sTotal').innerHTML=UH;
+    $('sStreak').textContent='-';
+    syncPower({});syncShadow({});
+    $('lastFetch').textContent='error: '+e.message;
+  }}
 $('bPower').onclick=async()=>{var v=parseInt($('iPower').value,10);
-  try{var r=await jpost('/api/power',{power:v});flash($('mPower'),true,r.deferred?'Deferred: '+r.reason:'Power set to '+v+' W');refresh();}catch(e){flash($('mPower'),false,e.message);}};
+  try{var r=await jpost('/api/power',{power:v});flash($('mPower'),true,r.deferred?'Deferred: '+r.reason:'Power set to '+v+' W');refreshInfo();}catch(e){flash($('mPower'),false,e.message);}};
 $('bShadow').onclick=async()=>{var v=$('iShadow').checked;
-  try{var r=await jpost('/api/shadow',{enabled:v});flash($('mShadow'),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refresh();}catch(e){flash($('mShadow'),false,e.message);}};
+  try{var r=await jpost('/api/shadow',{enabled:v});flash($('mShadow'),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refreshInfo();}catch(e){flash($('mShadow'),false,e.message);}};
 $('bDebug').onclick=async()=>{var v=$('iDebug').checked;
-  try{await jpost('/api/debug',{debug:v});flash($('mAction'),true,'Debug '+(v?'on':'off'));refresh();}catch(e){flash($('mAction'),false,e.message);}};
+  try{await jpost('/api/debug',{debug:v});flash($('mAction'),true,'Debug '+(v?'on':'off'));refreshHealth();}catch(e){flash($('mAction'),false,e.message);}};
 $('bInterval').onclick=async()=>{var v=parseInt($('iInterval').value,10);
   if(isNaN(v)||v<1||v>300){flash($('mInterval'),false,'Enter 1-300 seconds');return;}
-  try{var r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refresh();}catch(e){flash($('mInterval'),false,e.message);}};
-refresh();setInterval(refresh,5000);
+  try{var r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refreshInfo();}catch(e){flash($('mInterval'),false,e.message);}};
+loadDevice();refreshHealth();refreshInfo();setInterval(refreshInfo,5000);setInterval(refreshHealth,60000);
 </script></body></html>)HTML";
 
 // Compile-time length (excludes null terminator)

@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 12;
+constexpr size_t API_ENDPOINT_COUNT = 13;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**
@@ -180,15 +180,21 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut);
 
 /**
  * Build JSON response for /api/info endpoint.
- * Includes latest cached inverter telemetry: status, mode, power, yields.
+ * Real-time telemetry: power, yields, tunables (shadow, power limit, poll interval).
  */
-String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs);
+String buildInfoJson(const HomeData& data);
 
 /**
  * Build JSON response for /api/health endpoint.
- * Includes WiFi status, IPs, and last inverter HTTP status code.
+ * Bridge diagnostics: link state, operating status, WiFi connectivity, debug mode.
  */
-String buildHealthJson();
+String buildHealthJson(const HomeData& data);
+
+/**
+ * Build JSON response for /api/device endpoint.
+ * Stable identity: firmware version, model, MACs, IPs, hosts.
+ */
+String buildDeviceJson(const HomeData& data);
 
 /**
  * Stream the /api/logs response directly to the client.
