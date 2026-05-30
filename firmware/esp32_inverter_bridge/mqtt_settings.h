@@ -12,6 +12,8 @@ struct MqttSettings {
   uint16_t brokerPort;
   bool enabled;
   String topicPrefix;
+  String username;
+  String password;
 };
 
 /**
@@ -30,5 +32,7 @@ static const char* MQTT_DEFAULT_BROKER_IP = "192.168.1.23";
 static const uint16_t MQTT_DEFAULT_BROKER_PORT = 1883;
 static const bool MQTT_DEFAULT_ENABLED = true;
 static const char* MQTT_DEFAULT_TOPIC_PREFIX = "mastervolt_bridge";
+static const char* MQTT_DEFAULT_USERNAME = "";
+static const char* MQTT_DEFAULT_PASSWORD = "";
 
 #endif // MQTT_SETTINGS_H

@@ -316,6 +316,8 @@ void handleApiClient(EthernetClient& client) {
       .addNumber("broker_port", String(ms.brokerPort))
       .addBool("enabled", ms.enabled)
       .addString("topic_prefix", ms.topicPrefix)
+      .addString("username", ms.username)
+      .addBool("has_password", ms.password.length() > 0)
       .addBool("connected", MqttClient::getInstance().isConnected())
       .build();
     sendHttpResponse(client, 200, "application/json", response);
@@ -369,6 +371,16 @@ void handleApiClient(EthernetClient& client) {
       ms.topicPrefix = rawPrefix;
     }
 
+    String rawUsername = getJsonValueByKey(body, "username");
+    if (rawUsername.length() > 0 || body.indexOf("\"username\"") >= 0) {
+      ms.username = rawUsername;
+    }
+
+    String rawPassword = getJsonValueByKey(body, "password");
+    if (rawPassword.length() > 0 || body.indexOf("\"password\"") >= 0) {
+      ms.password = rawPassword;
+    }
+
     // Save to NVS
     if (!saveMqttSettings(ms)) {
       sendHttpResponse(client, 500, "application/json", buildErrorJson("failed to save MQTT settings to flash"));
@@ -383,6 +395,8 @@ void handleApiClient(EthernetClient& client) {
       .addNumber("broker_port", String(ms.brokerPort))
       .addBool("enabled", ms.enabled)
       .addString("topic_prefix", ms.topicPrefix)
+      .addString("username", ms.username)
+      .addBool("has_password", ms.password.length() > 0)
       .addBool("connected", MqttClient::getInstance().isConnected())
       .build();
     sendHttpResponse(client, 200, "application/json", response);

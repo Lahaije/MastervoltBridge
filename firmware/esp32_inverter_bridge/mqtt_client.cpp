@@ -145,13 +145,26 @@ void MqttClient::connect() {
 
   appLogger.log("[MQTT] Connecting to " + settings_.brokerIp + ":" + String(settings_.brokerPort) + "...");
 
-  bool connected = mqttPubSub.connect(
-    clientId.c_str(),
-    willTopic.c_str(),  // will topic
-    0,                  // will QoS
-    true,               // will retain
-    "offline"           // will message
-  );
+  bool connected;
+  if (settings_.username.length() > 0) {
+    connected = mqttPubSub.connect(
+      clientId.c_str(),
+      settings_.username.c_str(),
+      settings_.password.c_str(),
+      willTopic.c_str(),  // will topic
+      0,                  // will QoS
+      true,               // will retain
+      "offline"           // will message
+    );
+  } else {
+    connected = mqttPubSub.connect(
+      clientId.c_str(),
+      willTopic.c_str(),  // will topic
+      0,                  // will QoS
+      true,               // will retain
+      "offline"           // will message
+    );
+  }
 
   if (connected) {
     appLogger.log("[MQTT] Connected");

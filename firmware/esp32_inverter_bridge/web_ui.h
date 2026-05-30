@@ -64,6 +64,8 @@ footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}
 <div class="grid"><i>Status</i><b id="sMqtt">-</b></div>
 <p><label for="iMqttIp">Broker IP</label><input type="text" id="iMqttIp" style="background:#0c0c0c;border:1px solid #333;color:var(--fg);padding:6px 8px;border-radius:4px;font:inherit;width:140px"></p>
 <p><label for="iMqttPort">Port</label><input type="number" id="iMqttPort" min=1 max=65535 class=n></p>
+<p><label for="iMqttUser">Username</label><input type="text" id="iMqttUser" style="background:#0c0c0c;border:1px solid #333;color:var(--fg);padding:6px 8px;border-radius:4px;font:inherit;width:140px" autocomplete="off"></p>
+<p><label for="iMqttPass">Password</label><input type="password" id="iMqttPass" style="background:#0c0c0c;border:1px solid #333;color:var(--fg);padding:6px 8px;border-radius:4px;font:inherit;width:140px" autocomplete="off" placeholder="(unchanged)"></p>
 <p><label for="iMqttPrefix">Topic prefix</label><input type="text" id="iMqttPrefix" style="background:#0c0c0c;border:1px solid #333;color:var(--fg);padding:6px 8px;border-radius:4px;font:inherit;width:180px"></p>
 <p><label for="iMqttOn">Enabled</label><input type="checkbox" id="iMqttOn"></p>
 <p><button id="bMqtt">Save MQTT</button></p>
@@ -124,15 +126,18 @@ $('bInterval').onclick=async()=>{var v=parseInt($('iInterval').value,10);
   if(isNaN(v)||v<1||v>300){flash($('mInterval'),false,'Enter 1-300 seconds');return;}
   try{var r=await jpost('/api/interval',{interval:v*1000});flash($('mInterval'),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refreshInfo();}catch(e){flash($('mInterval'),false,e.message);}};
 $('bMqtt').onclick=async()=>{
-  var b={broker_ip:$('iMqttIp').value,broker_port:parseInt($('iMqttPort').value,10),enabled:$('iMqttOn').checked,topic_prefix:$('iMqttPrefix').value};
+  var b={broker_ip:$('iMqttIp').value,broker_port:parseInt($('iMqttPort').value,10),enabled:$('iMqttOn').checked,topic_prefix:$('iMqttPrefix').value,username:$('iMqttUser').value};
+  var pw=$('iMqttPass').value;if(pw.length>0)b.password=pw;
   try{var r=await jpost('/api/mqtt',b);flash($('mMqtt'),true,'Saved');refreshMqtt();}catch(e){flash($('mMqtt'),false,e.message);}};
 async function refreshMqtt(){
   try{var m=await jget('/api/mqtt');
     $('sMqtt').innerHTML=m.connected?pill('connected','ok'):pill('disconnected','bad');
     if(!focused('iMqttIp'))$('iMqttIp').value=m.broker_ip||'';
     if(!focused('iMqttPort'))$('iMqttPort').value=m.broker_port||1883;
+    if(!focused('iMqttUser'))$('iMqttUser').value=m.username||'';
     if(!focused('iMqttPrefix'))$('iMqttPrefix').value=m.topic_prefix||'';
     $('iMqttOn').checked=!!m.enabled;
+    $('iMqttPass').placeholder=m.has_password?'(saved)':'(none)';
   }catch(e){$('sMqtt').innerHTML=pill('error','bad');}}
 loadDevice();refreshHealth();refreshInfo();refreshMqtt();setInterval(refreshInfo,5000);setInterval(refreshHealth,60000);setInterval(refreshMqtt,30000);
 </script></body></html>)HTML";
