@@ -12,6 +12,11 @@ namespace {
 EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
 
+// Throttle how often we run MQTT loop in the ethernet service task.
+// Running every 2ms is too aggressive and starves the API server.
+unsigned long lastMqttLoopMs = 0;
+constexpr unsigned long MQTT_LOOP_INTERVAL_MS = 500;  // Only run MQTT every 500ms
+
 // Buffer for building topic strings
 String buildTopic(const String& prefix, const String& suffix) {
   return prefix + "/" + suffix;
@@ -50,7 +55,9 @@ void publishSensorDiscovery(PubSubClient& client, const String& prefix,
   payload += ",\"name\":\"Mastervolt Bridge\"";
   payload += ",\"manufacturer\":\"Mastervolt\"";
   payload += ",\"model\":\"SOLADIN 1500\"";
-  payload += "}";
+  payload += ",\"sw_version\":\"";
+  payload += FIRMWARE_VERSION;
+  payload += "\"}";
   payload += "}";
 
   client.publish(topic.c_str(), payload.c_str(), true);
@@ -84,7 +91,9 @@ void publishNumberDiscovery(PubSubClient& client, const String& prefix,
   payload += ",\"name\":\"Mastervolt Bridge\"";
   payload += ",\"manufacturer\":\"Mastervolt\"";
   payload += ",\"model\":\"SOLADIN 1500\"";
-  payload += "}";
+  payload += ",\"sw_version\":\"";
+  payload += FIRMWARE_VERSION;
+  payload += "\"}";
   payload += "}";
 
   client.publish(topic.c_str(), payload.c_str(), true);
@@ -116,6 +125,11 @@ void MqttClient::initialize() {
   mqttPubSub.setCallback(mqttCallback);
   mqttPubSub.setBufferSize(512);
 
+  // Set very short socket timeout to prevent blocking the ethernet service loop.
+  // UIPEthernet's connect() uses this for TCP handshake timeout.
+  mqttEthClient.setTimeout(250);
+  mqttPubSub.setSocketTimeout(1);  // 1 second max for MQTT protocol operations
+
   initialized_ = true;
   appLogger.log("[MQTT] Initialized. Broker: " + settings_.brokerIp + ":" + String(settings_.brokerPort));
 }
@@ -123,13 +137,21 @@ void MqttClient::initialize() {
 void MqttClient::loop() {
   if (!initialized_ || !settings_.enabled) return;
 
+  // Rate-limit MQTT processing to avoid starving the API server.
+  // The ethernet service loop runs every 2ms; MQTT only needs ~500ms cadence.
+  unsigned long now = millis();
+  if (now - lastMqttLoopMs < MQTT_LOOP_INTERVAL_MS) {
+    return;
+  }
+  lastMqttLoopMs = now;
+
   if (mqttPubSub.connected()) {
     mqttPubSub.loop();
+    flushPendingTelemetry();
     return;
   }
 
   // Throttle reconnect attempts
-  unsigned long now = millis();
   if (now - lastConnectAttemptMs_ < RECONNECT_INTERVAL_MS && lastConnectAttemptMs_ != 0) {
     return;
   }
@@ -139,6 +161,9 @@ void MqttClient::loop() {
 
 void MqttClient::connect() {
   lastConnectAttemptMs_ = millis();
+
+  // Stop any lingering connection before reconnecting
+  mqttEthClient.stop();
 
   String clientId = "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
   String willTopic = settings_.topicPrefix + "/status";
@@ -209,38 +234,53 @@ void MqttClient::publishAvailability(bool online) {
 
 void MqttClient::publishTelemetry(const HomeData& data, uint32_t pollIntervalMs,
                                    uint16_t powerLimitW, bool powerLimitKnown) {
-  if (!initialized_ || !settings_.enabled || !mqttPubSub.connected()) return;
+  if (!initialized_ || !settings_.enabled) return;
+
+  // Queue telemetry for publishing in the ethernet service task.
+  // This is thread-safe: single writer (inverter controller task),
+  // single reader (ethernet task via flushPendingTelemetry).
+  pendingData_ = data;
+  pendingPollIntervalMs_ = pollIntervalMs;
+  pendingPowerLimitW_ = powerLimitW;
+  pendingPowerLimitKnown_ = powerLimitKnown;
+  pendingTelemetry_ = true;  // volatile flag set last (acts as release fence)
+}
+
+void MqttClient::flushPendingTelemetry() {
+  if (!pendingTelemetry_ || !mqttPubSub.connected()) return;
+
+  pendingTelemetry_ = false;
 
   String prefix = settings_.topicPrefix;
 
   // Power
-  if (data.hasPower) {
+  if (pendingData_.hasPower) {
     String topic = prefix + "/sensor/power/state";
-    mqttPubSub.publish(topic.c_str(), String(data.instantaneousPowerW, 1).c_str());
+    mqttPubSub.publish(topic.c_str(), String(pendingData_.instantaneousPowerW, 1).c_str());
   }
 
   // Total yield
-  if (data.hasLifetimeEnergy) {
+  if (pendingData_.hasLifetimeEnergy) {
     String topic = prefix + "/sensor/total_yield/state";
-    mqttPubSub.publish(topic.c_str(), String(data.lifetimeEnergyKwh, 3).c_str());
+    mqttPubSub.publish(topic.c_str(), String(pendingData_.lifetimeEnergyKwh, 3).c_str());
   }
 
   // Daily yield
-  if (data.hasDailySessionEnergy) {
+  if (pendingData_.hasDailySessionEnergy) {
     String topic = prefix + "/sensor/daily_yield/state";
-    mqttPubSub.publish(topic.c_str(), String(data.dailySessionEnergyKwh, 3).c_str());
+    mqttPubSub.publish(topic.c_str(), String(pendingData_.dailySessionEnergyKwh, 3).c_str());
   }
 
   // Poll interval (seconds)
   {
     String topic = prefix + "/sensor/poll_interval/state";
-    mqttPubSub.publish(topic.c_str(), String(pollIntervalMs / 1000).c_str());
+    mqttPubSub.publish(topic.c_str(), String(pendingPollIntervalMs_ / 1000).c_str());
   }
 
   // Power limit
-  if (powerLimitKnown) {
+  if (pendingPowerLimitKnown_) {
     String topic = prefix + "/number/power_limit/state";
-    mqttPubSub.publish(topic.c_str(), String(powerLimitW).c_str());
+    mqttPubSub.publish(topic.c_str(), String(pendingPowerLimitW_).c_str());
   }
 }
 
@@ -252,6 +292,7 @@ void MqttClient::applySettings(const MqttSettings& settings) {
     publishAvailability(false);
     mqttPubSub.disconnect();
   }
+  mqttEthClient.stop();
 
   discoveryPublished_ = false;
   lastConnectAttemptMs_ = 0;
