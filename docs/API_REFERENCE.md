@@ -25,6 +25,8 @@ http://192.168.1.48:8080
 | GET | /pulse | Recovery pulse + connection-time measurement |
 | POST | /api/debug | Enable or disable verbose HTTP 200 success logging |
 | POST | /api/interval | Temporarily override current poll interval (milliseconds) |
+| GET | /api/mqtt | Get current MQTT settings and connection status |
+| POST | /api/mqtt | Update MQTT settings (persisted to flash) |
 
 ## GET /
 
@@ -42,12 +44,14 @@ UI refresh strategy:
 - `/api/device` fetched once on page load (stable identity).
 - `/api/health` refreshed every 60 seconds (diagnostics).
 - `/api/info` refreshed every 5 seconds (real-time telemetry).
+- `/api/mqtt` refreshed every 30 seconds (MQTT status).
 
 UI controls:
 
 - Power limit: input + Apply → POST /api/power
 - Shadow function: checkbox + Apply → POST /api/shadow
 - Debug mode: checkbox + Apply → POST /api/debug
+- MQTT settings: inputs + Save MQTT → POST /api/mqtt
 - Wake Pulse button → GET /pulse
 - WiFi Off button → POST /wifi/off
 
@@ -288,6 +292,42 @@ When inverter WiFi is not available:
 - POST /api/power -> 502
 - POST /api/shadow -> 502
 - POST /api/inverter/fetch -> 502
+
+## GET /api/mqtt
+
+Returns current MQTT configuration and connection status.
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `broker_ip` | string | MQTT broker IP address |
+| `broker_port` | number | MQTT broker port |
+| `enabled` | boolean | Whether MQTT publishing is enabled |
+| `topic_prefix` | string | Base topic prefix for all MQTT messages |
+| `connected` | boolean | Whether currently connected to the broker |
+
+## POST /api/mqtt
+
+Update MQTT settings. All fields are optional — only provided fields are updated.
+Settings are saved to NVS (flash) and persist across reboots.
+
+Body (all fields optional):
+
+{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge"}
+
+Validation:
+
+- `broker_ip` must be a valid IPv4 address
+- `broker_port` must be 1–65535
+- `enabled` must be a boolean
+- `topic_prefix` max 64 characters
+
+Response (same format as GET /api/mqtt):
+
+{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge","connected":false}
+
+After saving, the MQTT client immediately reconnects with the new settings.
 
 Still expected to respond:
 

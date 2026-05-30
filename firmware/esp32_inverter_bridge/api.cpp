@@ -7,6 +7,8 @@
 #include "inverter_data.h"
 #include "api_helper.h"
 #include "web_ui.h"
+#include "mqtt_client.h"
+#include "mqtt_settings.h"
 
 const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"GET", "/", "Web UI dashboard"},
@@ -21,7 +23,9 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
   {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"},
-  {"POST", "/api/interval", "Temporarily override current poll interval in ms: {\"interval\":20000} (range 100-300000)"}
+  {"POST", "/api/interval", "Temporarily override current poll interval in ms: {\"interval\":20000} (range 100-300000)"},
+  {"GET", "/api/mqtt", "Get current MQTT settings and connection status"},
+  {"POST", "/api/mqtt", "Update MQTT settings: {\"broker_ip\":\"...\",\"broker_port\":1883,\"enabled\":true,\"topic_prefix\":\"...\"}"}
 };
 
 void handleApiClient(EthernetClient& client) {
@@ -302,6 +306,86 @@ void handleApiClient(EthernetClient& client) {
     }
 
     sendHttpResponse(client, 200, "text/plain", inverterBody);
+    return;
+  }
+
+  if (method == "GET" && path == "/api/mqtt") {
+    MqttSettings ms = MqttClient::getInstance().getSettings();
+    String response = JsonBuilder()
+      .addString("broker_ip", ms.brokerIp)
+      .addNumber("broker_port", String(ms.brokerPort))
+      .addBool("enabled", ms.enabled)
+      .addString("topic_prefix", ms.topicPrefix)
+      .addBool("connected", MqttClient::getInstance().isConnected())
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+
+  if (method == "POST" && path == "/api/mqtt") {
+    MqttSettings ms = MqttClient::getInstance().getSettings();
+
+    // Parse optional fields from JSON body
+    String rawIp = getJsonValueByKey(body, "broker_ip");
+    if (rawIp.length() > 0) {
+      // Validate IP format
+      IPAddress testIp;
+      if (!testIp.fromString(rawIp)) {
+        sendHttpResponse(client, 400, "application/json", buildErrorJson("broker_ip must be a valid IP address"));
+        return;
+      }
+      ms.brokerIp = rawIp;
+    }
+
+    String rawPort = getJsonValueByKey(body, "broker_port");
+    if (rawPort.length() > 0) {
+      int port = 0;
+      if (!parseStringToInt(rawPort, port) || port < 1 || port > 65535) {
+        sendHttpResponse(client, 400, "application/json", buildErrorJson("broker_port must be 1-65535"));
+        return;
+      }
+      ms.brokerPort = (uint16_t)port;
+    }
+
+    String rawEnabled = getJsonValueByKey(body, "enabled");
+    if (rawEnabled.length() > 0) {
+      rawEnabled.toLowerCase();
+      if (rawEnabled == "true" || rawEnabled == "1") {
+        ms.enabled = true;
+      } else if (rawEnabled == "false" || rawEnabled == "0") {
+        ms.enabled = false;
+      } else {
+        sendHttpResponse(client, 400, "application/json", buildErrorJson("enabled must be a boolean"));
+        return;
+      }
+    }
+
+    String rawPrefix = getJsonValueByKey(body, "topic_prefix");
+    if (rawPrefix.length() > 0) {
+      if (rawPrefix.length() > 64) {
+        sendHttpResponse(client, 400, "application/json", buildErrorJson("topic_prefix too long (max 64 chars)"));
+        return;
+      }
+      ms.topicPrefix = rawPrefix;
+    }
+
+    // Save to NVS
+    if (!saveMqttSettings(ms)) {
+      sendHttpResponse(client, 500, "application/json", buildErrorJson("failed to save MQTT settings to flash"));
+      return;
+    }
+
+    // Apply to running client
+    MqttClient::getInstance().applySettings(ms);
+
+    String response = JsonBuilder()
+      .addString("broker_ip", ms.brokerIp)
+      .addNumber("broker_port", String(ms.brokerPort))
+      .addBool("enabled", ms.enabled)
+      .addString("topic_prefix", ms.topicPrefix)
+      .addBool("connected", MqttClient::getInstance().isConnected())
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
     return;
   }
 

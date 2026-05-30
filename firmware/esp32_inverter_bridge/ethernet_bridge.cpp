@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "api.h"
+#include "mqtt_client.h"
 
 namespace {
 TaskHandle_t ethernetTaskHandle = nullptr;
@@ -72,6 +73,9 @@ void ethernetBridgeTask(void* param) {
                       String(" (IP=") + Ethernet.localIP().toString() + String(")");
       appLogger.log(apiMsg);
       apiServerStarted = true;
+
+      // Initialize MQTT now that Ethernet is up
+      MqttClient::getInstance().initialize();
     }
 
     int maintainCode = Ethernet.maintain();
@@ -98,6 +102,9 @@ void ethernetBridgeTask(void* param) {
       handleApiClient(client);
       client.stop();
     }
+
+    // Maintain MQTT connection and process incoming messages.
+    MqttClient::getInstance().loop();
 
     vTaskDelay(pdMS_TO_TICKS(ETHERNET_SERVICE_INTERVAL_MS));
   }

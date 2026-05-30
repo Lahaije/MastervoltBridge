@@ -11,6 +11,7 @@ r = requests.get(f"{BASE}/", timeout=15)
 assert r.status_code == 200, f"Expected 200, got {r.status_code}"
 assert "text/html" in r.headers.get("Content-Type", ""), f"Expected text/html, got {r.headers.get('Content-Type')}"
 assert "<!doctype html>" in r.text.lower(), "Response does not look like HTML"
+assert "MQTT" in r.text, "Web UI should contain MQTT settings section"
 print(f"  HTML page: {len(r.content)} bytes")
 print()
 
@@ -18,8 +19,12 @@ print()
 print("=== GET /api ===")
 r = requests.get(f"{BASE}/api", timeout=15)
 assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-for endpoint in r.json()['endpoints']:
+endpoints = r.json()['endpoints']
+for endpoint in endpoints:
     print(f"  {endpoint['method']:4s} {endpoint['path']} — {endpoint['description']}")
+# Verify MQTT endpoints are listed
+paths = [e['path'] for e in endpoints]
+assert "/api/mqtt" in paths, "Missing /api/mqtt in endpoint discovery"
 print()
 
 # --- GET /api/health ---
@@ -80,6 +85,62 @@ try:
 except Exception as e:
     print(f"  EXCEPTION: {e}")
     failed = True
+print()
+
+# --- GET /api/mqtt ---
+print("=== GET /api/mqtt ===")
+r = requests.get(f"{BASE}/api/mqtt", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+mqtt = r.json()
+for key, value in mqtt.items():
+    print(f"  {key}: {value}")
+# Validate expected keys
+for key in ["broker_ip", "broker_port", "enabled", "topic_prefix", "connected"]:
+    if key not in mqtt:
+        print(f"  FAIL: Missing key '{key}' in /api/mqtt")
+        failed = True
+# Validate types
+assert isinstance(mqtt.get("broker_port"), int), "broker_port should be int"
+assert isinstance(mqtt.get("enabled"), bool), "enabled should be bool"
+assert isinstance(mqtt.get("connected"), bool), "connected should be bool"
+print()
+
+# --- POST /api/mqtt (update settings) ---
+print("=== POST /api/mqtt (read-modify-write) ===")
+# Save current settings
+original_mqtt = mqtt.copy()
+# Test updating with same values (safe idempotent test)
+r = requests.post(f"{BASE}/api/mqtt", json={
+    "broker_ip": mqtt["broker_ip"],
+    "broker_port": mqtt["broker_port"],
+    "enabled": mqtt["enabled"],
+    "topic_prefix": mqtt["topic_prefix"]
+}, timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+updated = r.json()
+assert updated["broker_ip"] == mqtt["broker_ip"], "broker_ip mismatch after update"
+assert updated["broker_port"] == mqtt["broker_port"], "broker_port mismatch after update"
+assert updated["enabled"] == mqtt["enabled"], "enabled mismatch after update"
+assert updated["topic_prefix"] == mqtt["topic_prefix"], "topic_prefix mismatch after update"
+print(f"  Settings saved successfully (idempotent write)")
+print()
+
+# --- POST /api/mqtt (validation tests) ---
+print("=== POST /api/mqtt (validation) ===")
+# Invalid IP
+r = requests.post(f"{BASE}/api/mqtt", json={"broker_ip": "not-an-ip"}, timeout=15)
+assert r.status_code == 400, f"Expected 400 for invalid IP, got {r.status_code}"
+print(f"  Invalid IP rejected: {r.json().get('error', '')}")
+
+# Invalid port
+r = requests.post(f"{BASE}/api/mqtt", json={"broker_port": 99999}, timeout=15)
+assert r.status_code == 400, f"Expected 400 for invalid port, got {r.status_code}"
+print(f"  Invalid port rejected: {r.json().get('error', '')}")
+
+# Topic prefix too long
+r = requests.post(f"{BASE}/api/mqtt", json={"topic_prefix": "x" * 65}, timeout=15)
+assert r.status_code == 400, f"Expected 400 for long prefix, got {r.status_code}"
+print(f"  Long prefix rejected: {r.json().get('error', '')}")
 print()
 
 # --- Summary ---

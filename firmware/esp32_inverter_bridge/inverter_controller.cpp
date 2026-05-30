@@ -5,6 +5,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "wifi_bridge.h"
+#include "mqtt_client.h"
 
 namespace {
 constexpr const char* HOME_ENDPOINT = "/home";
@@ -206,6 +207,16 @@ void InverterController::runPollingTask() {
 
       // Backfill any unknown cached settings.
       refreshUnknownSettingsAfterPoll();
+
+      // Publish telemetry to MQTT after successful poll.
+      {
+        HomeData mqttData;
+        if (getLatestHomeData(mqttData)) {
+          uint16_t plW = 0;
+          bool plKnown = getPowerLimit(plW);
+          MqttClient::getInstance().publishTelemetry(mqttData, currentRetryIntervalMs, plW, plKnown);
+        }
+      }
     } else {
       // Poll failed — accumulate streak and check thresholds.
       if (failureStartMs == 0) failureStartMs = millis();
