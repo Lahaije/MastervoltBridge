@@ -1,9 +1,20 @@
 #include "api_helper.h"
 
+#include <math.h>
+
 #include <WiFi.h>
 #include "settings.h"
 #include "logger.h"
 #include "inverter_data.h"
+#include "inverter_controller.h"
+
+namespace {
+
+String formatKwh(float value) {
+  return String(value, 3);
+}
+
+}  // namespace
 
 String jsonEscape(const String& input) {
   String out;
@@ -26,11 +37,13 @@ String jsonEscape(const String& input) {
 
 void sendHttpResponse(EthernetClient& client, int code, const char* contentType, const String& body) {
   String statusText = "OK";
-  if (code == 400) statusText = "Bad Request";
+  if (code == 202) statusText = "Accepted";
+  else if (code == 400) statusText = "Bad Request";
   else if (code == 404) statusText = "Not Found";
   else if (code == 405) statusText = "Method Not Allowed";
-  else if (code == 502) statusText = "Bad Gateway";
+  else if (code == 408) statusText = "Request Timeout";
   else if (code == 500) statusText = "Internal Server Error";
+  else if (code == 502) statusText = "Bad Gateway";
 
   client.print("HTTP/1.1 ");
   client.print(code);
@@ -127,35 +140,88 @@ bool parseFetchUrlFromBody(const String& body, String& urlOut) {
   return urlOut.length() > 0;
 }
 
-String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs) {
-  return JsonBuilder()
-    .addNumber("last_update_ms", String(lastUpdateMs))
-    .addString("operating_status", data.operatingStatus)
-    .addString("error_alarm_code", data.errorAlarmCode)
-    .addString("operating_mode", data.operatingMode)
-    .addString("inverter_model", data.inverterModel)
-    .addString("inverter_mac_address", data.inverterMacAddress)
-    .addString("power", data.instantaneousPower)  // Current power output (via get_Power())
-    .addString("total_yield", data.lifetimeEnergy)  // Total lifetime yield (via get_Total_Yield())
-    .addString("daily_yield", data.dailySessionEnergy)  // Daily session yield (via get_Daily_Yield())
-    .build();
+String buildInfoJson(const HomeData& data) {
+  JsonBuilder json;
+  const float powerW = (data.hasPower && isfinite(data.instantaneousPowerW))
+                         ? data.instantaneousPowerW
+                         : 0.0f;
+  json
+    .addNumber("power", String(powerW, 3))
+    .addNumber("failure_streak_s", String(InverterController::getInstance().getFailureStreakMs() / 1000UL))
+    .addNumber("poll_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
+    .addPowerLimit()
+    .addShadow();
+
+  if (data.hasLifetimeEnergy && isfinite(data.lifetimeEnergyKwh)) {
+    json.addNumber("total_yield", formatKwh(data.lifetimeEnergyKwh), true);
+  } else {
+    json.addNull("total_yield");
+  }
+
+  if (data.hasDailySessionEnergy && isfinite(data.dailySessionEnergyKwh)) {
+    json.addNumber("daily_yield", formatKwh(data.dailySessionEnergyKwh), true);
+  } else {
+    json.addNull("daily_yield");
+  }
+
+  return json.build();
 }
 
-String buildHealthJson() {
+JsonBuilder& JsonBuilder::addPowerLimit() {
+  uint16_t watts = 0;
+  const bool known = InverterController::getInstance().getPowerLimit(watts);
+  if (needsComma) json += ",";
+  json += "\"power_limit_watts\":";
+  if (known) {
+    json += String(watts);
+  } else {
+    json += "null";
+  }
+  needsComma = true;
+  return *this;
+}
+
+JsonBuilder& JsonBuilder::addShadow() {
+  bool enabled = false;
+  const bool known = InverterController::getInstance().getShadow(enabled);
+  if (needsComma) json += ",";
+  json += "\"shadow_enabled\":";
+  if (known) {
+    json += (enabled ? "true" : "false");
+  } else {
+    json += "null";
+  }
+  needsComma = true;
+  return *this;
+}
+
+String buildHealthJson(const HomeData& data) {
   return JsonBuilder()
+    .addString("operating_status", data.operatingStatus)
+    .addString("operating_mode", data.operatingMode)
+    .addString("error_alarm_code", data.errorAlarmCode)
     .addBool("wifi_connected", WiFi.status() == WL_CONNECTED)
-    .addString("wifi_ssid", String(INVERTER_WIFI_SSID))
-    .addString("wifi_ip", WiFi.localIP().toString())
-    .addString("ethernet_ip", Ethernet.localIP().toString())
-    .addString("inverter_host", String(INVERTER_HOST))
+    .addString("inverter_link_state", String(toString(InverterController::getInstance().getLinkState())))
+    .addNumber("last_update_ms", String(InverterController::getInstance().getLastUpdateMs()))
     .addNumber("last_inverter_status", String(lastInverterStatusCode))
     .addBool("debug_mode", debugMode)
     .build();
 }
 
+String buildDeviceJson(const HomeData& data) {
+  return JsonBuilder()
+    .addString("firmware_version", String(FIRMWARE_VERSION))
+    .addString("inverter_model", data.inverterModel)
+    .addString("inverter_mac_address", data.inverterMacAddress)
+    .addString("wifi_ssid", String(INVERTER_WIFI_SSID))
+    .addString("wifi_ip", WiFi.localIP().toString())
+    .addString("ethernet_ip", Ethernet.localIP().toString())
+    .addString("inverter_host", String(INVERTER_HOST))
+    .build();
+}
+
 void sendLogsResponse(EthernetClient& client) {
-  // Snapshot count up-front; the buffer is appended to from another task and
-  // could grow between the loop's iterations.
+  // Snapshot count before iterating.
   const int count = appLogger.getLogCount();
 
   // Headers: omit Content-Length and use Connection: close framing so we can
@@ -165,19 +231,13 @@ void sendLogsResponse(EthernetClient& client) {
   client.print(F("Content-Type: application/json\r\n"));
   client.print(F("\r\n"));
 
-  // Use a stack buffer to batch entries per TCP write, reducing the number
-  // of small packets sent over the ENC28J60 (major throughput bottleneck).
-  // Buffer must be small enough to fit in the ENC28J60's 8KB packet memory
-  // alongside receive buffers. After each flush we yield to let the UIP
-  // TCP/IP stack process incoming ACKs, preventing write-stalls.
+  // Batch writes to reduce small packets.
   static const size_t BUF_SIZE = 1024;
   char buf[BUF_SIZE];
   size_t pos = 0;
   bool aborted = false;
 
-  // Helper lambda: flush buffer to client when full or at end.
-  // Checks client connectivity first to avoid writing to a dead connection
-  // (which crashes the ENC28J60/UIP stack).
+  // Flush buffer to client; aborts on disconnect.
   auto flush = [&]() {
     if (pos > 0) {
       if (!client.connected()) {
@@ -187,7 +247,6 @@ void sendLogsResponse(EthernetClient& client) {
       }
       client.write((const uint8_t*)buf, pos);
       pos = 0;
-      // Yield to allow UIP stack to process ACKs from receiver.
       delay(1);
     }
   };
@@ -258,4 +317,27 @@ String buildApiDiscoveryJson() {
   json += "]";
   json += "}";
   return json;
+}
+
+void sendFlashHtmlResponse(EthernetClient& client, const char* flashData, size_t len) {
+  client.print(F("HTTP/1.1 200 OK\r\n"));
+  client.print(F("Connection: close\r\n"));
+  client.print(F("Content-Type: text/html\r\n"));
+  client.print(F("Content-Length: "));
+  client.print(len);
+  client.print(F("\r\n\r\n"));
+
+  // Write payload in bounded chunks directly from flash.
+  static const size_t CHUNK = 512;
+  char buf[CHUNK];
+  size_t offset = 0;
+  while (offset < len) {
+    if (!client.connected()) return;  // abort cleanly on disconnect
+    size_t remaining = len - offset;
+    size_t n = (remaining < CHUNK) ? remaining : CHUNK;
+    memcpy_P(buf, flashData + offset, n);
+    client.write((const uint8_t*)buf, n);
+    offset += n;
+    delay(1);
+  }
 }

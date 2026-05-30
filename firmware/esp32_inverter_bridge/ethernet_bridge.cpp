@@ -75,11 +75,20 @@ void ethernetBridgeTask(void* param) {
     }
 
     int maintainCode = Ethernet.maintain();
-    // DHCP renew/rebind status reporting.
-    if (maintainCode == 1 || maintainCode == 3) {
+    // Ethernet.maintain() return codes:
+    //   0 = DHCP_CHECK_NONE    — nothing to do
+    //   1 = DHCP_CHECK_RENEW_FAIL  — renewal attempted, failed
+    //   2 = DHCP_CHECK_RENEW_OK    — renewal succeeded
+    //   3 = DHCP_CHECK_REBIND_FAIL — rebind attempted, failed
+    //   4 = DHCP_CHECK_REBIND_OK   — rebind succeeded
+    if (maintainCode == 1) {
+      appLogger.log(String("[ETH] DHCP lease renewal failed. IP=") + Ethernet.localIP().toString());
+    } else if (maintainCode == 2) {
       appLogger.log(String("[ETH] DHCP lease renewed. IP=") + Ethernet.localIP().toString());
-    } else if (maintainCode == 2 || maintainCode == 4) {
-      appLogger.log(String("[ETH] DHCP lease rebind. IP=") + Ethernet.localIP().toString());
+    } else if (maintainCode == 3) {
+      appLogger.log(String("[ETH] DHCP rebind failed. IP=") + Ethernet.localIP().toString());
+    } else if (maintainCode == 4) {
+      appLogger.log(String("[ETH] DHCP lease rebound. IP=") + Ethernet.localIP().toString());
     }
 
     // Process all available API clients without delay between them.

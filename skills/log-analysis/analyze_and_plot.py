@@ -21,7 +21,9 @@ from analyze_bridge_logs import (  # noqa: E402
     group_into_episodes,
     parse_attempts,
     parse_backoff_events,
+    parse_control_events,
     parse_polls,
+    parse_state_change_events,
     print_session_summary,
     summarize,
 )
@@ -40,6 +42,12 @@ def main() -> int:
         help="Output PNG path (default: output/powerplot.png; overwritten)",
     )
     parser.add_argument("--show", action="store_true", help="Open the plot in a window after saving")
+    parser.add_argument(
+        "--state-labels",
+        choices=["major", "all", "none"],
+        default="major",
+        help="State transition label density: major (default), all, or none",
+    )
     args = parser.parse_args()
 
     try:
@@ -62,6 +70,8 @@ def main() -> int:
     attempts = parse_attempts(entries)
     polls, skipped = parse_polls(entries)
     backoff_events = parse_backoff_events(entries)
+    state_change_events = parse_state_change_events(entries)
+    control_events = parse_control_events(entries)
     episodes = group_into_episodes(attempts)
 
     print_session_summary(entries, polls, skipped, episodes, backoff_events)
@@ -72,7 +82,16 @@ def main() -> int:
         return 1
 
     out_path = Path(args.out)
-    build_plot(polls, episodes, out_path, backoff_events=backoff_events, show=args.show)
+    build_plot(
+        polls,
+        episodes,
+        out_path,
+        backoff_events=backoff_events,
+        state_change_events=state_change_events,
+        control_events=control_events,
+        state_label_mode=args.state_labels,
+        show=args.show,
+    )
     return 0
 
 

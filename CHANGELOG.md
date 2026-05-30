@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.0-20260530] — May 30, 2026
+
+### API Endpoint Reorganization
+
+Refactored the API into 3 clearly-separated GET endpoints with distinct refresh cadences.
+
+#### Changes
+
+- **New endpoint: GET /api/device** — Stable device identity (firmware version, model, MACs, IPs). Fetched once on page load.
+- **Reorganized GET /api/health** — Now contains bridge diagnostics: operating status/mode, error alarm code, WiFi connectivity, link state, last update timestamp, debug mode. Polled every 60s by UI.
+- **Reorganized GET /api/info** — Now contains real-time telemetry only: power, yields, failure streak, poll interval, power limit, shadow state. Polled every 5s by UI.
+- **Firmware version exposed** — Visible in web UI header and queryable via `/api/device`.
+- **Web UI tiered refresh** — `/api/device` once on load, `/api/health` every 60s, `/api/info` every 5s.
+- **Endpoint count** — 12 → 13 (added `/api/device`).
+
 ## [0.1.0-alpha1] — May 19, 2026
 
 ### Initial Alpha Release

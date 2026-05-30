@@ -3,20 +3,25 @@
 #include "settings.h"
 #include "logger.h"
 #include "wifi_bridge.h"
-#include "inverter_monitor.h"
+#include "inverter_controller.h"
 #include "inverter_data.h"
 #include "api_helper.h"
+#include "web_ui.h"
 
 const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
-  {"GET", "/", "API discovery and endpoint overview"},
-  {"GET", "/api/health", "Bridge connectivity state: WiFi, Ethernet, inverter host, IPs"},
+  {"GET", "/", "Web UI dashboard"},
+  {"GET", "/api", "API discovery and endpoint overview"},
+  {"GET", "/api/device", "Stable identity: firmware version, model, MACs, IPs"},
+  {"GET", "/api/health", "Bridge diagnostics: link state, operating status, WiFi, debug mode"},
   {"GET", "/api/logs", "Retrieve up to 1000 cached log entries with millisecond timestamps"},
-  {"GET", "/api/info", "Latest cached inverter /home telemetry: status, mode, power, energy (20s poll interval)"},
-  {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W)"},
+  {"GET", "/api/info", "Real-time telemetry: power, yields, tunables (poll every 5s)"},
+  {"POST", "/api/power", String("Set inverter power: JSON body with power field, e.g. {\"power\":1200} (0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W). Returns 202 if queued for delayed apply."},
+  {"POST", "/api/shadow", "Enable or disable inverter shadow function: {\"enabled\":true|false}. Returns 202 if queued for delayed apply."},
   {"POST", "/api/inverter/fetch", "Fetch inverter endpoint: JSON body with url field, e.g. {\"url\":\"/home\"}"},
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
-  {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"}
+  {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"},
+  {"POST", "/api/interval", "Temporarily override current poll interval in ms: {\"interval\":20000} (range 100-300000)"}
 };
 
 void handleApiClient(EthernetClient& client) {
@@ -61,12 +66,7 @@ void handleApiClient(EthernetClient& client) {
     }
   }
 
-  // Read request body if Content-Length > 0.
-  // client.setTimeout() only covers Stream read calls (readStringUntil, readBytes, etc.),
-  // NOT this manual polling loop. Without an explicit deadline a client that sends
-  // Content-Length: N but stalls before delivering all bytes would block the single
-  // Ethernet service task indefinitely. We therefore cap total body-read time to
-  // API_CLIENT_TIMEOUT_MS so a slow or malicious client cannot monopolize the task.
+  // Read request body if Content-Length > 0. Enforces a deadline to prevent stalls.
   String body;
   if (contentLength > 0) {
     body.reserve(contentLength);
@@ -85,12 +85,24 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/") {
+    sendFlashHtmlResponse(client, WEB_UI_HTML, WEB_UI_HTML_LEN);
+    return;
+  }
+
+  if (method == "GET" && path == "/api") {
     sendHttpResponse(client, 200, "application/json", buildApiDiscoveryJson());
     return;
   }
 
   if (method == "GET" && path == "/api/health") {
-    sendHttpResponse(client, 200, "application/json", buildHealthJson());
+    HomeData inverterData = getInverterData();
+    sendHttpResponse(client, 200, "application/json", buildHealthJson(inverterData));
+    return;
+  }
+
+  if (method == "GET" && path == "/api/device") {
+    HomeData inverterData = getInverterData();
+    sendHttpResponse(client, 200, "application/json", buildDeviceJson(inverterData));
     return;
   }
 
@@ -100,9 +112,6 @@ void handleApiClient(EthernetClient& client) {
   }
 
   if (method == "GET" && path == "/pulse") {
-    // forceReconnect() pulses the wake GPIO and then runs a fresh connect
-    // attempt using the next alternating path, so the resulting
-    // [WIFI-CONNECT] log line captures real-world performance.
     bool ok = WifiConnectionManager::getInstance().forceReconnect();
     String response = JsonBuilder().addBool("reconnected", ok).build();
     sendHttpResponse(client, 200, "application/json", response);
@@ -129,18 +138,30 @@ void handleApiClient(EthernetClient& client) {
     sendHttpResponse(client, 200, "application/json", response);
     return;
   }
-  
-  if (method == "GET" && path == "/api/info") {
-    // Retrieve latest cached inverter telemetry from polling task
-    HomeData inverterData = getInverterData();
-    if (!inverterData.isValid()) {
-      // Polling hasn't completed yet or WiFi connection failed
-      sendHttpResponse(client, 502, "application/json", buildErrorJson("No inverter telemetry data available yet"));
+
+  if (method == "POST" && path == "/api/interval") {
+    String rawInterval = getJsonValueByKey(body, "interval");
+    if (rawInterval.length() == 0) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain interval field (milliseconds)"));
       return;
     }
-
-    unsigned long lastUpdateMs = InverterMonitor::getInstance().getLastUpdateMs();
-    sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData, lastUpdateMs));
+    int intervalMs = 0;
+    if (!parseStringToInt(rawInterval, intervalMs) || intervalMs < 100 || intervalMs > 300000) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("interval must be 100-300000 ms"));
+      return;
+    }
+    InverterController::getInstance().setPollIntervalMs((uint32_t)intervalMs);
+    String response = JsonBuilder()
+      .addNumber("poll_interval_ms", String(InverterController::getInstance().getRetryIntervalMs()))
+      .build();
+    sendHttpResponse(client, 200, "application/json", response);
+    return;
+  }
+  
+  if (method == "GET" && path == "/api/info") {
+    // Return cached telemetry; yield fields are null until first successful parse.
+    HomeData inverterData = getInverterData();
+    sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData));
     return;
   }
 
@@ -165,23 +186,93 @@ void handleApiClient(EthernetClient& client) {
       return;
     }
 
-    // Send power command to inverter
+    // Send power command to inverter (combined /postoptions form).
     String inverterResponse;
     String errorMsg;
     int inverterHttpCode = 0;
-    bool ok = InverterMonitor::getInstance().setPower(requestedPower, inverterResponse, inverterHttpCode, errorMsg);
-    if (!ok) {
-      // Inverter communication failed (WiFi down or HTTP error)
-      sendHttpResponse(client, 502, "application/json", buildErrorJson(errorMsg));
+    InverterController::SetResult result = InverterController::getInstance().setPower(
+        requestedPower, inverterResponse, inverterHttpCode, errorMsg);
+
+    if (result == InverterController::SetResult::Rejected) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson(errorMsg));
+      return;
+    }
+    if (result == InverterController::SetResult::Deferred) {
+      String resp = JsonBuilder()
+        .addBool("deferred", true)
+        .addNumber("desired_power_watts", String(requestedPower))
+        .addString("reason", errorMsg)
+        .build();
+      sendHttpResponse(client, 202, "application/json", resp);
       return;
     }
 
-    String response = JsonBuilder()
-      .addNumber("requested_power_watts", String(requestedPower))
+    // Applied: include live read-back from the cache (refreshed inside setPower).
+    JsonBuilder rb;
+    rb.addNumber("requested_power_watts", String(requestedPower))
+      .addBool("applied", true)
       .addNumber("inverter_http_status", String(inverterHttpCode))
-      .addString("inverter_response", inverterResponse)
-      .build();
-    sendHttpResponse(client, 200, "application/json", response);
+      .addString("inverter_response", inverterResponse);
+    uint16_t readback = 0;
+    if (InverterController::getInstance().getPowerLimit(readback)) {
+      rb.addNumber("readback_power_watts", String(readback));
+    } else {
+      rb.addNull("readback_power_watts");
+    }
+    sendHttpResponse(client, 200, "application/json", rb.build());
+    return;
+  }
+
+  if (method == "POST" && path == "/api/shadow") {
+    // Extract enabled flag from JSON body
+    String rawEnabled = getJsonValueByKey(body, "enabled");
+    if (rawEnabled.length() == 0) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain enabled boolean"));
+      return;
+    }
+    rawEnabled.toLowerCase();
+    bool enabled;
+    if (rawEnabled == "true" || rawEnabled == "1") {
+      enabled = true;
+    } else if (rawEnabled == "false" || rawEnabled == "0") {
+      enabled = false;
+    } else {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson("enabled must be a boolean"));
+      return;
+    }
+
+    String inverterResponse;
+    String errorMsg;
+    int inverterHttpCode = 0;
+    InverterController::SetResult result = InverterController::getInstance().setShadow(
+        enabled, inverterResponse, inverterHttpCode, errorMsg);
+
+    if (result == InverterController::SetResult::Rejected) {
+      sendHttpResponse(client, 400, "application/json", buildErrorJson(errorMsg));
+      return;
+    }
+    if (result == InverterController::SetResult::Deferred) {
+      String resp = JsonBuilder()
+        .addBool("deferred", true)
+        .addBool("desired_shadow", enabled)
+        .addString("reason", errorMsg)
+        .build();
+      sendHttpResponse(client, 202, "application/json", resp);
+      return;
+    }
+
+    JsonBuilder rb;
+    rb.addBool("requested_shadow", enabled)
+      .addBool("applied", true)
+      .addNumber("inverter_http_status", String(inverterHttpCode))
+      .addString("inverter_response", inverterResponse);
+    bool readback = false;
+    if (InverterController::getInstance().getShadow(readback)) {
+      rb.addBool("readback_shadow", readback);
+    } else {
+      rb.addNull("readback_shadow");
+    }
+    sendHttpResponse(client, 200, "application/json", rb.build());
     return;
   }
 
@@ -203,7 +294,7 @@ void handleApiClient(EthernetClient& client) {
     String inverterBody;
     String err;
     int code = 0;
-    bool ok = InverterMonitor::getInstance().fetchPath(inverterPath, inverterBody, code, err);
+    bool ok = InverterController::getInstance().fetchPath(inverterPath, inverterBody, code, err);
     if (!ok) {
       // Inverter communication failed
       sendHttpResponse(client, 502, "application/json", buildErrorJson(err));

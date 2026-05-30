@@ -11,26 +11,6 @@
 
 namespace {
 
-constexpr uint32_t WIFI_CONNECT_POLL_MS = 250;
-constexpr uint32_t WIFI_LOCK_TIMEOUT_MS = 50;
-constexpr uint32_t CONNECT_TIMEOUT_MS = 7000;
-constexpr uint32_t SCAN_SETTLE_MS = 100;
-
-// Retry settings for ensureConnected(): pulse once, then try connecting up to
-// MAX_CONNECT_RETRIES times (alternating dwell/auto) before returning failure.
-// This avoids re-pulsing the inverter button on every attempt, which could
-// toggle the WiFi back OFF.
-constexpr int MAX_CONNECT_RETRIES = 3;
-constexpr uint32_t RETRY_PAUSE_MS = 500;
-
-// Dwell path: short scan dwell, hint fallback enabled.
-constexpr uint32_t DWELL_SCAN_DWELL_MS = 200;
-constexpr bool DWELL_USE_HINT_FALLBACK = true;
-
-// Auto path: longer scan dwell, no hint fallback (auto-discovery only).
-constexpr uint32_t AUTO_SCAN_DWELL_MS = 500;
-constexpr bool AUTO_USE_HINT_FALLBACK = false;
-
 SemaphoreHandle_t wifiOperationMutex = nullptr;
 
 // Discovered AP BSSID+channel from scan during the current connect attempt.
@@ -237,8 +217,7 @@ void triggerPulseSequence() {
 }
 
 // ---------------------------------------------------------------------------
-// Connect strategy functions (named so they appear in logs for A/B analysis).
-// File-local; the manager below is the only caller.
+// File-local connect strategy functions.
 // ---------------------------------------------------------------------------
 
 bool connectWifiDwell() {
@@ -273,18 +252,12 @@ bool WifiConnectionManager::ensureConnected() {
   if (isWifiConnected()) {
     return true;
   }
-  // Inverter WiFi is typically asleep; wake it with a double-press pulse
-  // (OFF → ON). We pulse once, then retry the connect up to
-  // MAX_CONNECT_RETRIES times WITHOUT pulsing again — the inverter may
-  // simply need more time to become scannable after the initial wake.
-  // Re-pulsing on every retry risks toggling the inverter WiFi back OFF.
   triggerPulseSequence();
 
   for (int attempt = 0; attempt < MAX_CONNECT_RETRIES; attempt++) {
     if (connectUsingNextPath()) {
       return true;
     }
-    // Brief pause before the next scan/connect attempt (no pulse).
     vTaskDelay(pdMS_TO_TICKS(RETRY_PAUSE_MS));
   }
   return false;
@@ -323,10 +296,8 @@ void wifiBridgeInit() {
 }
 
 bool fetchInverterData(const String& method, const String& path, const String& body,
-                       String& responseBody, int& httpCode, String& errorMessage) {
-  // Make sure WiFi is up before we try to talk to the inverter. The manager
-  // releases the WiFi-operation lock once the (re)connect attempt completes,
-  // so we can re-acquire it below for the HTTP exchange.
+                       String& responseBody, int& httpCode, String& errorMessage,
+                       const char* contentType) {
   if (!WifiConnectionManager::getInstance().ensureConnected()) {
     errorMessage = "ESP32 failed to connect to inverter WiFi";
     httpCode = 0;
@@ -358,7 +329,7 @@ bool fetchInverterData(const String& method, const String& path, const String& b
   if (method == "GET") {
     code = http.GET();
   } else if (method == "POST") {
-    http.addHeader("Content-Type", "text/plain");
+    http.addHeader("Content-Type", contentType);
     code = http.POST(body);
   } else {
     errorMessage = String("Unsupported HTTP method: ") + method;

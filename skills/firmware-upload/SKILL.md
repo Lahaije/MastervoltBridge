@@ -1,120 +1,94 @@
 ---
 name: firmware-upload
-description: Compile and upload ESP32 inverter bridge firmware. Detects whether the ESP32 is connected on the expected COM port before attempting upload and reports clearly if the device cannot be found.
+description: Compile and upload ESP32 inverter bridge firmware. Use when flashing new firmware to the ESP32-S3 over USB serial. Detects whether the device is connected and reports clearly if not found.
 ---
 
-# Firmware Upload Skill
+<objective>
+Compile and upload the inverter bridge firmware to the ESP32-S3 over USB serial.
 
-## Purpose
-Compile the inverter bridge firmware and upload it to the ESP32 over USB serial.
-The script detects whether the target device is reachable before attempting upload,
-and produces a clear diagnostic message when the ESP32 is not connected.
+Enforce release traceability by requiring firmware version strings that include semantic version, date, and git short commit hash before flashing. This guarantees that every flashed binary can be mapped back to an exact repository state.
 
-This skill is self-contained in one folder:
-- `SKILL.md`: usage guide
-- `upload_firmware.py`: compile + detect + upload script
+Use the upload helper script to detect the target device, compile, and flash while preserving the project's canonical Python invocation style.
+</objective>
 
-## Requirements
+<quick_start>
+From the repository root, run this release-safe sequence:
+
+```powershell
+git add -A
+git commit -m "Describe firmware change"
+$commit = (git rev-parse --short=7 HEAD).Trim()
+$date = Get-Date -Format "yyyyMMdd"
+# Update firmware/esp32_inverter_bridge/settings.cpp:
+# const char* FIRMWARE_VERSION = "0.1.0-$date-$commit";
+.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py
+```
+
+Expected version format: `<semver>-<YYYYMMDD>-<commit_short_hash>`.
+</quick_start>
+
+<process>
+1. Stage and commit firmware-related changes so the release has a stable source snapshot.
+2. Generate `date` and `commit` values and update `FIRMWARE_VERSION` in `firmware/esp32_inverter_bridge/settings.cpp`.
+3. Run `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py`.
+4. If needed, use script variants:
+   - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-upload`
+   - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-compile`
+   - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --port COM5`
+5. Confirm upload completion and runtime visibility of the flashed version.
+</process>
+
+<context>
 - Arduino IDE installed at the standard path (includes `arduino-cli`).
 - ESP32 board package installed (`esp32:esp32`).
 - USB cable connected from PC to ESP32-S3.
 - Run commands from the **repository root** (`d:\git\MastervoltBridge`).
+</context>
 
-## Primary Commands
-
-Run from the repository root. **The venv MUST be activated first in every terminal session:**
-
+<examples>
 ```powershell
-# Activate venv (required once per terminal session — always do this first)
-& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
+# Compile and upload (default)
+.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py
+
+# Compile only (no board needed)
+.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-upload
+
+# Upload only (reuse previous build)
+.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-compile
 ```
+</examples>
 
-After activation, use plain `python` for all commands below.
+<troubleshooting>
+- **"NOT FOUND" / no ports visible** — Check USB cable and driver. On Windows, look for "USB Serial Device" or "CP210x" in Device Manager.
+- **Wrong port** — The script lists visible ports when detection fails. Re-run with `--port COMx`.
+- **Compile failed** — Fix the firmware error shown in output, then re-run.
+- **Upload failed after compile OK** — Press BOOT button on ESP32 during upload, or check no other app has the port open.
+</troubleshooting>
 
-### Compile and upload (default)
-```powershell
-python skills/firmware-upload/upload_firmware.py
-```
+<validation>
+- `settings.cpp` contains `FIRMWARE_VERSION` in `<semver>-<YYYYMMDD>-<commit_short_hash>` format.
+- Upload output includes completion text and board reset.
+- `/api/info` returns `firmware_version` matching `settings.cpp`.
+- Web UI header shows the same flashed firmware version.
+</validation>
 
-### Upload only (skip compile)
-```powershell
-python skills/firmware-upload/upload_firmware.py --skip-compile
-```
+<anti_patterns>
+- Flashing without committing code first.
+- Keeping `FIRMWARE_VERSION` as a static label (for example `0.1.0-alpha1`) after code changes.
+- Using bare `python` instead of the canonical `.venv\Scripts\python.exe` invocation.
+</anti_patterns>
 
-### Override COM port
-```powershell
-python skills/firmware-upload/upload_firmware.py --port COM5
-```
-
-## What the Script Does
-1. **Detect device**: Queries `arduino-cli board list` to check whether the expected
-   port (default `COM9`) is present. If not found, exits immediately with a diagnostic
-   message listing all currently visible ports (to help identify the correct port).
-2. **Compile**: Runs `arduino-cli compile --fqbn esp32:esp32:esp32s3` on the sketch.
-   Skipped with `--skip-compile`.
-3. **Upload**: Runs `arduino-cli upload` to flash the compiled binary.
-
-## Example Output — Device Not Connected
-```
-ESP32 Firmware Upload
-  FQBN   : esp32:esp32:esp32s3:CDCOnBoot=cdc
-  Port   : COM9
-  Sketch : firmware/esp32_inverter_bridge
-
-Detecting ESP32 on COM9... NOT FOUND
-
-Upload not possible: ESP32 not detected on COM9.
-
-Check that:
-  - USB cable is connected and fully seated
-  - Board is powered on
-  - Correct port is configured (current: COM9)
-  - USB-Serial/JTAG driver is installed
-
-No serial ports detected by arduino-cli at all.
-```
-
-## Example Output — Success
-```
-ESP32 Firmware Upload
-  FQBN   : esp32:esp32:esp32s3:CDCOnBoot=cdc
-  Port   : COM9
-  Sketch : firmware/esp32_inverter_bridge
-
-Detecting ESP32 on COM9... OK
-
-Compiling...
-  "arduino-cli" compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc firmware/esp32_inverter_bridge
-  Sketch uses 974709 bytes (74%) ...
-
-Uploading to COM9...
-  "arduino-cli" upload --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc --port COM9 firmware/esp32_inverter_bridge
-  Hash of data verified.
-  Hard resetting via RTS pin...
-
-Firmware upload complete.
-```
-
-## Troubleshooting
-- **"NOT FOUND" / no ports visible**: Check USB cable and driver. On Windows, open
-  Device Manager and look for "USB Serial Device" or "CP210x". Install driver if missing.
-- **Wrong port**: The script lists all currently visible ports when detection fails.
-  Re-run with `--port COMx` matching the actual port.
-- **Compile failed**: Fix the firmware error shown in the compile output, then re-run.
-- **Upload failed after compile OK**: Try pressing the BOOT button on the ESP32 during
-  upload, or check that no other application (Serial Monitor, etc.) has the port open.
-
-## Fixed Configuration
-| Setting | Value |
-|---------|-------|
-| FQBN | `esp32:esp32:esp32s3:CDCOnBoot=cdc` |
-| Default port | `COM9` |
-| Sketch path | `firmware/esp32_inverter_bridge` |
-| arduino-cli | `C:/Users/.../Arduino IDE/.../arduino-cli.exe` |
-
-## Notes
+<advanced_features>
 - `CDCOnBoot=cdc` enables USB CDC serial output so `Serial.print()` is visible on COM9.
-- Opening COM9 with DTR=true (default for most serial monitors) **resets the board**.
-  To monitor without reset, disable DTR/RTS (e.g. `pyserial` with `dsrdtr=False, rtscts=False, dtr=False`).
-- Changing FQBN flags (e.g. adding `CDCOnBoot=cdc`) triggers a **full core rebuild** (~5 min).
-  Subsequent compiles with the same flags are incremental (~20s).
+- Opening COM9 with DTR=true (default) **resets the board**. To monitor without reset, disable DTR/RTS (e.g. pyserial with `dsrdtr=False, rtscts=False, dtr=False`).
+- Changing FQBN flags triggers a **full core rebuild** (~5 min). Same flags = fast incremental (~20s).
+</advanced_features>
+
+<success_criteria>
+Upload is complete when:
+- [ ] ESP32 detected on expected COM port
+- [ ] Compile succeeds (no errors)
+- [ ] Upload completes with "Hard resetting via RTS pin..."
+- [ ] Device reboots and `/api/health` responds with `firmware_version` field
+- [ ] Web UI displays firmware version in header
+</success_criteria>

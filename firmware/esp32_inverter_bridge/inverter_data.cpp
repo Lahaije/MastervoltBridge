@@ -1,7 +1,59 @@
 #include "inverter_data.h"
 
-#include "inverter_monitor.h"
+#include <math.h>
+
+#include "inverter_controller.h"
 #include "logger.h"
+
+namespace {
+
+bool parseFloatField(const String& input, float& valueOut) {
+  String trimmed = input;
+  trimmed.trim();
+
+  if (trimmed.length() == 0) {
+    return false;
+  }
+
+  int pos = 0;
+  if (trimmed[pos] == '+' || trimmed[pos] == '-') {
+    pos++;
+    if (pos >= (int)trimmed.length()) {
+      return false;
+    }
+  }
+
+  int dotIndex = -1;
+  bool hasDigit = false;
+  for (int i = pos; i < (int)trimmed.length(); i++) {
+    char c = trimmed[i];
+    if (c == '.') {
+      if (dotIndex >= 0) {
+        return false;
+      }
+      dotIndex = i;
+      continue;
+    }
+    if (!isDigit(c)) {
+      return false;
+    }
+    hasDigit = true;
+  }
+
+  if (!hasDigit) {
+    return false;
+  }
+
+  float parsed = trimmed.toFloat();
+  if (!isfinite(parsed)) {
+    return false;
+  }
+
+  valueOut = parsed;
+  return true;
+}
+
+}  // namespace
 
 bool HomeData::isValid() const {
   return operatingStatus.length() > 0;
@@ -13,14 +65,17 @@ void HomeData::clear() {
   operatingMode = "";
   inverterModel = "";
   inverterMacAddress = "";
-  instantaneousPower = "";
-  lifetimeEnergy = "";
-  dailySessionEnergy = "";
+  instantaneousPowerW = 0.0f;
+  hasPower = false;
+  lifetimeEnergyKwh = 0.0f;
+  dailySessionEnergyKwh = 0.0f;
+  hasLifetimeEnergy = false;
+  hasDailySessionEnergy = false;
 }
 
 HomeData getInverterData() {
   HomeData data;
-  InverterMonitor::getInstance().getLatestHomeData(data);
+  InverterController::getInstance().getLatestHomeData(data);
   return data;
 }
 
@@ -82,9 +137,9 @@ bool parseHomeResponse(const String& rawResponse, HomeData& dataOut) {
   dataOut.operatingMode = extractLine(2);
   dataOut.inverterModel = extractLine(3);
   dataOut.inverterMacAddress = extractLine(4);
-  dataOut.instantaneousPower = extractLine(5);
-  dataOut.lifetimeEnergy = extractLine(6);
-  dataOut.dailySessionEnergy = extractLine(7);
+  dataOut.hasPower = parseFloatField(extractLine(5), dataOut.instantaneousPowerW);
+  dataOut.hasLifetimeEnergy = parseFloatField(extractLine(6), dataOut.lifetimeEnergyKwh);
+  dataOut.hasDailySessionEnergy = parseFloatField(extractLine(7), dataOut.dailySessionEnergyKwh);
 
   return dataOut.isValid();
 }

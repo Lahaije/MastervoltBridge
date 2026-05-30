@@ -33,7 +33,9 @@ from analyze_bridge_logs import (  # noqa: E402
     group_into_episodes,
     parse_attempts,
     parse_backoff_events,
+    parse_control_events,
     parse_polls,
+    parse_state_change_events,
 )
 
 import matplotlib
@@ -48,6 +50,9 @@ def build_plot(
     episodes,
     out_path: Path,
     backoff_events=None,
+    state_change_events=None,
+    control_events=None,
+    state_label_mode: str = "major",
     show: bool = False,
 ) -> None:
     if not polls:
@@ -75,11 +80,80 @@ def build_plot(
         times_min.append(p.timestamp_ms / 60_000)
         powers_w.append(p.power_w)
 
+    # Keep annotation geometry readable even when all values are 0 W.
+    y_ref = max(max(powers_w), 1.0)
+
+    def is_major_transition(from_state: str, to_state: str) -> bool:
+        pair = (from_state, to_state)
+        if pair in {
+            ("STARTING", "ONLINE"),
+            ("ONLINE", "RETRYING"),
+            ("RETRYING", "ONLINE"),
+            ("RETRYING", "BACKOFF"),
+            ("BACKOFF", "DORMANT"),
+            ("DORMANT", "ONLINE"),
+            ("BACKOFF", "ONLINE"),
+        }:
+            return True
+        return to_state in {"BACKOFF", "DORMANT", "ONLINE"}
+
     # Keep image dimensions moderate so chat/image viewers do not clip wide renders.
     fig, ax = plt.subplots(figsize=(11, 5.5))
     fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.10)
     fig.patch.set_facecolor("#1a1a2e")
     ax.set_facecolor("#16213e")
+
+    # Generic overlap-aware label placement: shift labels into lanes when x-positions collide.
+    label_lanes: dict[str, list[tuple[float, float]]] = {}
+
+    def place_shifted_label(
+        group: str,
+        x_min: float,
+        base_y: float,
+        text: str,
+        color: str,
+        fontsize: float,
+        min_spacing_min: float = 1.6,
+        max_lanes: int = 4,
+        lane_step_ratio: float = 0.045,
+        lane_x_step_min: float = 0.18,
+    ) -> None:
+        placed = label_lanes.setdefault(group, [])
+
+        chosen_xy = None
+        for lane in range(max_lanes):
+            cand_x = x_min + (lane * lane_x_step_min)
+            cand_y = base_y - (lane * y_ref * lane_step_ratio)
+            conflict = False
+            for px, py in placed:
+                if abs(cand_x - px) < min_spacing_min and abs(cand_y - py) < (y_ref * lane_step_ratio * 0.9):
+                    conflict = True
+                    break
+            if not conflict:
+                chosen_xy = (cand_x, cand_y)
+                break
+
+        if chosen_xy is None:
+            # If all lanes conflict, place at the furthest lane with extra x-offset.
+            lane = max_lanes
+            chosen_xy = (
+                x_min + (lane * lane_x_step_min),
+                base_y - (lane * y_ref * lane_step_ratio),
+            )
+
+        label_x, label_y = chosen_xy
+        placed.append((label_x, label_y))
+        ax.text(
+            label_x,
+            label_y,
+            text,
+            rotation=0,
+            va="top",
+            ha="left",
+            fontsize=fontsize,
+            color=color,
+            zorder=6,
+        )
 
     # --- Disconnection episode bands ---
     post_backoff_labels_seen = 0
@@ -92,7 +166,7 @@ def build_plot(
         ep_end_ts = last.timestamp_ms + (last.result_time_ms or 8000)
         band_end = (last.timestamp_ms + (last.result_time_ms or 8000)) / 60_000
         ax.axvspan(band_start, band_end, color="#ff6b6b", alpha=0.15, zorder=1)
-        label_y = max(powers_w) * 0.92
+        label_y = y_ref * 0.92
         retries = ep.retries_before_success
         rec_s = ep.recovery_duration_ms
         in_backoff_mode = first_backoff_ts is not None and ep_end_ts >= (first_backoff_ts - 20_000)
@@ -126,22 +200,79 @@ def build_plot(
 
     # --- Backoff transition markers ---
     if backoff_events:
-        y_top = max(powers_w) * 0.82
-        y_alt = max(powers_w) * 0.74
-        for idx, ev in enumerate(backoff_events):
+        y_top = y_ref * 0.82
+        for ev in backoff_events:
             x_min = ev.timestamp_ms / 60_000
             ax.axvline(x_min, color="#ffd54f", linestyle="--", linewidth=0.8, alpha=0.8, zorder=4)
-            label_y = y_top if idx % 2 == 0 else y_alt
-            ax.text(
+            place_shifted_label(
+                "backoff",
                 x_min,
-                label_y,
+                y_top,
                 f"backoff {ev.interval_seconds}s",
-                rotation=90,
-                va="top",
-                ha="right",
-                fontsize=6,
                 color="#ffe082",
-                zorder=5,
+                fontsize=6,
+                min_spacing_min=2.0,
+                max_lanes=3,
+                lane_step_ratio=0.05,
+                lane_x_step_min=0.20,
+            )
+
+    # --- Inverter link-state transitions ---
+    if state_change_events:
+        y_top = y_ref * 0.66
+        label_stride = 1 if state_label_mode in ("all", "none") else 2
+        for idx, ev in enumerate(state_change_events):
+            x_min = ev.timestamp_ms / 60_000
+            ax.axvline(x_min, color="#80cbc4", linestyle=":", linewidth=0.9, alpha=0.85, zorder=4)
+            if state_label_mode == "none":
+                continue
+            if state_label_mode == "major" and not is_major_transition(ev.from_state, ev.to_state):
+                continue
+            if state_label_mode == "major" and (idx % label_stride) != 0:
+                continue
+            place_shifted_label(
+                "state",
+                x_min,
+                y_top,
+                f"{ev.to_state}",
+                color="#b2dfdb",
+                fontsize=6,
+                min_spacing_min=1.6,
+                max_lanes=4,
+                lane_step_ratio=0.045,
+                lane_x_step_min=0.18,
+            )
+
+    # --- Generic control/event labels ---
+    if control_events:
+        event_styles = {
+            "power_update_request": ("PWR_REQ", "#ffb74d", y_ref * 0.50),
+            "power_limit_active": ("PWR_SET", "#ffd180", y_ref * 0.46),
+            "shadow_update_request": ("SHADOW", "#ce93d8", y_ref * 0.42),
+            "pulse_request": ("PULSE", "#f48fb1", y_ref * 0.38),
+            "wifi_off_request": ("WIFI_OFF", "#ef9a9a", y_ref * 0.34),
+            "inverter_fetch_failed": ("FETCH_FAIL", "#ef5350", y_ref * 0.30),
+            "inverter_recovered": ("RECOVERED", "#81c784", y_ref * 0.26),
+        }
+
+        for ev in sorted(control_events, key=lambda x: x.timestamp_ms):
+            style = event_styles.get(ev.kind)
+            if not style:
+                continue
+            label, color, y_pos = style
+            x_min = ev.timestamp_ms / 60_000
+            ax.axvline(x_min, color=color, linestyle=(0, (2, 3)), linewidth=0.7, alpha=0.55, zorder=3)
+            place_shifted_label(
+                "events",
+                x_min,
+                y_pos,
+                label,
+                color=color,
+                fontsize=5.8,
+                min_spacing_min=1.4,
+                max_lanes=6,
+                lane_step_ratio=0.04,
+                lane_x_step_min=0.16,
             )
 
     # --- Peak annotation ---
@@ -150,7 +281,7 @@ def build_plot(
     ax.annotate(
         f"Peak {peak_w:.0f} W",
         xy=(times_min[peak_idx], peak_w),
-        xytext=(times_min[peak_idx] + 0.5, peak_w * 1.04),
+        xytext=(times_min[peak_idx] + 0.5, peak_w + y_ref * 0.04),
         fontsize=7.5, color="#ffe082",
         arrowprops=dict(arrowstyle="->", color="#ffe082", lw=0.8),
     )
@@ -159,7 +290,7 @@ def build_plot(
     ax.annotate(
         f"Last {powers_w[-1]:.1f} W",
         xy=(times_min[-1], powers_w[-1]),
-        xytext=(times_min[-1] - 3, powers_w[-1] + peak_w * 0.06),
+        xytext=(times_min[-1] - 3, powers_w[-1] + y_ref * 0.06),
         fontsize=7.5, color="#a5d6a7",
         arrowprops=dict(arrowstyle="->", color="#a5d6a7", lw=0.8),
     )
@@ -183,8 +314,9 @@ def build_plot(
     # --- Legend ---
     ep_patch = mpatches.Patch(color="#ff6b6b", alpha=0.4, label="Disconnection episode")
     backoff_line = Line2D([0], [0], color="#ffd54f", linestyle="--", linewidth=1.0, label="Backoff transition")
+    state_line = Line2D([0], [0], color="#80cbc4", linestyle=":", linewidth=1.0, label="State transition")
     ax.legend(
-        handles=[ax.lines[0], ep_patch, backoff_line],
+        handles=[ax.lines[0], ep_patch, backoff_line, state_line],
         facecolor="#0f3460", edgecolor="#37474f",
         labelcolor="#eceff1", fontsize=8,
         loc="upper right",
@@ -211,6 +343,12 @@ def main() -> int:
         help="Output PNG path (default: output/powerplot.png; overwritten each run)",
     )
     parser.add_argument("--show", action="store_true", help="Open the plot in a window after saving")
+    parser.add_argument(
+        "--state-labels",
+        choices=["major", "all", "none"],
+        default="major",
+        help="State transition label density: major (default), all, or none",
+    )
     parser.add_argument("--since-ms", type=int, default=None, help="Only include entries at/after timestamp_ms")
     parser.add_argument("--limit", type=int, default=None, help="Only include last N entries")
     args = parser.parse_args()
@@ -230,6 +368,8 @@ def main() -> int:
     polls, skipped = parse_polls(entries)
     attempts = parse_attempts(entries)
     backoff_events = parse_backoff_events(entries)
+    state_change_events = parse_state_change_events(entries)
+    control_events = parse_control_events(entries)
     episodes = group_into_episodes(attempts)
 
     print(f"Fetched {len(entries)} entries — {len(polls)} polls, {skipped} skipped, {len(episodes)} episodes")
@@ -240,7 +380,16 @@ def main() -> int:
 
     out_path = Path(args.out) if args.out else Path("output") / "powerplot.png"
 
-    build_plot(polls, episodes, out_path, backoff_events=backoff_events, show=args.show)
+    build_plot(
+        polls,
+        episodes,
+        out_path,
+        backoff_events=backoff_events,
+        state_change_events=state_change_events,
+        control_events=control_events,
+        state_label_mode=args.state_labels,
+        show=args.show,
+    )
     return 0
 
 

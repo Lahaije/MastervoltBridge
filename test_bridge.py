@@ -1,42 +1,91 @@
 import requests
+import sys
 
 IP = '192.168.1.48'
-r = requests.get(f"http://{IP}:8080/", timeout=15)
+BASE = f"http://{IP}:8080"
+failed = False
+
+# --- GET / (Web UI HTML) ---
+print("=== GET / ===")
+r = requests.get(f"{BASE}/", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+assert "text/html" in r.headers.get("Content-Type", ""), f"Expected text/html, got {r.headers.get('Content-Type')}"
+assert "<!doctype html>" in r.text.lower(), "Response does not look like HTML"
+print(f"  HTML page: {len(r.content)} bytes")
+print()
+
+# --- GET /api (discovery) ---
+print("=== GET /api ===")
+r = requests.get(f"{BASE}/api", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
 for endpoint in r.json()['endpoints']:
-    print(f"'{endpoint['path']}' , {endpoint['method']} : {endpoint['description']}")
-duration =  r.elapsed.microseconds / 1000
+    print(f"  {endpoint['method']:4s} {endpoint['path']} — {endpoint['description']}")
+print()
 
-"""
+# --- GET /api/health ---
+print("=== GET /api/health ===")
+r = requests.get(f"{BASE}/api/health", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+health = r.json()
+for key, value in health.items():
+    print(f"  {key}: {value}")
+# Validate expected keys
+for key in ["operating_status", "operating_mode", "error_alarm_code", "wifi_connected",
+            "inverter_link_state", "last_update_ms", "last_inverter_status", "debug_mode"]:
+    assert key in health, f"Missing key '{key}' in /api/health"
+print()
 
-r = requests.get(f"http://{IP}:8080/api/health", timeout=15)
-for key, value in r.json().items():
-    print(f"{key}: {value}")
+# --- GET /api/device ---
+print("=== GET /api/device ===")
+r = requests.get(f"{BASE}/api/device", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+device = r.json()
+for key, value in device.items():
+    print(f"  {key}: {value}")
+# Validate expected keys
+for key in ["firmware_version", "inverter_model", "inverter_mac_address", "wifi_ssid",
+            "wifi_ip", "ethernet_ip", "inverter_host"]:
+    assert key in device, f"Missing key '{key}' in /api/device"
+assert device["firmware_version"].startswith("0.1.0-"), f"Unexpected firmware version format: {device['firmware_version']}"
+print()
 
+# --- GET /api/info ---
+print("=== GET /api/info ===")
+r = requests.get(f"{BASE}/api/info", timeout=15)
+assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+info = r.json()
+for key, value in info.items():
+    print(f"  {key}: {value}")
+# Validate expected keys
+for key in ["power", "failure_streak_s", "poll_interval_ms", "power_limit_watts",
+            "shadow_enabled", "total_yield", "daily_yield"]:
+    if key not in info:
+        print(f"  FAIL: Missing key '{key}'")
+        failed = True
+print()
 
-r = requests.get(f"http://{IP}:8080/api/info", timeout=15)
-print(r.text)
-"""
-
-timer = ''
+# --- GET /api/logs ---
+print("=== GET /api/logs ===")
 try:
-    r = requests.get(f"http://{IP}:8080/api/logs", timeout=5)
-    for entry in r.json()['entries']:
-        timer = int(entry['timestamp_ms'])
-        minutes = timer // 60000  # 1 minute = 60,000 ms
-        seconds = (timer % 60000)/1000
-        print(f"{minutes}m {seconds:06.3f}: {entry['message']}")
+    r = requests.get(f"{BASE}/api/logs", timeout=15)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    entries = r.json()['entries']
+    print(f"  {len(entries)} log entries")
+    # Show last 5 entries
+    for entry in entries[-5:]:
+        ts = int(entry['timestamp_ms'])
+        minutes = ts // 60000
+        seconds = (ts % 60000) / 1000
+        print(f"  {minutes}m {seconds:06.3f}s: {entry['message']}")
 except Exception as e:
-    print(f"EXCEPTION: {e}")
-    print(r.text)
+    print(f"  EXCEPTION: {e}")
+    failed = True
+print()
 
-
-print(f"{timer} Duration = {int(duration)} ms")
-
-r = requests.get(f"http://{IP}:8080/api/info", timeout=15)
-for key, value in r.json().items():
-    print(f"{key}: {value}")
-
-"""
-r = requests.post(f"http://{IP}:8080/api/inverter/fetch", json={'url': '/Mastervolt.js'}, timeout=15)
-print(r.text)
-"""
+# --- Summary ---
+if failed:
+    print("RESULT: Some checks FAILED")
+    sys.exit(1)
+else:
+    print("RESULT: All checks passed")
+    sys.exit(0)

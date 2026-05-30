@@ -24,7 +24,7 @@ Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to 
 
 - ESP32-S3 development board
 - ENC28J60 Ethernet module (SPI)
-- WiFi wake circuit on GPIO 36 (active HIGH pulse)
+- WiFi wake circuit on GPIO 36 (idle HIGH, active-LOW pulse)
 - Connects to inverter access point: SSID `mastervolt-soladin-0103` / `10.0.0.1`
 - Ethernet IP assigned by DHCP; API available at `http://<ip>:8080`
 
@@ -32,7 +32,7 @@ See [`docs/WIRING_README.md`](docs/WIRING_README.md) for the full pin table and 
 
 ## API
 
-9 REST endpoints covering health, live telemetry, power control, log access, and diagnostics. See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full reference.
+REST API over Ethernet covering health, live telemetry, power control, shadow function, log access, and diagnostics. See [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for the full endpoint reference.
 
 ## Build and Upload
 
@@ -41,8 +41,8 @@ See [`docs/WIRING_README.md`](docs/WIRING_README.md) for the full pin table and 
 .venv\Scripts\python skills/firmware-upload/upload_firmware.py
 
 # Or direct arduino-cli:
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/esp32_inverter_bridge
-arduino-cli upload  --fqbn esp32:esp32:esp32s3 --port COM9 firmware/esp32_inverter_bridge
+arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc firmware/esp32_inverter_bridge
+arduino-cli upload  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc --port COM9 firmware/esp32_inverter_bridge
 ```
 
 See [`docs/SETUP_README.md`](docs/SETUP_README.md) for hardware assembly, library prerequisites, and IDE setup.

@@ -17,7 +17,7 @@ struct ApiEndpointInfo {
 };
 
 // Single source of truth for all API endpoints (defined in api.h)
-constexpr size_t API_ENDPOINT_COUNT = 9;
+constexpr size_t API_ENDPOINT_COUNT = 13;
 extern const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT];
 
 /**
@@ -50,10 +50,58 @@ public:
 
   /**
    * Add a numeric field (unescaped, as-is).
+   * If check_non_zero is true and the numeric value is exactly zero,
+   * emits JSON null instead of 0.
    */
-  JsonBuilder& addNumber(const String& key, const String& value) {
+  JsonBuilder& addNumber(const String& key, const String& value, bool check_non_zero = false) {
+    String normalized = value;
+    normalized.trim();
+
+    bool emitNull = false;
+    if (check_non_zero && normalized.length() > 0) {
+      int pos = 0;
+      if (normalized[0] == '+' || normalized[0] == '-') {
+        pos = 1;
+      }
+
+      bool seenDigit = false;
+      bool seenDot = false;
+      bool allDigitsZero = true;
+      bool isValidSimpleNumber = (pos < (int)normalized.length());
+
+      for (int i = pos; i < (int)normalized.length() && isValidSimpleNumber; i++) {
+        char c = normalized[i];
+        if (c == '.') {
+          if (seenDot) {
+            isValidSimpleNumber = false;
+          } else {
+            seenDot = true;
+          }
+          continue;
+        }
+
+        if (!isDigit(c)) {
+          isValidSimpleNumber = false;
+          continue;
+        }
+
+        seenDigit = true;
+        if (c != '0') {
+          allDigitsZero = false;
+        }
+      }
+
+      if (isValidSimpleNumber && seenDigit && allDigitsZero) {
+        emitNull = true;
+      }
+    }
+
     if (needsComma) json += ",";
-    json += "\"" + key + "\":" + value;
+    if (emitNull) {
+      json += "\"" + key + "\":null";
+    } else {
+      json += "\"" + key + "\":" + normalized;
+    }
     needsComma = true;
     return *this;
   }
@@ -67,6 +115,26 @@ public:
     needsComma = true;
     return *this;
   }
+
+  /**
+   * Add a JSON null field.
+   */
+  JsonBuilder& addNull(const String& key) {
+    if (needsComma) json += ",";
+    json += "\"" + key + "\":null";
+    needsComma = true;
+    return *this;
+  }
+
+  /**
+   * Add power limit field: fetches live from controller, emits watts if known or null.
+   */
+  JsonBuilder& addPowerLimit();
+
+  /**
+   * Add shadow enabled field: fetches live from controller, emits boolean if known or null.
+   */
+  JsonBuilder& addShadow();
 
   /**
    * Finalize and return the JSON object.
@@ -105,23 +173,28 @@ String getJsonValueByKey(const String& body, const String& key);
 
 /**
  * Parse inverter URL from request body.
- * JSON-only format:
- * - {"url":"/home"} or {'url':'/home'}
+ * Expects JSON with a double-quoted key: {"url":"/home"}
  * Returns true if successfully parsed, false otherwise.
  */
 bool parseFetchUrlFromBody(const String& body, String& urlOut);
 
 /**
  * Build JSON response for /api/info endpoint.
- * Includes latest cached inverter telemetry: status, mode, power, yields.
+ * Real-time telemetry: power, yields, tunables (shadow, power limit, poll interval).
  */
-String buildInfoJson(const HomeData& data, unsigned long lastUpdateMs);
+String buildInfoJson(const HomeData& data);
 
 /**
  * Build JSON response for /api/health endpoint.
- * Includes WiFi status, IPs, and last inverter HTTP status code.
+ * Bridge diagnostics: link state, operating status, WiFi connectivity, debug mode.
  */
-String buildHealthJson();
+String buildHealthJson(const HomeData& data);
+
+/**
+ * Build JSON response for /api/device endpoint.
+ * Stable identity: firmware version, model, MACs, IPs, hosts.
+ */
+String buildDeviceJson(const HomeData& data);
 
 /**
  * Stream the /api/logs response directly to the client.
@@ -137,5 +210,12 @@ void sendLogsResponse(EthernetClient& client);
  * Lists all available API endpoints with methods, paths, and descriptions.
  */
 String buildApiDiscoveryJson();
+
+/**
+ * Send a PROGMEM-backed HTML page directly to the client in bounded chunks.
+ * Zero heap allocation for the payload — reads from flash and writes in
+ * fixed-size batches with connectivity checks to avoid dead-write crashes.
+ */
+void sendFlashHtmlResponse(EthernetClient& client, const char* flashData, size_t len);
 
 #endif // API_HELPER_H
