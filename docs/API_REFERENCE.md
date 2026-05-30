@@ -307,6 +307,23 @@ Response fields:
 | `topic_prefix` | string | Base topic prefix for all MQTT messages |
 | `connected` | boolean | Whether currently connected to the broker |
 
+
+## MQTT Telemetry Delivery and Thread-Safety
+
+**Thread-Safety and Network I/O Constraint:**
+All MQTT and Ethernet network I/O is performed exclusively in the `ethernet_bridge` FreeRTOS task. No other task (including the inverter polling task) may call UIPEthernet or PubSubClient methods directly. This is required for thread safety due to UIPEthernet's single-threaded design.
+
+**Telemetry Queueing Behavior:**
+- When new inverter telemetry is available, it is queued for MQTT publishing by storing the latest data in a pending buffer (not a FIFO queue).
+- If the MQTT client is not connected or network I/O is not possible, the most recent telemetry is retained and will be published as soon as possible.
+- If multiple telemetry updates occur before a publish, only the latest is sent; older unsent data is overwritten (not queued).
+- No telemetry is dropped unless new data arrives before the previous is published.
+- All actual MQTT publish operations are performed by the `flushPendingTelemetry()` method, called from the Ethernet service loop.
+
+**Implications:**
+- This design guarantees that the most recent telemetry is always delivered when possible, but does not guarantee delivery of every intermediate update if the network is unavailable or updates are rapid.
+- This approach prevents thread-safety violations and device crashes due to UIPEthernet limitations.
+
 ## POST /api/mqtt
 
 Update MQTT settings. All fields are optional — only provided fields are updated.
