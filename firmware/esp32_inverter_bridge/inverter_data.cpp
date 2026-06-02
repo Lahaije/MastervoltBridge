@@ -4,6 +4,7 @@
 
 #include "inverter_controller.h"
 #include "logger.h"
+#include "settings.h"
 
 namespace {
 
@@ -84,7 +85,7 @@ bool parseHomeResponse(const String& rawResponse, HomeData& dataOut) {
 
   // The /home response is 8 newline-delimited lines
   // Split by newline and populate HomeData fields
-  
+
   int lines[9] = {0};  // Start positions of lines 0-8
   int lineCount = 0;
 
@@ -128,7 +129,9 @@ bool parseHomeResponse(const String& rawResponse, HomeData& dataOut) {
   };
 
   if (lineCount < 8) {
-    appLogger.log(String("[INVERTER-DATA] Expected 8 lines but got ") + lineCount);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-DATA] Expected 8 lines but got ") + lineCount);
+    }
     return false;
   }
 

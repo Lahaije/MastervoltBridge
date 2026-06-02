@@ -1,30 +1,29 @@
 ---
 name: log-analysis
-description: Acquire bridge logs from /api/logs and analyze WiFi connection attempt outcomes, per-path (dwell vs auto) timing, disconnection episodes, power readings, and reliability patterns. Use when checking bridge status, analyzing WiFi performance, or investigating connectivity issues.
+description: Fetch bridge logs from /api/logs and analyze WiFi connect outcomes, per-path timing, disconnections, and power readings. Use when checking bridge status or investigating connectivity.
 ---
 
 <objective>
-Fetch bridge logs from the ESP API and analyze WiFi connection behavior without triggering any new activity. Produces session summaries, connection analysis, power statistics, and disconnection episode breakdowns.
+Fetch bridge logs without triggering new activity. Produce session summaries, connection analysis, power statistics, and disconnection episode breakdowns.
 </objective>
 
 <quick_start>
-**For generic requests** ("show me the logs", "how is the inverter doing?", "show me the power"):
+**Generic requests**:
 ```powershell
-& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1
-python skills/log-analysis/analyze_and_plot.py
+.venv\Scripts\python.exe skills/log-analysis/analyze_and_plot.py
 ```
-Then display `output/powerplot.png` inline and summarise findings in 4–6 bullets.
+Then display `output/powerplot.png` inline and summarise the main findings.
 
-**For specific log questions** (WiFi attempts, skipped polls, reconnect time): answer with text only using `analyze_bridge_logs.py`.
+**Specific log questions**: use `analyze_bridge_logs.py` and answer with text only.
 </quick_start>
 
 <agent_behaviour>
-**Default workflow for generic log requests:**
-1. Run `analyze_and_plot.py` → print Session Summary + Connection Analysis and save `output/powerplot.png` in one pass.
-2. Display `output/powerplot.png` inline with `view_image` when relevant.
-3. Summarise key findings in 4–6 bullet points (uptime, power range/trend, disconnection count, path preference, anything anomalous).
+**Default workflow:**
+1. Run `analyze_and_plot.py` for generic requests.
+2. Display `output/powerplot.png` with `view_image` when relevant.
+3. Summarise the important findings in a few bullets.
 
-**Always persist fetched logs:** When fetching logs from the bridge, always use `--save-json output/logs_<YYYYMMDD_HHmmss>.json` to accumulate a history of snapshots. This enables offline replay and trend comparison across sessions.
+**Always save fetched logs:** use `--save-json output/logs_<YYYYMMDD_HHmmss>.json`.
 
 **Skip the plot only if:**
 - User makes a specific log request — answer with text only.
@@ -34,8 +33,8 @@ Then display `output/powerplot.png` inline and summarise findings in 4–6 bulle
 
 <background>
 The bridge firmware alternates between two connect paths on every connect attempt:
-- **dwell**: short scan dwell (200 ms), uses configured AP hint as fallback.
-- **auto**: longer scan dwell (500 ms), auto-discovery only (no hint fallback).
+- **dwell**: short scan dwell (200 ms), uses the configured AP hint as fallback.
+- **auto**: longer scan dwell (500 ms), uses auto-discovery only.
 
 Both paths log structured start/complete entries tagged with path name and duration, enabling A/B comparison directly from live logs.
 
@@ -49,36 +48,36 @@ Both paths log structured start/complete entries tagged with path name and durat
 <examples>
 **1. Show All Log Entries (Chronological):**
 ```powershell
-python skills/log-analysis/show_all.py
-python skills/log-analysis/show_all.py --limit 200
-python skills/log-analysis/show_all.py --since-ms 300000
+.venv\Scripts\python.exe skills/log-analysis/show_all.py
+.venv\Scripts\python.exe skills/log-analysis/show_all.py --limit 200
+.venv\Scripts\python.exe skills/log-analysis/show_all.py --since-ms 300000
 ```
 
 **2. Analyze + Plot (One Pass, Fast Path):**
 ```powershell
-python skills/log-analysis/analyze_and_plot.py
-python skills/log-analysis/analyze_and_plot.py --limit 400
-python skills/log-analysis/analyze_and_plot.py --since-ms 300000
+.venv\Scripts\python.exe skills/log-analysis/analyze_and_plot.py
+.venv\Scripts\python.exe skills/log-analysis/analyze_and_plot.py --limit 400
+.venv\Scripts\python.exe skills/log-analysis/analyze_and_plot.py --since-ms 300000
 ```
 
 **3. Full WiFi Connection Analysis:**
 ```powershell
-python skills/log-analysis/analyze_bridge_logs.py
-python skills/log-analysis/analyze_bridge_logs.py --print-all
-python skills/log-analysis/analyze_bridge_logs.py --save-json logs/latest.json
-python skills/log-analysis/analyze_bridge_logs.py --since-ms 300000
+.venv\Scripts\python.exe skills/log-analysis/analyze_bridge_logs.py
+.venv\Scripts\python.exe skills/log-analysis/analyze_bridge_logs.py --print-all
+.venv\Scripts\python.exe skills/log-analysis/analyze_bridge_logs.py --save-json logs/latest.json
+.venv\Scripts\python.exe skills/log-analysis/analyze_bridge_logs.py --since-ms 300000
 ```
 
 **4. Plot Power Output:**
 ```powershell
-python skills/log-analysis/plot_power.py
-python skills/log-analysis/plot_power.py --show
-python skills/log-analysis/plot_power.py --out output/today.png
+.venv\Scripts\python.exe skills/log-analysis/plot_power.py
+.venv\Scripts\python.exe skills/log-analysis/plot_power.py --show
+.venv\Scripts\python.exe skills/log-analysis/plot_power.py --out output/today.png
 ```
 
-All commands accept `--base-url http://192.168.1.48:8080` for custom bridge URL.
+All commands accept `--base-url http://<bridge-ip>:8080` for custom bridge URL.
 
-Output saved to `output/powerplot.png` by default (git-ignored, overwritten each run).
+Output is saved to `output/powerplot.png` by default.
 
 **Requires**: `matplotlib` — install with `uv pip install matplotlib`.
 </examples>
@@ -126,7 +125,7 @@ Output saved to `output/powerplot.png` by default (git-ignored, overwritten each
 | `[INVERTER-CONTROLLER] Backoff: retry interval -> 600s` | inverter_controller.cpp | Switched to 10-min retry interval |
 | `[INVERTER-CONTROLLER] Failed to fetch /home` | inverter_controller.cpp | WiFi up but HTTP failed |
 | `[ETH] ENC28J60 hardware initialized.` | ethernet_bridge.cpp | Boot — Ethernet chip ready |
-| `[ETH] DHCP OK. IP=192.168.1.48` | ethernet_bridge.cpp | LAN address assigned |
+| `[ETH] DHCP OK. IP=<bridge-ip>` | ethernet_bridge.cpp | LAN address assigned |
 | `[API] GET /api/logs` | api.cpp | External client fetched logs |
 | `[API] POST /api/power` | api.cpp | Power setpoint request |
 | `[API] GET /pulse` | api.cpp | Forced reconnect triggered |

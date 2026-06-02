@@ -1,14 +1,10 @@
 ---
 name: firmware-optimization-loop
-description: Implement ESP32 firmware optimizations using a repeatable write, upload, validate loop with measurement-based decision making. Use when optimizing WiFi connect latency, timeout rates, or polling behavior.
+description: Optimize firmware with a repeatable write, upload, validate loop. Use when measuring WiFi connect latency, timeout rates, or polling behavior.
 ---
 
 <objective>
-Use a disciplined loop to optimize firmware behavior while preserving reliability:
-1) write a focused code change
-2) compile and upload to ESP32
-3) validate with log analysis
-4) decide keep or revise
+Use a disciplined loop to improve firmware behavior without losing reliability.
 </objective>
 
 <quick_start>
@@ -27,6 +23,43 @@ Use this skill when optimizing firmware logic in:
 - `firmware/esp32_inverter_bridge/inverter_controller.cpp`
 - `firmware/esp32_inverter_bridge/settings.cpp`
 - `firmware/esp32_inverter_bridge/settings.h`
+
+**Web UI assets** (HTML, CSS, JS) are served over the ENC28J60 Ethernet link, which is the primary
+throughput bottleneck. Asset payload size directly affects page load time and API overhead.
+
+### Web UI Build Pipeline
+
+Source files (human-readable) → `build_web_ui.py` → minified `web_ui.h` (compiled into firmware)
+
+| File | Role |
+|------|------|
+| `web_ui/web_ui_main.html` | Main dashboard source |
+| `web_ui/web_ui_config.html` | Settings page source |
+| `web_ui/web_ui.css` | Stylesheet source |
+| `web_ui/web_ui.js` | Shared JS utility source |
+| `web_ui/web_ui.h` | **Auto-generated** — compiled into firmware. Never edit by hand. |
+
+Always edit source files, then regenerate `web_ui.h`:
+```powershell
+.venv\Scripts\python.exe scripts/build_web_ui.py
+```
+
+The script uses `rjsmin` and `rcssmin`. Install once:
+```powershell
+uv pip install rjsmin rcssmin
+```
+
+Minification breakdown (typical savings):
+| Asset | Minifier | Typical saving |
+|-------|----------|----------------|
+| JS | `rjsmin` | ~43% — strips comments, collapses whitespace |
+| CSS | `rcssmin` | ~1% — already dense; mostly comment/space cleanup |
+| HTML | custom regex | ~7% — collapses inter-tag whitespace, minifies inline `<script>` blocks via `rjsmin` |
+
+**Rules for web UI assets (bandwidth optimisation):**
+1. `web_ui.h` is the build artifact and is what gets transmitted over Ethernet.
+2. Source files stay readable; never hand-edit `web_ui.h`.
+3. Keep CSS, JS, and HTML lean, but do not sacrifice clarity.
 </context>
 
 <required_inputs>
@@ -77,19 +110,17 @@ Do not treat IDE include-path diagnostics as build failure; rely on compile resu
 3. Verify: endpoint behavior unchanged, no new recurring failure pattern.
 
 **Phase 5: Decision**
-Keep the revision only if:
-1. Reliability is not worse than baseline (success rate + timeout profile)
-2. Performance is improved or equal for target metric
+Keep the revision only if reliability is not worse than baseline and the target metric improves or holds.
 
 If either fails: revert experiment logic, keep instrumentation if useful, start new iteration.
 </process>
 
 <iteration_template>
 At each loop iteration, report:
-1. Part label (e.g. "Loop Part 4")
+1. Part label
 2. What changed
-3. What will be tested (1–2 sentences)
-4. Current status after validation (pass/fail vs baseline)
+3. What will be tested
+4. Status after validation vs baseline
 </iteration_template>
 
 <validation>

@@ -1,3 +1,6 @@
+
+
+
 #include <Arduino.h>
 #include "settings.h"
 #include "logger.h"
@@ -12,7 +15,7 @@ void setup() {
   // Keep WiFi and Ethernet stack separated: WiFi for inverter, ENC28J60 for HA network.
   ethernetBridgeInit();
   wifiBridgeInit();
-  
+
   // Initialize inverter controller for inverter telemetry and requests
   InverterController::getInstance().initialize();
 
@@ -21,7 +24,10 @@ void setup() {
   debugMode = false;
 }
 
+
 void loop() {
   // Delay-based pacing for simpler and predictable responsiveness.
   delay(MAIN_LOOP_SLEEP_MS);
 }
+
+

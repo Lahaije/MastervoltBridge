@@ -1,14 +1,13 @@
 # Resource: docs/API_REFERENCE.md
 
-**What it documents**: Full API surface — base URL, all endpoints with methods, paths, request bodies, and example responses.
+**What it documents**: The full HTTP API surface, including endpoint list, request bodies, response schemas, and status codes.
 
-**Source of truth**: `firmware/esp32_inverter_bridge/api.cpp` — the `handleApiClient()` function and `API_ENDPOINTS[]` table.
+**Source of truth**: `firmware/esp32_inverter_bridge/api.cpp` and `firmware/esp32_inverter_bridge/api_helper.cpp`.
 
 **Update when**:
 - An endpoint is added or removed.
-- A request body schema changes (new or removed fields).
-- A response body schema changes.
-- HTTP status codes for a given condition change.
+- A request or response schema changes.
+- A status code changes.
 - The base URL or port changes.
 
-**Do NOT update for**: Internal polling logic, WiFi strategy changes, wiring, or upload procedure changes.
+**Do NOT update for**: Internal polling changes, wiring changes, or upload procedure changes.

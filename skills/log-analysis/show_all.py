@@ -7,10 +7,11 @@ connection attempts, use analyze_bridge_logs.py instead.
 
 Usage:
     .venv\\Scripts\\python skills/log-analysis/show_all.py
-    .venv\\Scripts\\python skills/log-analysis/show_all.py --base-url http://192.168.1.48:8080
+    .venv\\Scripts\\python skills/log-analysis/show_all.py --base-url http://<bridge-ip>:8080
 """
 import argparse
 import json
+import os
 import sys
 import urllib.request
 
@@ -29,8 +30,8 @@ def main():
     )
     parser.add_argument(
         "--base-url",
-        default="http://192.168.1.48:8080",
-        help="Bridge base URL (default: http://192.168.1.48:8080)",
+        default=None,
+        help="Bridge base URL (for example: http://<bridge-ip>:8080)",
     )
     parser.add_argument(
         "--timeout",
@@ -51,9 +52,13 @@ def main():
         help="Only show last N entries",
     )
     args = parser.parse_args()
+    base_url = (args.base_url or os.environ.get("MASTERVOLT_BRIDGE_BASE_URL", "")).rstrip("/")
+    if not base_url:
+        print("Missing bridge URL. Provide --base-url or set MASTERVOLT_BRIDGE_BASE_URL.", file=sys.stderr)
+        return 2
 
     try:
-        url = f"{args.base_url.rstrip('/')}/api/logs"
+        url = f"{base_url}/api/logs"
         with urllib.request.urlopen(url, timeout=args.timeout) as r:
             data = json.loads(r.read())
     except Exception as ex:

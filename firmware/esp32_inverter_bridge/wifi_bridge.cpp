@@ -41,12 +41,16 @@ private:
   bool acquired_;
 };
 
-void logWifiBridge(const String& message) {
-  appLogger.log(String("[WIFI-BRIDGE] ") + message);
+void logWifiBridge(const String& message, bool alwaysLog = false) {
+  if (alwaysLog || debugMode) {
+    appLogger.log(String("[WIFI-BRIDGE] ") + message);
+  }
 }
 
-void logConnect(const String& message) {
-  appLogger.log(String("[WIFI-CONNECT] ") + message);
+void logConnect(const String& message, bool alwaysLog = false) {
+  if (alwaysLog || debugMode) {
+    appLogger.log(String("[WIFI-CONNECT] ") + message);
+  }
 }
 
 void powerDownWifiRadio() {
@@ -166,8 +170,9 @@ void startWifiBegin(bool useHintFallback) {
 bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFallback) {
   unsigned long startMs = millis();
   logConnect(String("start path=") + pathName +
-             " scan_dwell_ms=" + scanDwellMs +
-             " hint_fallback=" + (useHintFallback ? "1" : "0"));
+              " scan_dwell_ms=" + scanDwellMs +
+              " hint_fallback=" + (useHintFallback ? "1" : "0"));
+
 
   // Ensure radio is up for scan/connect. We power it down explicitly on
   // failures and disconnected states elsewhere.
@@ -187,10 +192,10 @@ bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFall
                  bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
       }
       logConnect(String("complete path=") + pathName +
-                 " duration_ms=" + elapsedMs +
-                 " result=success channel=" + ch +
-                 " bssid=" + bssidStr +
-                 " ip=" + WiFi.localIP().toString());
+                  " duration_ms=" + elapsedMs +
+                  " result=success channel=" + ch +
+                  " bssid=" + bssidStr +
+                  " ip=" + WiFi.localIP().toString());
       return true;
     }
     if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL || status == WL_CONNECTION_LOST) {
@@ -203,14 +208,15 @@ bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFall
   unsigned long elapsedMs = millis() - startMs;
   wl_status_t finalStatus = WiFi.status();
   logConnect(String("complete path=") + pathName +
-             " duration_ms=" + elapsedMs +
-             " result=timeout final_status=" + wifiStatusToString(finalStatus));
+              " duration_ms=" + elapsedMs +
+              " result=timeout final_status=" + wifiStatusToString(finalStatus));
+
   powerDownWifiRadio();
   return false;
 }
 
 void triggerPulseSequence() {
-  logWifiBridge("Triggering inverter WiFi wake pulse sequence.");
+  logWifiBridge("Triggering inverter WiFi wake pulse sequence.", true);
   pressInverterWifiButtonOnce();
   delay(PULSE_GAP_MS);
   pressInverterWifiButtonOnce();

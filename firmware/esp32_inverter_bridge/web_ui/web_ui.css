@@ -1,0 +1,26 @@
+:root{--bg:#111;--card:#1c1c1c;--fg:#eee;--muted:#888;--accent:#4ea8ff;--ok:#3ecf6c;--bad:#ff5a5a;--warn:#f5b342}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;font-size:15px;line-height:1.4}
+header{padding:14px 20px;background:#000;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center}
+header h1{margin:0;font-size:18px;font-weight:600}header .live{font-size:12px;color:var(--muted)}
+main{max-width:780px;margin:0 auto;padding:14px}
+section{background:var(--card);border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:14px}
+section h2{margin:0 0 10px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px}
+.grid i{color:var(--muted);font-size:13px;font-style:normal}.grid b{font-weight:normal;font-variant-numeric:tabular-nums}
+p{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}p label{flex:0 0 140px;color:var(--muted);font-size:13px}
+p input[type=number],p input[type=text],p input[type=password]{background:#0c0c0c;border:1px solid #333;color:var(--fg);padding:6px 8px;border-radius:4px;font:inherit}
+p input[type=checkbox]{width:18px;height:18px}
+.n{flex:0 0 5ch;min-width:unset}
+.w{flex:1 1 260px;min-width:160px}
+button{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:6px 12px;border-radius:4px;font:inherit;cursor:pointer}
+button:hover{opacity:.85}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+.pill.ok{background:#13351f;color:var(--ok)}.pill.bad{background:#391616;color:var(--bad)}.pill.warn{background:#3a2a10;color:var(--warn)}
+.msg{margin-top:8px;font-size:13px;min-height:18px}.msg.ok{color:var(--ok)}.msg.bad{color:var(--bad)}
+.unk{color:var(--muted);font-style:italic}[hidden]{display:none}
+#fwVersion{font-size:12px;color:var(--muted);margin-top:2px}
+nav{display:flex;gap:0;background:#000;border-bottom:1px solid #222;padding:0 20px}
+nav a{padding:10px 16px;color:var(--muted);text-decoration:none;font-size:13px;border-bottom:2px solid transparent}
+nav a:hover{color:var(--fg)}
+nav a.active{color:var(--accent);border-bottom-color:var(--accent)}
+footer{padding:14px 20px;text-align:center;color:var(--muted);font-size:12px}

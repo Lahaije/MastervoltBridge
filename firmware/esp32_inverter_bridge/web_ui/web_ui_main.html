@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mastervolt Bridge</title>
+  <link rel="stylesheet" href="/web_ui.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1>Mastervolt Bridge</h1>
+    <div id="fwVersion">-</div>
+  </div>
+  <span class="live" id="lastFetch">connecting...</span>
+</header>
+<nav><a href="/" class="active">Home</a><a href="/config">Settings</a><a href="/api">API</a></nav>
+<main>
+  <section><h2>Inverter Status</h2><div class="grid">
+    <i>Power</i><b id="sPower">-</b>
+    <i>Daily yield</i><b id="sDaily">-</b>
+    <i>Total yield</i><b id="sTotal">-</b>
+    <i>Operating</i><b id="sOp">-</b>
+    <i>Link state</i><b id="sLink">-</b>
+    <i>Failure streak</i><b id="sStreak">-</b>
+  </div></section>
+  <section><h2>Polling</h2>
+    <p><label for="iInterval">Interval (s)</label><input type="number" id="iInterval" min=1 max=300 class=n><button id="bInterval">Apply</button></p>
+    <p class=msg id="mInterval"></p></section>
+  <section><h2>Power Limit</h2>
+    <p id="rowPowerUnknown"><label>Status</label><span class="unk" id="curPower">unknown</span></p>
+    <p id="rowPowerForm" hidden><label for="iPower">Power limit (W)</label><input type="number" id="iPower" min=0 max=1575 class=n><button id="bPower">Apply</button></p>
+    <p class=msg id="mPower"></p></section>
+  <section><h2>Log Viewer</h2>
+    <p><a href="/api/logs" target="_blank">Download logs</a></p>
+  </section>
+</main>
+<footer></footer>
+<script src="/web_ui.js"></script>
+<script>
+// Home page specific JS
+async function loadDevice(){
+  try{var d=await apiGet('/api/device');
+    if(d.firmware_version)$("fwVersion").textContent='Firmware: '+d.firmware_version;
+  }catch(e){}}
+async function refreshHealth(){
+  try{var h=await apiGet('/api/health');
+    $("sOp").textContent=h.operating_status?(h.operating_status==='1'?'normal':'code '+h.operating_status):'-';
+    $("sLink").innerHTML=pill(h.inverter_link_state||'?',h.inverter_link_state==='ONLINE'?'ok':h.inverter_link_state==='DORMANT'?'bad':'warn');
+  }catch(e){}}
+async function refreshInfo(){
+  try{var i=await apiGet('/api/info');
+    $("sPower").textContent=i.power?(i.power+' W'):'-';
+    $("sDaily").textContent=formatKwh(i.daily_yield);$("sTotal").textContent=formatKwh(i.total_yield);
+    $("sStreak").textContent=(i.failure_streak_s||0)+' s';
+    if(!isElementFocused('iInterval'))$("iInterval").value=Math.round(i.poll_interval_ms/1000);
+    syncPowerDisplay(i);
+    $("lastFetch").textContent='updated '+new Date().toLocaleTimeString();
+  }catch(e){
+    $("sPower").innerHTML='<span class="unk">offline</span>';
+    $("sDaily").innerHTML=UNKNOWN_HTML;$("sTotal").innerHTML=UNKNOWN_HTML;
+    $("sStreak").textContent='-';
+    syncPowerDisplay({});
+    $("lastFetch").textContent='error: '+e.message;
+  }}
+$("bPower").onclick=async()=>{var v=parseInt($("iPower").value,10);
+  try{var r=await apiPost('/api/power',{power:v});flash($("mPower"),true,r.deferred?'Deferred: '+r.reason:'Power set to '+v+' W');refreshInfo();}catch(e){flash($("mPower"),false,e.message);}};
+$("bInterval").onclick=async()=>{var v=parseInt($("iInterval").value,10);
+  if(isNaN(v)||v<1||v>300){flash($("mInterval"),false,'Enter 1-300 seconds');return;}
+  try{var r=await apiPost('/api/interval',{interval:v*1000});flash($("mInterval"),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refreshInfo();}catch(e){flash($("mInterval"),false,e.message);}};
+loadDevice();refreshHealth();refreshInfo();setInterval(refreshInfo,5000);setInterval(refreshHealth,60000);
+</script>
+</body>
+</html>

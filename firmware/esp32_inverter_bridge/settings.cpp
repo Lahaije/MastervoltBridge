@@ -45,6 +45,12 @@ const uint32_t LINK_DORMANT_INTERVAL_MS    = 10u * 60u * 1000u;   // 10 min
 const uint32_t DATA_MUTEX_TIMEOUT_MS = 10;
 
 // =============================================================================
+// FreeRTOS Task Configuration
+// =============================================================================
+const uint16_t POLLING_TASK_STACK_SIZE  = 6144;
+const uint16_t ETHERNET_TASK_STACK_SIZE = 8192;
+
+// =============================================================================
 // Hardware Pins
 // =============================================================================
 const uint8_t PIN_ETH_SCK = 9;
@@ -82,5 +88,5 @@ bool debugMode = true;
 // =============================================================================
 // Firmware Version
 // =============================================================================
-// Format: <semver>-<YYYYMMDD>-<commit_short_hash>
-const char* FIRMWARE_VERSION = "0.1.0-20260530-2fd1e9a";
+// Current release version.
+const char* FIRMWARE_VERSION = "1.0.0";

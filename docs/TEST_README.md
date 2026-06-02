@@ -20,17 +20,21 @@ Validation guide for the ESP32 inverter bridge firmware.
 | GET /api/logs | JSON object with `total_entries` and `entries` array |
 | GET /api/info | Always 200; JSON with keys: `power`, `failure_streak_s`, `poll_interval_ms`, `power_limit_watts`, `shadow_enabled`, `total_yield`, `daily_yield` |
 | POST /api/interval | Temporarily overrides current poll interval with JSON body `{"interval":...}` |
+| GET /api/mqtt | JSON with keys: `broker_ip`, `broker_port`, `enabled`, `topic_prefix`, `connected` |
+| GET /config | HTML settings page with Pulse WiFi and Force Reconnect controls |
 
 ## Web UI Delivery Validation
 
 Validate the following:
 
-- GET / returns `Content-Type: text/html`.
-- GET / returns one full page payload with inline CSS + JS.
+- GET / returns `Content-Type: text/html` (main dashboard).
+- GET /config returns `Content-Type: text/html` (settings page).
+- GET /web_ui.css returns `Content-Type: text/css`.
+- GET /web_ui.js returns `Content-Type: application/javascript`.
 - GET /api returns discovery JSON for machine clients.
 - Repeated GET / calls do not show heap-fragmentation drift.
-- Response is written in bounded chunks and aborts safely if client disconnects.
-- Content-Length equals compile-time blob size (`sizeof(WEB_UI_HTML) - 1`).
+- Each asset response is written in bounded chunks and aborts safely if client disconnects.
+- Content-Length for each asset matches the compile-time size from `web_ui/web_ui.h`.
 
 ## Inverter-Dependent Endpoints
 
@@ -45,15 +49,19 @@ If inverter is off or unavailable (e.g. after sunset), 502 responses are expecte
 ## Endpoint Verification After Flash
 
 ```
-curl http://192.168.1.48:8080/
-curl http://192.168.1.48:8080/api
-curl http://192.168.1.48:8080/api/device
-curl http://192.168.1.48:8080/api/health
-curl http://192.168.1.48:8080/api/info
-curl http://192.168.1.48:8080/api/logs
-curl -X POST http://192.168.1.48:8080/wifi/off
-curl http://192.168.1.48:8080/pulse
-curl -X POST -H "Content-Type: application/json" -d '{"interval":20000}' http://192.168.1.48:8080/api/interval
+curl http://<bridge-ip>:8080/
+curl http://<bridge-ip>:8080/api
+curl http://<bridge-ip>:8080/api/device
+curl http://<bridge-ip>:8080/api/health
+curl http://<bridge-ip>:8080/api/info
+curl http://<bridge-ip>:8080/api/logs
+curl -X POST http://<bridge-ip>:8080/wifi/off
+curl http://<bridge-ip>:8080/pulse
+curl -X POST -H "Content-Type: application/json" -d '{"interval":20000}' http://<bridge-ip>:8080/api/interval
+curl http://<bridge-ip>:8080/api/mqtt
+curl http://<bridge-ip>:8080/config
+curl http://<bridge-ip>:8080/web_ui.css
+curl http://<bridge-ip>:8080/web_ui.js
 ```
 
 ## Troubleshooting
@@ -65,3 +73,18 @@ curl -X POST -H "Content-Type: application/json" -d '{"interval":20000}' http://
 | /pulse returns `reconnected: false` at night | Inverter WiFi unavailable | Rerun daytime |
 | /api/info fields are empty after boot | First poll not yet complete | Wait 20-30 s and retry |
 | Connection timeouts in logs | Inverter WiFi module asleep | Bridge will auto-pulse on next attempt |
+
+## Log Analysis
+
+Use the log-analysis scripts to compare dwell and auto reconnect performance over long runs:
+
+```powershell
+# One-pass: session summary + connection analysis + power plot
+.venv\Scripts\python skills/log-analysis/analyze_and_plot.py
+
+# Analysis only
+.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+
+# Power chart only (saved to output/powerplot.png)
+.venv\Scripts\python skills/log-analysis/plot_power.py
+```

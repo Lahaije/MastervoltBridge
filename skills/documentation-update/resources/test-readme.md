@@ -1,17 +1,17 @@
 # Resource: docs/TEST_README.md
 
-**What it documents**: Post-flash validation — preconditions, API sanity check table, which endpoints require inverter WiFi, endpoint verification curl commands, and a troubleshooting table.
+**What it documents**: Post-flash validation, endpoint checks, inverter-dependent failures, and troubleshooting.
 
-**Source of truth**: `api.cpp` (endpoints), `settings.cpp` (timeouts, port).
+**Source of truth**: `firmware/esp32_inverter_bridge/api.cpp`, `firmware/esp32_inverter_bridge/api_helper.cpp`, and `firmware/esp32_inverter_bridge/settings.cpp`.
 
 **Single-source-of-truth rules**:
-- WiFi connect strategy details (dwell/auto) are NOT here — link to `AGENTS.md`.
-- Full API schemas are NOT here — link to `docs/API_REFERENCE.md`.
-- Upload procedure is NOT here — link to `docs/ESP32_UPLOAD_README.md`.
+- Full API schemas live in `docs/API_REFERENCE.md`.
+- Upload procedure lives in `docs/ESP32_UPLOAD_README.md`.
+- WiFi strategy details live in `AGENTS.md`.
 
 **Update when**:
-- Endpoints are added, removed, or change expected status codes.
-- New troubleshooting cases are identified from real-world failures.
-- The bridge IP or port changes.
+- An endpoint changes expected status or schema.
+- A troubleshooting case becomes relevant or obsolete.
+- The bridge IP, port, or post-flash checks change.
 
-**Do NOT update for**: WiFi strategy changes, wiring, upload procedure, or log format details.
+**Do NOT update for**: WiFi strategy changes, wiring, or upload-procedure changes.

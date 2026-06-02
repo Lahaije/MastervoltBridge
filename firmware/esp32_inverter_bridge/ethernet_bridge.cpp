@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "logger.h"
 #include "api.h"
+#include "mqtt_client.h"
 
 namespace {
 TaskHandle_t ethernetTaskHandle = nullptr;
@@ -23,7 +24,9 @@ void initEthernetHardware() {
 }
 
 bool tryAcquireDhcp() {
-  appLogger.log("[ETH] Cable detected. Attempting DHCP...");
+  if (debugMode) {
+    appLogger.log("[ETH] Cable detected. Attempting DHCP...");
+  }
   int dhcpOk = Ethernet.begin(ETH_MAC);
   
   // If DHCP fails, return false to caller.
@@ -32,7 +35,9 @@ bool tryAcquireDhcp() {
     return false;
   }
   String msg = String("[ETH] DHCP OK. IP=") + Ethernet.localIP().toString();
-  appLogger.log(msg);
+  if (debugMode) {
+    appLogger.log(msg);
+  }
   return true;
 }
 
@@ -70,8 +75,13 @@ void ethernetBridgeTask(void* param) {
       apiServer.begin();
       String apiMsg = String("[API] Listening on Ethernet port ") + String(API_PORT) +
                       String(" (IP=") + Ethernet.localIP().toString() + String(")");
-      appLogger.log(apiMsg);
+      if (debugMode) {
+        appLogger.log(apiMsg);
+      }
       apiServerStarted = true;
+
+      // Initialize MQTT now that Ethernet is up
+      MqttClient::getInstance().initialize();
     }
 
     int maintainCode = Ethernet.maintain();
@@ -84,11 +94,15 @@ void ethernetBridgeTask(void* param) {
     if (maintainCode == 1) {
       appLogger.log(String("[ETH] DHCP lease renewal failed. IP=") + Ethernet.localIP().toString());
     } else if (maintainCode == 2) {
-      appLogger.log(String("[ETH] DHCP lease renewed. IP=") + Ethernet.localIP().toString());
+      if (debugMode) {
+        appLogger.log(String("[ETH] DHCP lease renewed. IP=") + Ethernet.localIP().toString());
+      }
     } else if (maintainCode == 3) {
       appLogger.log(String("[ETH] DHCP rebind failed. IP=") + Ethernet.localIP().toString());
     } else if (maintainCode == 4) {
-      appLogger.log(String("[ETH] DHCP lease rebound. IP=") + Ethernet.localIP().toString());
+      if (debugMode) {
+        appLogger.log(String("[ETH] DHCP lease rebound. IP=") + Ethernet.localIP().toString());
+      }
     }
 
     // Process all available API clients without delay between them.
@@ -98,6 +112,9 @@ void ethernetBridgeTask(void* param) {
       handleApiClient(client);
       client.stop();
     }
+
+    // Maintain MQTT connection and process incoming messages.
+    MqttClient::getInstance().loop();
 
     vTaskDelay(pdMS_TO_TICKS(ETHERNET_SERVICE_INTERVAL_MS));
   }
@@ -113,7 +130,7 @@ void ethernetBridgeInit() {
   xTaskCreatePinnedToCore(
     ethernetBridgeTask,
     "ethernet_bridge",
-    6144,
+    ETHERNET_TASK_STACK_SIZE,
     nullptr,
     1,
     &ethernetTaskHandle,

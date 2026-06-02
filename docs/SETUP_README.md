@@ -58,6 +58,17 @@ This creates `.venv/` with all required dependencies (`requests`, etc.).
 
 ---
 
+
+## Important Architecture Note: Thread-Safety, Network I/O, and Home Assistant
+
+All network I/O (Ethernet, MQTT) is performed exclusively in the `ethernet_bridge` FreeRTOS task. No other task may call UIPEthernet or PubSubClient methods directly. This is required for thread safety due to UIPEthernet's single-threaded design. Telemetry is queued for MQTT delivery and only the latest value is retained if the network is unavailable. The ethernet task stack size is set to 8192 bytes to accommodate MQTT and Ethernet operations.
+
+Home Assistant integration is MQTT-first: the bridge publishes HA discovery entities plus state/command topics. The REST API remains available for diagnostics, local UI, and fallback control.
+
+Control-state ownership: InverterController owns poll interval and inverter setting state; MQTT only transports telemetry and commands. MQTT handlers must route commands through the same controller setters used by REST API.
+
+---
+
 ## 4. Configuration
 
 Before flashing, review `firmware/esp32_inverter_bridge/settings.cpp` and confirm:
@@ -65,7 +76,7 @@ Before flashing, review `firmware/esp32_inverter_bridge/settings.cpp` and confir
 | Setting | Default | Description |
 |---|---|---|
 | `INVERTER_WIFI_SSID` | `"mastervolt-soladin-0103"` | WiFi network broadcast by the inverter |
-| `INVERTER_HOST` | `"10.0.0.1"` | Inverter IP on its own WiFi network |
+| `INVERTER_HOST` | `"<inverter-host>"` | Inverter IP on its own WiFi network |
 | `PIN_INVERTER_WIFI_WAKE` | `36` | GPIO connected to inverter button |
 | `API_PORT` | `8080` | Ethernet API port |
 
@@ -106,13 +117,13 @@ For full options see [`skills/firmware-upload/SKILL.md`](../skills/firmware-uplo
 After flashing, with the Ethernet cable plugged in:
 
 ```powershell
-curl http://192.168.1.48:8080/api/health
+curl http://<bridge-ip>:8080/api/health
 ```
 
 Expected response:
 
 ```json
-{"wifi_connected": false, "ethernet_ip": "192.168.1.48", ...}
+{"wifi_connected": false, "ethernet_ip": "<bridge-ip>", ...}
 ```
 
 `wifi_connected` will be `false` until the bridge polls the inverter (~20 s after boot). Wait and call `/api/info` to confirm telemetry is flowing.

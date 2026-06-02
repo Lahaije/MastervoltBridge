@@ -6,13 +6,14 @@ http://<bridge-ethernet-ip>:8080
 
 Example:
 
-http://192.168.1.48:8080
+http://<bridge-ip>:8080
 
 ## Endpoint Summary
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | / | Web UI dashboard (self-contained HTML) |
+| GET | / | Web UI main dashboard page |
+| GET | /config | Settings and quick-action page |
 | GET | /api | API discovery JSON |
 | GET | /api/device | Stable identity: firmware version, model, MACs, IPs |
 | GET | /api/health | Bridge diagnostics: link state, operating status, WiFi, debug mode |
@@ -25,17 +26,20 @@ http://192.168.1.48:8080
 | GET | /pulse | Recovery pulse + connection-time measurement |
 | POST | /api/debug | Enable or disable verbose HTTP 200 success logging |
 | POST | /api/interval | Temporarily override current poll interval (milliseconds) |
+| GET | /api/mqtt | Get current MQTT settings and connection status |
+| POST | /api/mqtt | Update MQTT settings (persisted to flash) |
 
 ## GET /
 
-Returns a self-contained HTML dashboard page (`web_ui.h` PROGMEM blob).
+Returns the main HTML dashboard page.
 
 Implementation details:
 
-- HTML stored as a single compile-time constant (`WEB_UI_HTML[]` in PROGMEM).
-- Served in 512-byte chunks via `sendFlashHtmlResponse()` with `client.connected()` checks.
-- Content-Length derived from `sizeof(WEB_UI_HTML) - 1` (compile-time).
-- CSS and JS inline — single request, no external assets.
+- HTML, CSS, and JavaScript are separate PROGMEM assets defined in `web_ui/web_ui.h`.
+  Built from source in `firmware/esp32_inverter_bridge/web_ui/` by `scripts/build_web_ui.py`.
+- Each asset served in 512-byte chunks via `sendFlashHtmlResponse()` with `client.connected()` checks.
+- Content-Length set per-asset at compile time from sizes in `web_ui.h`.
+- Main page references `/web_ui.css` and `/web_ui.js` as separate requests.
 
 UI refresh strategy:
 
@@ -46,10 +50,35 @@ UI refresh strategy:
 UI controls:
 
 - Power limit: input + Apply → POST /api/power
+- Polling interval: input + Apply → POST /api/interval
+
+Read-only device info (loaded once from `/api/device`):
+
+- Inverter model, MAC address, WiFi SSID, WiFi IP, Ethernet IP
+
+Static assets referenced by this page:
+
+- `/web_ui.css` — shared stylesheet
+- `/web_ui.js` — shared JavaScript
+
+## GET /config
+
+Returns the settings and quick-action page.
+
+UI controls:
+
+- MQTT settings: broker IP, broker port, topic prefix, username, enabled toggle, optional password update/clear → POST /api/mqtt
 - Shadow function: checkbox + Apply → POST /api/shadow
 - Debug mode: checkbox + Apply → POST /api/debug
-- Wake Pulse button → GET /pulse
-- WiFi Off button → POST /wifi/off
+- Pulse WiFi button → GET /pulse
+- Force Reconnect button → GET /pulse
+
+Read-only info:
+
+- Connection: WiFi status, Ethernet IP, inverter host, WiFi SSID (from `/api/health` + `/api/device`)
+- MQTT: connection status + password presence indicator (from `/api/mqtt`)
+
+Refresh interval: 30 seconds.
 
 ## GET /api
 
@@ -57,6 +86,7 @@ Returns discovery JSON listing all available endpoints.
 
 - Stable machine-readable endpoint for automation and tooling.
 - GET / serves HTML; GET /api remains JSON.
+- GET /config is a UI route and may be intentionally omitted from discovery while still being a supported endpoint.
 
 ## GET /api/device
 
@@ -66,7 +96,7 @@ Response fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `firmware_version` | string | Firmware version in `<semver>-<YYYYMMDD>-<commit>` format |
+| `firmware_version` | string | Current firmware version string (for example, `1.0.0`) |
 | `inverter_model` | string | e.g. "H500A0103"; empty before first successful poll |
 | `inverter_mac_address` | string | Inverter WiFi MAC; empty before first successful poll |
 | `wifi_ssid` | string | Target inverter WiFi SSID |
@@ -288,6 +318,80 @@ When inverter WiFi is not available:
 - POST /api/power -> 502
 - POST /api/shadow -> 502
 - POST /api/inverter/fetch -> 502
+
+## GET /api/mqtt
+
+Returns current MQTT configuration and connection status.
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `broker_ip` | string | MQTT broker IP address |
+| `broker_port` | number | MQTT broker port |
+| `enabled` | boolean | Whether MQTT publishing is enabled |
+| `topic_prefix` | string | Base topic prefix for all MQTT messages |
+| `username` | string | MQTT username |
+| `has_password` | boolean | Whether a password is currently stored in NVS |
+| `connected` | boolean | Whether currently connected to the broker |
+
+> Telemetry queueing and thread-safety design: see `MqttClient` in `AGENTS.md`.
+
+## POST /api/mqtt
+
+Update MQTT settings. All fields are optional — only provided fields are updated.
+Settings are saved to NVS (flash) and persist across reboots.
+
+Body (all fields optional):
+
+{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge","username":"mv-bridge","password":"secret"}
+
+Validation:
+
+- `broker_ip` must be a valid IPv4 address
+- `broker_port` must be 1–65535
+- `enabled` must be a boolean
+- `topic_prefix` max 64 characters
+
+Notes:
+
+- Omit `password` to keep the currently stored password unchanged.
+- Send `"password":""` to clear the stored password.
+- `username` can be set to an empty string to disable authenticated connect.
+
+Response (same format as GET /api/mqtt):
+
+{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge","username":"mv-bridge","has_password":true,"connected":false}
+
+After saving, the MQTT client immediately reconnects with the new settings.
+
+## Home Assistant MQTT Discovery
+
+The bridge is designed for MQTT-first Home Assistant integration. When MQTT is connected, the firmware publishes retained discovery messages under `homeassistant/.../config` and telemetry/command topics under the configured `topic_prefix`.
+
+Architecture note:
+
+- MQTT is transport-only. It does not own poll interval or power-limit state.
+- InverterController is the single source of truth for poll interval, power limit, and shadow state.
+- MQTT command handlers call the same InverterController setter functions used by REST API endpoints.
+- New MQTT telemetry is published after successful inverter polls (triggered by InverterController).
+
+With default prefix `mastervolt_bridge`, the key entities are:
+
+- Sensor: `power` (`mastervolt_bridge/sensor/power/state`)
+- Sensor: `total_yield` (`mastervolt_bridge/sensor/total_yield/state`)
+- Sensor: `daily_yield` (`mastervolt_bridge/sensor/daily_yield/state`)
+- Sensor: `poll_interval` (`mastervolt_bridge/sensor/poll_interval/state`)
+- Number: `power_limit` state `mastervolt_bridge/number/power_limit/state`, command `mastervolt_bridge/number/power_limit/set`
+- Number: `poll_interval` state `mastervolt_bridge/number/poll_interval/state`, command `mastervolt_bridge/number/poll_interval/set`
+- Availability: `mastervolt_bridge/status` (`online`/`offline`)
+
+Control ranges:
+
+- `power_limit`: 0 to 1575 W
+- `poll_interval`: 5 to 300 s
+
+If entities do not appear in Home Assistant after firmware updates, reload the MQTT integration and ensure the broker has retained discovery topics for the active `topic_prefix`.
 
 Still expected to respond:
 
