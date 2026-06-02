@@ -24,13 +24,6 @@
     <i>Link state</i><b id="sLink">-</b>
     <i>Failure streak</i><b id="sStreak">-</b>
   </div></section>
-  <section><h2>Device</h2><div class="grid">
-    <i>Model</i><b id="dModel">-</b>
-    <i>MAC</i><b id="dInvMac">-</b>
-    <i>WiFi SSID</i><b id="dSsid">-</b>
-    <i>WiFi IP</i><b id="dWifiIp">-</b>
-    <i>Ethernet IP</i><b id="dEth">-</b>
-  </div></section>
   <section><h2>Polling</h2>
     <p><label for="iInterval">Interval (s)</label><input type="number" id="iInterval" min=1 max=300 class=n><button id="bInterval">Apply</button></p>
     <p class=msg id="mInterval"></p></section>
@@ -49,11 +42,6 @@
 async function loadDevice(){
   try{var d=await apiGet('/api/device');
     if(d.firmware_version)$("fwVersion").textContent='Firmware: '+d.firmware_version;
-    $("dModel").textContent=d.inverter_model||'-';
-    $("dInvMac").textContent=d.inverter_mac_address||'-';
-    $("dSsid").textContent=d.wifi_ssid||'-';
-    $("dWifiIp").textContent=d.wifi_ip||'-';
-    $("dEth").textContent=d.ethernet_ip||'-';
   }catch(e){}}
 async function refreshHealth(){
   try{var h=await apiGet('/api/health');

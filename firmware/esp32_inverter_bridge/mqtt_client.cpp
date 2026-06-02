@@ -43,15 +43,17 @@ bool parseStrictInt(const String& raw, int& out) {
 void publishSensorDiscovery(PubSubClient& client, const String& prefix,
                             const String& sensorId, const String& name,
                             const String& unit, const String& deviceClass,
-                            const String& stateClass, const String& icon) {
+                            const String& stateClass, const String& icon,
+                            const String& jsonKey) {
   String topic = "homeassistant/sensor/" + prefix + "/" + sensorId + "/config";
-  String stateTopic = prefix + "/sensor/" + sensorId + "/state";
+  String stateTopic = prefix + "/telemetry/state";
   String availTopic = prefix + "/status";
 
   String payload = "{";
   payload += "\"name\":\"" + name + "\"";
   payload += ",\"unique_id\":\"" + prefix + "_sensor_" + sensorId + "\"";
   payload += ",\"state_topic\":\"" + stateTopic + "\"";
+  payload += ",\"value_template\":\"{{ value_json." + jsonKey + " }}\"";
   payload += ",\"availability_topic\":\"" + availTopic + "\"";
   payload += ",\"payload_available\":\"online\"";
   payload += ",\"payload_not_available\":\"offline\"";
@@ -82,9 +84,10 @@ void publishSensorDiscovery(PubSubClient& client, const String& prefix,
 
 void publishNumberDiscovery(PubSubClient& client, const String& prefix,
                             const String& numberId, const String& name,
-                            const String& unit, int min, int max, int step) {
+                            const String& unit, int min, int max, int step,
+                            const String& jsonKey) {
   String topic = "homeassistant/number/" + prefix + "/" + numberId + "/config";
-  String stateTopic = prefix + "/number/" + numberId + "/state";
+  String stateTopic = prefix + "/telemetry/state";
   String cmdTopic = prefix + "/number/" + numberId + "/set";
   String availTopic = prefix + "/status";
 
@@ -92,6 +95,7 @@ void publishNumberDiscovery(PubSubClient& client, const String& prefix,
   payload += "\"name\":\"" + name + "\"";
   payload += ",\"unique_id\":\"" + prefix + "_number_" + numberId + "\"";
   payload += ",\"state_topic\":\"" + stateTopic + "\"";
+  payload += ",\"value_template\":\"{{ value_json." + jsonKey + " }}\"";
   payload += ",\"command_topic\":\"" + cmdTopic + "\"";
   payload += ",\"availability_topic\":\"" + availTopic + "\"";
   payload += ",\"payload_available\":\"online\"";
@@ -114,6 +118,27 @@ void publishNumberDiscovery(PubSubClient& client, const String& prefix,
   payload += "}";
 
   client.publish(topic.c_str(), payload.c_str(), true);
+}
+
+void publishCombinedTelemetry(PubSubClient& client, const String& prefix,
+                             const HomeData& data, bool hasData,
+                             uint32_t pollIntervalMs,
+                             bool powerLimitKnown, uint16_t powerLimitW) {
+  String topic = prefix + "/telemetry/state";
+
+  String payload = "{";
+  payload += "\"power_w\":";
+  payload += (hasData && data.hasPower) ? String(data.instantaneousPowerW, 1) : "null";
+  payload += ",\"total_yield_kwh\":";
+  payload += (hasData && data.hasLifetimeEnergy) ? String(data.lifetimeEnergyKwh, 3) : "null";
+  payload += ",\"daily_yield_kwh\":";
+  payload += (hasData && data.hasDailySessionEnergy) ? String(data.dailySessionEnergyKwh, 3) : "null";
+  payload += ",\"poll_interval_s\":" + String(pollIntervalMs / 1000);
+  payload += ",\"power_limit_w\":";
+  payload += powerLimitKnown ? String(powerLimitW) : "null";
+  payload += "}";
+
+  client.publish(topic.c_str(), payload.c_str());
 }
 }  // namespace
 
@@ -233,23 +258,23 @@ void MqttClient::publishDiscovery() {
   String prefix = settings_.topicPrefix;
 
   // Sensor: power
-  publishSensorDiscovery(mqttPubSub, prefix, "power", "Power", "W", "power", "measurement", "");
+  publishSensorDiscovery(mqttPubSub, prefix, "power", "Power", "W", "power", "measurement", "", "power_w");
 
   // Sensor: total yield
-  publishSensorDiscovery(mqttPubSub, prefix, "total_yield", "Total Yield", "kWh", "energy", "total_increasing", "");
+  publishSensorDiscovery(mqttPubSub, prefix, "total_yield", "Total Yield", "kWh", "energy", "total_increasing", "", "total_yield_kwh");
 
   // Sensor: daily yield
-  publishSensorDiscovery(mqttPubSub, prefix, "daily_yield", "Daily Yield", "kWh", "energy", "total_increasing", "");
+  publishSensorDiscovery(mqttPubSub, prefix, "daily_yield", "Daily Yield", "kWh", "energy", "total_increasing", "", "daily_yield_kwh");
 
   // Sensor: poll interval
-  publishSensorDiscovery(mqttPubSub, prefix, "poll_interval", "Poll Interval", "s", "", "", "mdi:timer-sand");
+  publishSensorDiscovery(mqttPubSub, prefix, "poll_interval", "Poll Interval", "s", "", "", "mdi:timer-sand", "poll_interval_s");
 
   // Number: power limit (slider)
-  publishNumberDiscovery(mqttPubSub, prefix, "power_limit", "Power Limit", "W", 0, INVERTER_MAX_POWER_WATTS, 1);
+  publishNumberDiscovery(mqttPubSub, prefix, "power_limit", "Power Limit", "W", 0, INVERTER_MAX_POWER_WATTS, 1, "power_limit_w");
 
   // Number: poll interval (slider/input, allows changing poll interval from HA)
-  // Range: 5s to 300s, step 1s
-  publishNumberDiscovery(mqttPubSub, prefix, "poll_interval", "Poll Interval", "s", 5, 300, 1);
+  // Range: 1s to 300s, step 1s
+  publishNumberDiscovery(mqttPubSub, prefix, "poll_interval", "Poll Interval", "s", 1, 300, 1, "poll_interval_s");
 
   appLogger.log("[MQTT] Discovery published");
 }
@@ -305,43 +330,10 @@ void MqttClient::flushPendingTelemetry() {
   uint16_t currentPowerLimitW = 0;
   bool currentPowerLimitKnown = InverterController::getInstance().getPowerLimit(currentPowerLimitW);
 
-  String prefix = settings_.topicPrefix;
-
-  // Power
-  if (snapshotData.hasPower) {
-    String topic = prefix + "/sensor/power/state";
-    mqttPubSub.publish(topic.c_str(), String(snapshotData.instantaneousPowerW, 1).c_str());
-  }
-
-  // Total yield
-  if (snapshotData.hasLifetimeEnergy) {
-    String topic = prefix + "/sensor/total_yield/state";
-    mqttPubSub.publish(topic.c_str(), String(snapshotData.lifetimeEnergyKwh, 3).c_str());
-  }
-
-  // Daily yield
-  if (snapshotData.hasDailySessionEnergy) {
-    String topic = prefix + "/sensor/daily_yield/state";
-    mqttPubSub.publish(topic.c_str(), String(snapshotData.dailySessionEnergyKwh, 3).c_str());
-  }
-
-  // Poll interval (seconds)
-  {
-    String topic = prefix + "/sensor/poll_interval/state";
-    mqttPubSub.publish(topic.c_str(), String(currentPollIntervalMs / 1000).c_str());
-  }
-
-  // Poll interval number state (keeps HA number entity in sync)
-  {
-    String topic = prefix + "/number/poll_interval/state";
-    mqttPubSub.publish(topic.c_str(), String(currentPollIntervalMs / 1000).c_str());
-  }
-
-  // Power limit
-  if (currentPowerLimitKnown) {
-    String topic = prefix + "/number/power_limit/state";
-    mqttPubSub.publish(topic.c_str(), String(currentPowerLimitW).c_str());
-  }
+  publishCombinedTelemetry(mqttPubSub, settings_.topicPrefix,
+                           snapshotData, true,
+                           currentPollIntervalMs,
+                           currentPowerLimitKnown, currentPowerLimitW);
 }
 
 void MqttClient::applySettings(const MqttSettings& settings) {
@@ -410,9 +402,15 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
         watts, responseBody, httpCode, errorMsg);
     if (result == InverterController::SetResult::Applied) {
       appLogger.log("[MQTT] Power limit applied: " + String(watts) + "W");
-      // Publish confirmed value back
-      String stateTopic = self.settings_.topicPrefix + "/number/power_limit/state";
-      mqttPubSub.publish(stateTopic.c_str(), String(watts).c_str());
+      HomeData latestData;
+      bool hasLatestData = InverterController::getInstance().getLatestHomeData(latestData);
+      uint32_t pollIntervalMs = InverterController::getInstance().getRetryIntervalMs();
+      uint16_t powerLimitW = 0;
+      bool powerLimitKnown = InverterController::getInstance().getPowerLimit(powerLimitW);
+      publishCombinedTelemetry(mqttPubSub, self.settings_.topicPrefix,
+                               latestData, hasLatestData,
+                               pollIntervalMs,
+                               powerLimitKnown, powerLimitW);
     } else if (result == InverterController::SetResult::Deferred) {
       appLogger.log("[MQTT] Power limit deferred: " + String(watts) + "W");
     } else {
@@ -435,9 +433,15 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
     uint32_t intervalMs = seconds * 1000;
     appLogger.log("[MQTT] Poll interval command received: " + String(seconds) + "s");
     InverterController::getInstance().setPollIntervalMs(intervalMs);
-    // Publish confirmed value back
-    String stateTopic = self.settings_.topicPrefix + "/number/poll_interval/state";
-    mqttPubSub.publish(stateTopic.c_str(), String(seconds).c_str());
+    HomeData latestData;
+    bool hasLatestData = InverterController::getInstance().getLatestHomeData(latestData);
+    uint32_t pollIntervalMs = InverterController::getInstance().getRetryIntervalMs();
+    uint16_t powerLimitW = 0;
+    bool powerLimitKnown = InverterController::getInstance().getPowerLimit(powerLimitW);
+    publishCombinedTelemetry(mqttPubSub, self.settings_.topicPrefix,
+                             latestData, hasLatestData,
+                             pollIntervalMs,
+                             powerLimitKnown, powerLimitW);
     return;
   }
 }

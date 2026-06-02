@@ -15,6 +15,16 @@
 </header>
 <nav><a href="/">Home</a><a href="/config" class="active">Settings</a><a href="/api">API</a></nav>
 <main>
+  <section><h2>Device</h2>
+    <div class="grid">
+      <i>Model</i><b id="dModel">-</b>
+      <i>MAC</i><b id="dInvMac">-</b>
+      <i>WiFi SSID</i><b id="dSsid">-</b>
+      <i>WiFi IP</i><b id="dWifiIp">-</b>
+      <i>Ethernet IP</i><b id="dEth">-</b>
+    </div>
+  </section>
+
   <section><h2>Connection</h2>
     <div class="grid">
       <i>WiFi</i><b id="sWifi">-</b>
@@ -65,6 +75,11 @@ async function refreshAll(){
     if(!isElementFocused('iDebug'))$("iDebug").checked=h.debug_mode||false;
   }catch(e){}
   try{var d=await apiGet('/api/device');
+    $("dModel").textContent=d.inverter_model||'-';
+    $("dInvMac").textContent=d.inverter_mac_address||'-';
+    $("dSsid").textContent=d.wifi_ssid||'-';
+    $("dWifiIp").textContent=d.wifi_ip||'-';
+    $("dEth").textContent=d.ethernet_ip||'-';
     $("sEth").textContent=d.ethernet_ip||'-';
     $("sHost").textContent=d.inverter_host||'-';
     $("sSsid").textContent=d.wifi_ssid||'-';
