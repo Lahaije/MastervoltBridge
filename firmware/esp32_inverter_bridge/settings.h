@@ -57,6 +57,12 @@ extern const uint32_t LINK_DORMANT_INTERVAL_MS;        // Poll interval during D
 extern const uint32_t DATA_MUTEX_TIMEOUT_MS;
 
 // =============================================================================
+// FreeRTOS Task Configuration
+// =============================================================================
+extern const uint16_t POLLING_TASK_STACK_SIZE;
+extern const uint16_t ETHERNET_TASK_STACK_SIZE;
+
+// =============================================================================
 // Hardware Pins
 // =============================================================================
 // ENC28J60 SPI pin mapping

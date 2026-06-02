@@ -84,7 +84,7 @@ bool parseHomeResponse(const String& rawResponse, HomeData& dataOut) {
 
   // The /home response is 8 newline-delimited lines
   // Split by newline and populate HomeData fields
-  
+
   int lines[9] = {0};  // Start positions of lines 0-8
   int lineCount = 0;
 

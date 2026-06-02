@@ -197,9 +197,12 @@ void MqttClient::connect() {
     publishDiscovery();
 
     // Subscribe to command topics
-    String cmdTopic = settings_.topicPrefix + "/number/power_limit/set";
-    mqttPubSub.subscribe(cmdTopic.c_str());
-    appLogger.log("[MQTT] Subscribed to " + cmdTopic);
+    String cmdTopicPower = settings_.topicPrefix + "/number/power_limit/set";
+    mqttPubSub.subscribe(cmdTopicPower.c_str());
+    appLogger.log("[MQTT] Subscribed to " + cmdTopicPower);
+    String cmdTopicPoll = settings_.topicPrefix + "/number/poll_interval/set";
+    mqttPubSub.subscribe(cmdTopicPoll.c_str());
+    appLogger.log("[MQTT] Subscribed to " + cmdTopicPoll);
   } else {
     appLogger.log("[MQTT] Connection failed, rc=" + String(mqttPubSub.state()));
   }
@@ -222,6 +225,10 @@ void MqttClient::publishDiscovery() {
 
   // Number: power limit (slider)
   publishNumberDiscovery(mqttPubSub, prefix, "power_limit", "Power Limit", "W", 0, INVERTER_MAX_POWER_WATTS, 1);
+
+  // Number: poll interval (slider/input, allows changing poll interval from HA)
+  // Range: 5s to 300s, step 1s
+  publishNumberDiscovery(mqttPubSub, prefix, "poll_interval", "Poll Interval", "s", 5, 300, 1);
 
   discoveryPublished_ = true;
   appLogger.log("[MQTT] Discovery published");
@@ -321,6 +328,10 @@ MqttSettings MqttClient::getSettings() {
 }
 
 void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
+  MqttClient& self = getInstance();
+  String cmdTopicPower = self.settings_.topicPrefix + "/number/power_limit/set";
+  String cmdTopicPoll = self.settings_.topicPrefix + "/number/poll_interval/set";
+
   String topicStr(topic);
   String value;
   value.reserve(length);
@@ -328,24 +339,19 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
     value += (char)payload[i];
   }
 
-  MqttClient& self = getInstance();
-  String cmdTopic = self.settings_.topicPrefix + "/number/power_limit/set";
-
-  if (topicStr == cmdTopic) {
+  // Power limit set
+  if (topicStr == cmdTopicPower) {
     int watts = value.toInt();
     if (watts < 0 || watts > INVERTER_MAX_POWER_WATTS) {
       appLogger.log("[MQTT] Power limit command out of range: " + value);
       return;
     }
-
     appLogger.log("[MQTT] Power limit command received: " + String(watts) + "W");
-
     String responseBody;
     String errorMsg;
     int httpCode = 0;
     InverterController::SetResult result = InverterController::getInstance().setPower(
         watts, responseBody, httpCode, errorMsg);
-
     if (result == InverterController::SetResult::Applied) {
       appLogger.log("[MQTT] Power limit applied: " + String(watts) + "W");
       // Publish confirmed value back
@@ -356,5 +362,20 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
     } else {
       appLogger.log("[MQTT] Power limit rejected: " + errorMsg);
     }
+    return;
+  }
+
+  // Poll interval set
+  if (topicStr == cmdTopicPoll) {
+    int seconds = value.toInt();
+    if (seconds < 5) seconds = 5;
+    if (seconds > 300) seconds = 300;
+    uint32_t intervalMs = seconds * 1000;
+    appLogger.log("[MQTT] Poll interval command received: " + String(seconds) + "s");
+    InverterController::getInstance().setPollIntervalMs(intervalMs);
+    // Publish confirmed value back
+    String stateTopic = self.settings_.topicPrefix + "/number/poll_interval/state";
+    mqttPubSub.publish(stateTopic.c_str(), String(seconds).c_str());
+    return;
   }
 }

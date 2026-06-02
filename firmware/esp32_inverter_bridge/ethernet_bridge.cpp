@@ -26,7 +26,7 @@ void initEthernetHardware() {
 bool tryAcquireDhcp() {
   appLogger.log("[ETH] Cable detected. Attempting DHCP...");
   int dhcpOk = Ethernet.begin(ETH_MAC);
-  
+
   // If DHCP fails, return false to caller.
   if (dhcpOk == 0) {
     appLogger.log("[ETH] DHCP failed.");
@@ -120,7 +120,7 @@ void ethernetBridgeInit() {
   xTaskCreatePinnedToCore(
     ethernetBridgeTask,
     "ethernet_bridge",
-    6144,
+    ETHERNET_TASK_STACK_SIZE,
     nullptr,
     1,
     &ethernetTaskHandle,

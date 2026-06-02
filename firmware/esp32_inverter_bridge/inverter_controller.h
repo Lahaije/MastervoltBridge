@@ -14,7 +14,7 @@
  * InverterController: Manages polling of the inverter's /home endpoint,
  * caches the latest response as a parsed HomeData object, and provides
  * HTTP request functions for interacting with the inverter.
- * 
+*
  * This module handles all inverter requests and telemetry collection,
  * separating these concerns from WiFi connectivity management.
  */

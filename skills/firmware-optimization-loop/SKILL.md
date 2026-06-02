@@ -27,6 +27,46 @@ Use this skill when optimizing firmware logic in:
 - `firmware/esp32_inverter_bridge/inverter_controller.cpp`
 - `firmware/esp32_inverter_bridge/settings.cpp`
 - `firmware/esp32_inverter_bridge/settings.h`
+
+**Web UI assets** (HTML, CSS, JS) are served over the ENC28J60 Ethernet link, which is the primary
+throughput bottleneck. Asset payload size directly affects page load time and API overhead.
+
+### Web UI Build Pipeline
+
+Source files (human-readable) → `build_web_ui.py` → minified `web_ui.h` (compiled into firmware)
+
+| File | Role |
+|------|------|
+| `web_ui/web_ui_main.html` | Main dashboard source |
+| `web_ui/web_ui_config.html` | Settings page source |
+| `web_ui/web_ui.css` | Stylesheet source |
+| `web_ui/web_ui.js` | Shared JS utility source |
+| `web_ui/web_ui.h` | **Auto-generated** — compiled into firmware. Never edit by hand. |
+
+**Always edit source files, then regenerate `web_ui.h`:**
+```powershell
+.venv\Scripts\python.exe scripts/build_web_ui.py
+```
+
+The script uses [`rjsmin`](https://pypi.org/project/rjsmin/) and [`rcssmin`](https://pypi.org/project/rcssmin/) — proper parser-based minifiers that handle strings and regex literals correctly. Install once:
+```powershell
+uv pip install rjsmin rcssmin
+```
+
+Minification breakdown (typical savings):
+| Asset | Minifier | Typical saving |
+|-------|----------|----------------|
+| JS | `rjsmin` | ~43% — strips comments, collapses whitespace |
+| CSS | `rcssmin` | ~1% — already dense; mostly comment/space cleanup |
+| HTML | custom regex | ~7% — collapses inter-tag whitespace, minifies inline `<script>` blocks via `rjsmin` |
+
+**Rules for web UI assets (bandwidth optimisation):**
+1. **`web_ui.h` is the build artifact** — it is what gets transmitted over Ethernet. Size here is what matters.
+2. **Source files stay readable** — comments, indentation, and descriptive names are welcome in source.
+3. **Never commit hand-edits to `web_ui.h`** — always regenerate via the script.
+4. **CSS optimisation:** avoid redundant selectors; use shorthand properties; group related rules.
+5. **JS optimisation:** avoid unused functions; keep logic lean; no external library deps.
+6. **HTML optimisation:** avoid redundant wrapper elements; use semantic tags to reduce nesting.
 </context>
 
 <required_inputs>

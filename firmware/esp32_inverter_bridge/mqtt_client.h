@@ -9,6 +9,9 @@
  * MqttClient: Manages MQTT connection to Home Assistant broker.
  * Publishes inverter telemetry and subscribes to power limit commands.
  * Uses the Ethernet interface (ENC28J60 via UIPEthernet).
+ *
+ * IMPORTANT: All network I/O must happen in the ethernet service task.
+ * publishTelemetry() only queues data; actual MQTT writes happen in loop().
  */
 class MqttClient {
 public:
@@ -24,14 +27,15 @@ public:
   void initialize();
 
   /**
-   * Call periodically from the main loop or a task to maintain MQTT connection
-   * and process incoming messages.
+   * Call periodically from the ethernet service task to maintain MQTT connection,
+   * process incoming messages, and flush any queued telemetry.
+   * NOT thread-safe — must only be called from the ethernet task.
    */
   void loop();
 
   /**
-   * Publish telemetry data after a successful inverter poll.
-   * Publishes power, yields, poll interval, and power limit.
+   * Queue telemetry data for publishing on next loop() call.
+   * Thread-safe — can be called from any task (e.g. inverter controller).
    */
   void publishTelemetry(const HomeData& data, uint32_t pollIntervalMs, uint16_t powerLimitW, bool powerLimitKnown);
 
@@ -59,6 +63,7 @@ private:
   void connect();
   void publishDiscovery();
   void publishAvailability(bool online);
+  void flushPendingTelemetry();
   static void mqttCallback(char* topic, byte* payload, unsigned int length);
 
   MqttSettings settings_;
@@ -66,6 +71,13 @@ private:
   bool discoveryPublished_ = false;
   unsigned long lastConnectAttemptMs_ = 0;
   static constexpr unsigned long RECONNECT_INTERVAL_MS = 30000;
+
+  // Pending telemetry (set from any task, flushed in ethernet task)
+  volatile bool pendingTelemetry_ = false;
+  HomeData pendingData_;
+  uint32_t pendingPollIntervalMs_ = 0;
+  uint16_t pendingPowerLimitW_ = 0;
+  bool pendingPowerLimitKnown_ = false;
 };
 
 #endif // MQTT_CLIENT_H

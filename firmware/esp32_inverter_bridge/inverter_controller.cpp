@@ -86,7 +86,7 @@ void InverterController::initialize() {
     xTaskCreatePinnedToCore(
       pollingTaskEntry,
       "inverter_controller",
-      6144,
+      POLLING_TASK_STACK_SIZE,
       this,
       1,
       &pollingTaskHandle,
