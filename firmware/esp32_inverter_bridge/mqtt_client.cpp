@@ -2,6 +2,8 @@
 
 #include <UIPEthernet.h>
 #include <PubSubClient.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "settings.h"
 #include "logger.h"
@@ -11,15 +13,30 @@
 namespace {
 EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
+SemaphoreHandle_t telemetryMutex = nullptr;
 
 // Throttle how often we run MQTT loop in the ethernet service task.
 // Running every 2ms is too aggressive and starves the API server.
 unsigned long lastMqttLoopMs = 0;
 constexpr unsigned long MQTT_LOOP_INTERVAL_MS = 500;  // Only run MQTT every 500ms
 
-// Buffer for building topic strings
-String buildTopic(const String& prefix, const String& suffix) {
-  return prefix + "/" + suffix;
+bool parseStrictInt(const String& raw, int& out) {
+  String value = raw;
+  value.trim();
+  if (value.length() == 0) return false;
+
+  int start = 0;
+  if (value[0] == '+' || value[0] == '-') {
+    if (value.length() == 1) return false;
+    start = 1;
+  }
+
+  for (int i = start; i < value.length(); i++) {
+    if (!isDigit(value[i])) return false;
+  }
+
+  out = value.toInt();
+  return true;
 }
 
 // Publish a single HA discovery config message (retained).
@@ -33,7 +50,7 @@ void publishSensorDiscovery(PubSubClient& client, const String& prefix,
 
   String payload = "{";
   payload += "\"name\":\"" + name + "\"";
-  payload += ",\"unique_id\":\"" + prefix + "_" + sensorId + "\"";
+  payload += ",\"unique_id\":\"" + prefix + "_sensor_" + sensorId + "\"";
   payload += ",\"state_topic\":\"" + stateTopic + "\"";
   payload += ",\"availability_topic\":\"" + availTopic + "\"";
   payload += ",\"payload_available\":\"online\"";
@@ -73,7 +90,7 @@ void publishNumberDiscovery(PubSubClient& client, const String& prefix,
 
   String payload = "{";
   payload += "\"name\":\"" + name + "\"";
-  payload += ",\"unique_id\":\"" + prefix + "_" + numberId + "\"";
+  payload += ",\"unique_id\":\"" + prefix + "_number_" + numberId + "\"";
   payload += ",\"state_topic\":\"" + stateTopic + "\"";
   payload += ",\"command_topic\":\"" + cmdTopic + "\"";
   payload += ",\"availability_topic\":\"" + availTopic + "\"";
@@ -105,6 +122,10 @@ MqttClient::MqttClient() {
 
 void MqttClient::initialize() {
   if (initialized_) return;
+
+  if (telemetryMutex == nullptr) {
+    telemetryMutex = xSemaphoreCreateMutex();
+  }
 
   settings_ = loadMqttSettings();
 
@@ -242,52 +263,89 @@ void MqttClient::publishAvailability(bool online) {
 void MqttClient::publishTelemetry(const HomeData& data, uint32_t pollIntervalMs,
                                    uint16_t powerLimitW, bool powerLimitKnown) {
   if (!initialized_ || !settings_.enabled) return;
+  if (telemetryMutex == nullptr) return;
 
   // Queue telemetry for publishing in the ethernet service task.
-  // This is thread-safe: single writer (inverter controller task),
-  // single reader (ethernet task via flushPendingTelemetry).
+  // Protected by a mutex because producer and consumer are on different cores.
+  if (xSemaphoreTake(telemetryMutex, pdMS_TO_TICKS(5)) != pdTRUE) {
+    if (debugMode) {
+      appLogger.log("[MQTT] telemetry mutex timeout while queuing");
+    }
+    return;
+  }
   pendingData_ = data;
   pendingPollIntervalMs_ = pollIntervalMs;
   pendingPowerLimitW_ = powerLimitW;
   pendingPowerLimitKnown_ = powerLimitKnown;
-  pendingTelemetry_ = true;  // volatile flag set last (acts as release fence)
+  pendingTelemetry_ = true;
+  xSemaphoreGive(telemetryMutex);
 }
 
 void MqttClient::flushPendingTelemetry() {
   if (!pendingTelemetry_ || !mqttPubSub.connected()) return;
 
+  if (telemetryMutex == nullptr) return;
+
+  HomeData snapshotData;
+  uint32_t snapshotPollMs = 0;
+  uint16_t snapshotPowerLimitW = 0;
+  bool snapshotPowerLimitKnown = false;
+
+  if (xSemaphoreTake(telemetryMutex, pdMS_TO_TICKS(5)) != pdTRUE) {
+    if (debugMode) {
+      appLogger.log("[MQTT] telemetry mutex timeout while flushing");
+    }
+    return;
+  }
+
+  if (!pendingTelemetry_) {
+    xSemaphoreGive(telemetryMutex);
+    return;
+  }
+
+  snapshotData = pendingData_;
+  snapshotPollMs = pendingPollIntervalMs_;
+  snapshotPowerLimitW = pendingPowerLimitW_;
+  snapshotPowerLimitKnown = pendingPowerLimitKnown_;
   pendingTelemetry_ = false;
+  xSemaphoreGive(telemetryMutex);
 
   String prefix = settings_.topicPrefix;
 
   // Power
-  if (pendingData_.hasPower) {
+  if (snapshotData.hasPower) {
     String topic = prefix + "/sensor/power/state";
-    mqttPubSub.publish(topic.c_str(), String(pendingData_.instantaneousPowerW, 1).c_str());
+    mqttPubSub.publish(topic.c_str(), String(snapshotData.instantaneousPowerW, 1).c_str());
   }
 
   // Total yield
-  if (pendingData_.hasLifetimeEnergy) {
+  if (snapshotData.hasLifetimeEnergy) {
     String topic = prefix + "/sensor/total_yield/state";
-    mqttPubSub.publish(topic.c_str(), String(pendingData_.lifetimeEnergyKwh, 3).c_str());
+    mqttPubSub.publish(topic.c_str(), String(snapshotData.lifetimeEnergyKwh, 3).c_str());
   }
 
   // Daily yield
-  if (pendingData_.hasDailySessionEnergy) {
+  if (snapshotData.hasDailySessionEnergy) {
     String topic = prefix + "/sensor/daily_yield/state";
-    mqttPubSub.publish(topic.c_str(), String(pendingData_.dailySessionEnergyKwh, 3).c_str());
+    mqttPubSub.publish(topic.c_str(), String(snapshotData.dailySessionEnergyKwh, 3).c_str());
   }
 
   // Poll interval (seconds)
   {
     String topic = prefix + "/sensor/poll_interval/state";
-    mqttPubSub.publish(topic.c_str(), String(pendingPollIntervalMs_ / 1000).c_str());
+    mqttPubSub.publish(topic.c_str(), String(snapshotPollMs / 1000).c_str());
+  }
+
+  // Poll interval number state (keeps HA number entity in sync)
+  {
+    String topic = prefix + "/number/poll_interval/state";
+    mqttPubSub.publish(topic.c_str(), String(snapshotPollMs / 1000).c_str());
   }
 
   // Power limit
-  if (pendingPowerLimitKnown_) {
+  if (snapshotPowerLimitKnown) {
     String topic = prefix + "/number/power_limit/state";
-    mqttPubSub.publish(topic.c_str(), String(pendingPowerLimitW_).c_str());
+    mqttPubSub.publish(topic.c_str(), String(snapshotPowerLimitW).c_str());
   }
 }
 
@@ -341,7 +399,11 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   // Power limit set
   if (topicStr == cmdTopicPower) {
-    int watts = value.toInt();
+    int watts = 0;
+    if (!parseStrictInt(value, watts)) {
+      appLogger.log("[MQTT] Power limit command invalid payload: " + value);
+      return;
+    }
     if (watts < 0 || watts > INVERTER_MAX_POWER_WATTS) {
       appLogger.log("[MQTT] Power limit command out of range: " + value);
       return;
@@ -367,7 +429,11 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   // Poll interval set
   if (topicStr == cmdTopicPoll) {
-    int seconds = value.toInt();
+    int seconds = 0;
+    if (!parseStrictInt(value, seconds)) {
+      appLogger.log("[MQTT] Poll interval command invalid payload: " + value);
+      return;
+    }
     if (seconds < 5) seconds = 5;
     if (seconds > 300) seconds = 300;
     uint32_t intervalMs = seconds * 1000;
