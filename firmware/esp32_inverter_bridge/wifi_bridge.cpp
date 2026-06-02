@@ -191,15 +191,11 @@ bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFall
         snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
                  bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
       }
-      logConnect(String("Reconnected path=") + pathName +
-                 " duration_ms=" + elapsedMs, true);
-      if (debugMode) {
-        logConnect(String("complete path=") + pathName +
-                   " duration_ms=" + elapsedMs +
-                   " result=success channel=" + ch +
-                   " bssid=" + bssidStr +
-                   " ip=" + WiFi.localIP().toString());
-      }
+      logConnect(String("complete path=") + pathName +
+                  " duration_ms=" + elapsedMs +
+                  " result=success channel=" + ch +
+                  " bssid=" + bssidStr +
+                  " ip=" + WiFi.localIP().toString());
       return true;
     }
     if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL || status == WL_CONNECTION_LOST) {
@@ -211,13 +207,10 @@ bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFall
 
   unsigned long elapsedMs = millis() - startMs;
   wl_status_t finalStatus = WiFi.status();
-  logConnect(String("Reconnect timeout path=") + pathName +
-             " duration_ms=" + elapsedMs, true);
-  if (debugMode) {
-    logConnect(String("complete path=") + pathName +
-               " duration_ms=" + elapsedMs +
-               " result=timeout final_status=" + wifiStatusToString(finalStatus));
-  }
+  logConnect(String("complete path=") + pathName +
+              " duration_ms=" + elapsedMs +
+              " result=timeout final_status=" + wifiStatusToString(finalStatus));
+
   powerDownWifiRadio();
   return false;
 }
