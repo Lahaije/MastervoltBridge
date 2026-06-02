@@ -15,11 +15,6 @@
 </header>
 <nav><a href="/">Home</a><a href="/config" class="active">Settings</a><a href="/api">API</a></nav>
 <main>
-  <section><h2>Quick Actions</h2>
-    <p><button id="bPulse">Pulse WiFi</button></p>
-    <p><button id="bReconnect">Force Reconnect</button></p>
-    <p class=msg id="mQuick"></p>
-  </section>
   <section><h2>Connection</h2>
     <div class="grid">
       <i>WiFi</i><b id="sWifi">-</b>
@@ -28,28 +23,42 @@
       <i>WiFi SSID</i><b id="sSsid">-</b>
     </div>
   </section>
+
+  <section><h2>MQTT Settings</h2>
+    <div class="grid">
+      <i>Status</i><b id="mqttStatus">-</b>
+      <i>Has password</i><b id="mqttHasPassword">-</b>
+    </div>
+    <p><label for="mqttIp">Broker IP</label><input id="mqttIp" class="w" type="text" placeholder="192.168.1.23"></p>
+    <p><label for="mqttPort">Broker Port</label><input id="mqttPort" class="n" type="number" min="1" max="65535"></p>
+    <p><label for="mqttPrefix">Topic Prefix</label><input id="mqttPrefix" class="w" type="text" maxlength="64"></p>
+    <p><label for="mqttUser">Username</label><input id="mqttUser" class="w" type="text"></p>
+    <p><label for="mqttPass">Password</label><input id="mqttPass" class="w" type="password" placeholder="leave blank to keep"></p>
+    <p><label for="mqttClearPass">Clear Password</label><input id="mqttClearPass" type="checkbox"></p>
+    <p><label for="mqttOn">Enabled</label><input id="mqttOn" type="checkbox"><button id="bMqtt">Apply MQTT</button></p>
+    <p class=msg id="mMqtt"></p>
+  </section>
+
   <section><h2>Shadow Function</h2>
     <p id="rowShadowUnknown"><label>Status</label><span class="unk" id="curShadow">unknown</span></p>
     <p id="rowShadowForm" hidden><label for="iShadow">Enabled</label><input type="checkbox" id="iShadow"><button id="bShadow">Apply</button></p>
     <p class=msg id="mShadow"></p>
   </section>
-  <section><h2>MQTT</h2>
-    <div class="grid">
-      <i>Broker</i><b id="mqttBroker">-</b>
-      <i>Enabled</i><b id="mqttEnabled">-</b>
-      <i>Topic prefix</i><b id="mqttTopic">-</b>
-      <i>Status</i><b id="mqttStatus">-</b>
-    </div>
-  </section>
+
   <section><h2>Debug Mode</h2>
     <p><label for="iDebug">Verbose logging</label><input type="checkbox" id="iDebug"><button id="bDebug">Apply</button></p>
     <p class=msg id="mDebug"></p>
+  </section>
+
+  <section><h2>Quick Actions</h2>
+    <p><button id="bPulse">Pulse WiFi</button></p>
+    <p><button id="bReconnect">Force Reconnect</button></p>
+    <p class=msg id="mQuick"></p>
   </section>
 </main>
 <footer></footer>
 <script src="/web_ui.js"></script>
 <script>
-// Config page specific JS
 async function refreshAll(){
   try{var h=await apiGet('/api/health');
     $("sWifi").innerHTML=h.wifi_connected?pill('connected','ok'):pill('disconnected','bad');
@@ -65,19 +74,53 @@ async function refreshAll(){
     syncShadowDisplay(i);
   }catch(e){syncShadowDisplay({});}
   try{var m=await apiGet('/api/mqtt');
-    $("mqttBroker").textContent=m.broker_ip+':'+m.broker_port;
-    $("mqttEnabled").innerHTML=m.enabled?pill('yes','ok'):pill('no','warn');
-    $("mqttTopic").textContent=m.topic_prefix||'-';
     $("mqttStatus").innerHTML=m.connected?pill('connected','ok'):pill('disconnected','bad');
-  }catch(e){}}
+    $("mqttHasPassword").innerHTML=m.has_password?pill('yes','ok'):pill('no','warn');
+    if(!isElementFocused('mqttIp'))$("mqttIp").value=m.broker_ip||'';
+    if(!isElementFocused('mqttPort'))$("mqttPort").value=String(m.broker_port||1883);
+    if(!isElementFocused('mqttPrefix'))$("mqttPrefix").value=m.topic_prefix||'';
+    if(!isElementFocused('mqttUser'))$("mqttUser").value=m.username||'';
+    if(!isElementFocused('mqttOn'))$("mqttOn").checked=!!m.enabled;
+    if(!isElementFocused('mqttPass'))$("mqttPass").value='';
+    if(!isElementFocused('mqttClearPass'))$("mqttClearPass").checked=false;
+  }catch(e){}
+}
+
 $("bPulse").onclick=async()=>{
-  try{var r=await apiGet('/pulse');flash($("mQuick"),true,'Pulse sent');refreshAll();}catch(e){flash($("mQuick"),false,e.message);}};
+  try{await apiGet('/pulse');flash($("mQuick"),true,'Pulse sent');refreshAll();}catch(e){flash($("mQuick"),false,e.message);}
+};
 $("bReconnect").onclick=async()=>{
-  try{var r=await apiGet('/pulse');flash($("mQuick"),true,r.reconnected?'Reconnected':'Pulse sent (no connection)');refreshAll();}catch(e){flash($("mQuick"),false,e.message);}};
+  try{var r=await apiGet('/pulse');flash($("mQuick"),true,r.reconnected?'Reconnected':'Pulse sent (no connection)');refreshAll();}catch(e){flash($("mQuick"),false,e.message);}
+};
 $("bShadow").onclick=async()=>{var v=$("iShadow").checked;
-  try{var r=await apiPost('/api/shadow',{enabled:v});flash($("mShadow"),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refreshAll();}catch(e){flash($("mShadow"),false,e.message);}};
+  try{var r=await apiPost('/api/shadow',{enabled:v});flash($("mShadow"),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refreshAll();}catch(e){flash($("mShadow"),false,e.message);}
+};
 $("bDebug").onclick=async()=>{var v=$("iDebug").checked;
-  try{await apiPost('/api/debug',{debug:v});flash($("mDebug"),true,'Debug '+(v?'on':'off'));}catch(e){flash($("mDebug"),false,e.message);}};
+  try{await apiPost('/api/debug',{debug:v});flash($("mDebug"),true,'Debug '+(v?'on':'off'));}catch(e){flash($("mDebug"),false,e.message);}
+};
+$("bMqtt").onclick=async()=>{
+  var body={
+    broker_ip:$("mqttIp").value.trim(),
+    broker_port:Number($("mqttPort").value||1883),
+    topic_prefix:$("mqttPrefix").value.trim(),
+    username:$("mqttUser").value,
+    enabled:$("mqttOn").checked
+  };
+  var pass=$("mqttPass").value;
+  if(pass.length>0){
+    body.password=pass;
+  }else if($("mqttClearPass").checked){
+    body.password='';
+  }
+  try{
+    var r=await apiPost('/api/mqtt',body);
+    flash($("mMqtt"),true,'MQTT settings saved'+(r.connected?' (connected)':' (reconnecting)'));
+    refreshAll();
+  }catch(e){
+    flash($("mMqtt"),false,e.message);
+  }
+};
+
 refreshAll();setInterval(refreshAll,30000);
 </script>
 </body>

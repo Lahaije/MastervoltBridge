@@ -67,15 +67,16 @@ Returns the settings and quick-action page.
 
 UI controls:
 
-- Pulse WiFi button → GET /pulse
-- Force Reconnect button → GET /pulse
+- MQTT settings: broker IP, broker port, topic prefix, username, enabled toggle, optional password update/clear → POST /api/mqtt
 - Shadow function: checkbox + Apply → POST /api/shadow
 - Debug mode: checkbox + Apply → POST /api/debug
+- Pulse WiFi button → GET /pulse
+- Force Reconnect button → GET /pulse
 
 Read-only info:
 
 - Connection: WiFi status, Ethernet IP, inverter host, WiFi SSID (from `/api/health` + `/api/device`)
-- MQTT: broker address, enabled, topic prefix, connection status (from `/api/mqtt`)
+- MQTT: connection status + password presence indicator (from `/api/mqtt`)
 
 Refresh interval: 30 seconds.
 
@@ -329,6 +330,8 @@ Response fields:
 | `broker_port` | number | MQTT broker port |
 | `enabled` | boolean | Whether MQTT publishing is enabled |
 | `topic_prefix` | string | Base topic prefix for all MQTT messages |
+| `username` | string | MQTT username |
+| `has_password` | boolean | Whether a password is currently stored in NVS |
 | `connected` | boolean | Whether currently connected to the broker |
 
 > Telemetry queueing and thread-safety design: see `MqttClient` in `AGENTS.md`.
@@ -340,7 +343,7 @@ Settings are saved to NVS (flash) and persist across reboots.
 
 Body (all fields optional):
 
-{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge"}
+{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge","username":"mv-bridge","password":"secret"}
 
 Validation:
 
@@ -349,11 +352,38 @@ Validation:
 - `enabled` must be a boolean
 - `topic_prefix` max 64 characters
 
+Notes:
+
+- Omit `password` to keep the currently stored password unchanged.
+- Send `"password":""` to clear the stored password.
+- `username` can be set to an empty string to disable authenticated connect.
+
 Response (same format as GET /api/mqtt):
 
-{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge","connected":false}
+{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge","username":"mv-bridge","has_password":true,"connected":false}
 
 After saving, the MQTT client immediately reconnects with the new settings.
+
+## Home Assistant MQTT Discovery
+
+The bridge is designed for MQTT-first Home Assistant integration. When MQTT is connected, the firmware publishes retained discovery messages under `homeassistant/.../config` and telemetry/command topics under the configured `topic_prefix`.
+
+With default prefix `mastervolt_bridge`, the key entities are:
+
+- Sensor: `power` (`mastervolt_bridge/sensor/power/state`)
+- Sensor: `total_yield` (`mastervolt_bridge/sensor/total_yield/state`)
+- Sensor: `daily_yield` (`mastervolt_bridge/sensor/daily_yield/state`)
+- Sensor: `poll_interval` (`mastervolt_bridge/sensor/poll_interval/state`)
+- Number: `power_limit` state `mastervolt_bridge/number/power_limit/state`, command `mastervolt_bridge/number/power_limit/set`
+- Number: `poll_interval` state `mastervolt_bridge/number/poll_interval/state`, command `mastervolt_bridge/number/poll_interval/set`
+- Availability: `mastervolt_bridge/status` (`online`/`offline`)
+
+Control ranges:
+
+- `power_limit`: 0 to 1575 W
+- `poll_interval`: 5 to 300 s
+
+If entities do not appear in Home Assistant after firmware updates, reload the MQTT integration and ensure the broker has retained discovery topics for the active `topic_prefix`.
 
 Still expected to respond:
 

@@ -59,9 +59,11 @@ This creates `.venv/` with all required dependencies (`requests`, etc.).
 ---
 
 
-## Important Architecture Note: Thread-Safety and Network I/O
+## Important Architecture Note: Thread-Safety, Network I/O, and Home Assistant
 
 All network I/O (Ethernet, MQTT) is performed exclusively in the `ethernet_bridge` FreeRTOS task. No other task may call UIPEthernet or PubSubClient methods directly. This is required for thread safety due to UIPEthernet's single-threaded design. Telemetry is queued for MQTT delivery and only the latest value is retained if the network is unavailable. The ethernet task stack size is set to 8192 bytes to accommodate MQTT and Ethernet operations.
+
+Home Assistant integration is MQTT-first: the bridge publishes HA discovery entities plus state/command topics. The REST API remains available for diagnostics, local UI, and fallback control.
 
 ---
 

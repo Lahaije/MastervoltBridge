@@ -11,12 +11,13 @@ Running on an **ESP32-S3** with an **ENC28J60** Ethernet module, it connects to 
 
 - **WiFi → Ethernet bridge** for inverters with a local WiFi AP only
 - **REST API on port 8080** served over DHCP-assigned Ethernet IP
+- **MQTT + Home Assistant discovery integration** for telemetry and remote control
 - **20-second live telemetry polling** with cached data for instant API responses
 - **Installer menu access** — read and control inverter settings not normally exposed
 - **Power output control** — limit or stop production in real time via `POST /api/power` (0–1575 W)
 - **GPIO wake-pulse** to keep the inverter WiFi radio alive between polls
 - **Circular log buffer** (1000 entries) with millisecond timestamps
-- **Home Assistant compatible** — poll `/api/info` for power, yield, and status
+- **Home Assistant compatible** — MQTT discovery sensors + number controls (power limit and poll interval)
 - **A/B WiFi reconnect strategies** (dwell vs auto) with structured logging for passive performance analysis
 - **Built-in analysis tooling** — CLI scripts to analyze logs, plot power output, and validate the API
 
