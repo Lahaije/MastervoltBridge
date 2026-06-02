@@ -20,17 +20,21 @@ Validation guide for the ESP32 inverter bridge firmware.
 | GET /api/logs | JSON object with `total_entries` and `entries` array |
 | GET /api/info | Always 200; JSON with keys: `power`, `failure_streak_s`, `poll_interval_ms`, `power_limit_watts`, `shadow_enabled`, `total_yield`, `daily_yield` |
 | POST /api/interval | Temporarily overrides current poll interval with JSON body `{"interval":...}` |
+| GET /api/mqtt | JSON with keys: `broker_ip`, `broker_port`, `enabled`, `topic_prefix`, `connected` |
+| GET /config | HTML settings page with Pulse WiFi and Force Reconnect controls |
 
 ## Web UI Delivery Validation
 
 Validate the following:
 
-- GET / returns `Content-Type: text/html`.
-- GET / returns one full page payload with inline CSS + JS.
+- GET / returns `Content-Type: text/html` (main dashboard).
+- GET /config returns `Content-Type: text/html` (settings page).
+- GET /web_ui.css returns `Content-Type: text/css`.
+- GET /web_ui.js returns `Content-Type: application/javascript`.
 - GET /api returns discovery JSON for machine clients.
 - Repeated GET / calls do not show heap-fragmentation drift.
-- Response is written in bounded chunks and aborts safely if client disconnects.
-- Content-Length equals compile-time blob size (`sizeof(WEB_UI_HTML) - 1`).
+- Each asset response is written in bounded chunks and aborts safely if client disconnects.
+- Content-Length for each asset matches the compile-time size from `web_ui/web_ui.h`.
 
 ## Inverter-Dependent Endpoints
 
@@ -54,6 +58,10 @@ curl http://192.168.1.48:8080/api/logs
 curl -X POST http://192.168.1.48:8080/wifi/off
 curl http://192.168.1.48:8080/pulse
 curl -X POST -H "Content-Type: application/json" -d '{"interval":20000}' http://192.168.1.48:8080/api/interval
+curl http://192.168.1.48:8080/api/mqtt
+curl http://192.168.1.48:8080/config
+curl http://192.168.1.48:8080/web_ui.css
+curl http://192.168.1.48:8080/web_ui.js
 ```
 
 ## Troubleshooting

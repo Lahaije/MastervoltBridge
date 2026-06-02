@@ -47,7 +47,7 @@ const uint32_t DATA_MUTEX_TIMEOUT_MS = 10;
 // =============================================================================
 // FreeRTOS Task Configuration
 // =============================================================================
-const uint16_t POLLING_TASK_STACK_SIZE = 6144;
+const uint16_t POLLING_TASK_STACK_SIZE  = 6144;
 const uint16_t ETHERNET_TASK_STACK_SIZE = 8192;
 
 // =============================================================================
@@ -89,4 +89,4 @@ bool debugMode = true;
 // Firmware Version
 // =============================================================================
 // Format: <semver>-<YYYYMMDD>-<commit_short_hash>
-const char* FIRMWARE_VERSION = "0.1.0-20260602-7b22b2a";
+const char* FIRMWARE_VERSION = "0.1.0-20260602-71ae85b";

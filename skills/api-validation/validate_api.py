@@ -44,6 +44,8 @@ DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/pulse"),
     ("POST", "/api/debug"),
     ("POST", "/api/interval"),
+    ("GET",  "/api/mqtt"),
+    ("POST", "/api/mqtt"),
 ]
 
 # For GET endpoints: required top-level JSON keys expected in 200 responses.
@@ -93,6 +95,18 @@ GET_CHECKS: list[dict[str, Any]] = [
         "path": "/pulse",
         "description": "GPIO wake pulse + forced reconnect",
         "required_keys": ["reconnected"],
+        "allow_502": False,
+        "kind": "json",
+    },
+    {
+        "path": "/config",
+        "description": "Settings / quick-action page",
+        "kind": "html",
+    },
+    {
+        "path": "/api/mqtt",
+        "description": "MQTT settings and connection status",
+        "required_keys": ["broker_ip", "broker_port", "enabled", "topic_prefix", "connected"],
         "allow_502": False,
         "kind": "json",
     },

@@ -13,11 +13,11 @@
     <div id="fwVersion">-</div>
   </div>
 </header>
+<nav><a href="/">Home</a><a href="/config" class="active">Settings</a><a href="/api">API</a></nav>
 <main>
   <section><h2>Quick Actions</h2>
     <p><button id="bPulse">Pulse WiFi</button></p>
     <p><button id="bReconnect">Force Reconnect</button></p>
-    <p><label for="iShadow">Shadow Function</label><input type="checkbox" id="iShadow"><button id="bShadow">Apply</button></p>
     <p class=msg id="mQuick"></p>
   </section>
   <section><h2>Connection Status</h2>
@@ -27,7 +27,7 @@
     </div>
   </section>
 </main>
-<footer><a href="/" style="color:var(--accent)">Home</a></footer>
+<footer></footer>
 <script src="/web_ui.js"></script>
 <script>
 // Config page specific JS
@@ -42,9 +42,7 @@ async function refreshConn(){
 $("bPulse").onclick=async()=>{
   try{await apiPost('/pulse',{});flash($("mQuick"),true,'Pulse sent');refreshConn();}catch(e){flash($("mQuick"),false,e.message);}};
 $("bReconnect").onclick=async()=>{
-  try{await apiPost('/wifi/reconnect',{});flash($("mQuick"),true,'Reconnect sent');refreshConn();}catch(e){flash($("mQuick"),false,e.message);}};
-$("bShadow").onclick=async()=>{var v=$("iShadow").checked;
-  try{var r=await apiPost('/api/shadow',{enabled:v});flash($("mQuick"),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refreshConn();}catch(e){flash($("mQuick"),false,e.message);}};
+  try{var r=await apiGet('/pulse');flash($("mQuick"),true,r.reconnected?'Reconnected':'Pulse sent (no connection)');refreshConn();}catch(e){flash($("mQuick"),false,e.message);}};
 refreshConn();setInterval(refreshConn,10000);
 </script>
 </body>

@@ -12,7 +12,8 @@ http://192.168.1.48:8080
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | / | Web UI dashboard (self-contained HTML) |
+| GET | / | Web UI main dashboard page |
+| GET | /config | Settings and quick-action page |
 | GET | /api | API discovery JSON |
 | GET | /api/device | Stable identity: firmware version, model, MACs, IPs |
 | GET | /api/health | Bridge diagnostics: link state, operating status, WiFi, debug mode |
@@ -30,30 +31,41 @@ http://192.168.1.48:8080
 
 ## GET /
 
-Returns a self-contained HTML dashboard page (`web_ui.h` PROGMEM blob).
+Returns the main HTML dashboard page.
 
 Implementation details:
 
-- HTML stored as a single compile-time constant (`WEB_UI_HTML[]` in PROGMEM).
-- Served in 512-byte chunks via `sendFlashHtmlResponse()` with `client.connected()` checks.
-- Content-Length derived from `sizeof(WEB_UI_HTML) - 1` (compile-time).
-- CSS and JS inline — single request, no external assets.
+- HTML, CSS, and JavaScript are separate PROGMEM assets defined in `web_ui/web_ui.h`.
+  Built from source in `firmware/esp32_inverter_bridge/web_ui/` by `scripts/build_web_ui.py`.
+- Each asset served in 512-byte chunks via `sendFlashHtmlResponse()` with `client.connected()` checks.
+- Content-Length set per-asset at compile time from sizes in `web_ui.h`.
+- Main page references `/web_ui.css` and `/web_ui.js` as separate requests.
 
 UI refresh strategy:
 
 - `/api/device` fetched once on page load (stable identity).
 - `/api/health` refreshed every 60 seconds (diagnostics).
 - `/api/info` refreshed every 5 seconds (real-time telemetry).
-- `/api/mqtt` refreshed every 30 seconds (MQTT status).
 
 UI controls:
 
 - Power limit: input + Apply → POST /api/power
 - Shadow function: checkbox + Apply → POST /api/shadow
-- Debug mode: checkbox + Apply → POST /api/debug
-- MQTT settings: inputs + Save MQTT → POST /api/mqtt
-- Wake Pulse button → GET /pulse
-- WiFi Off button → POST /wifi/off
+- Polling interval: input + Apply → POST /api/interval
+
+Static assets referenced by this page:
+
+- `/web_ui.css` — shared stylesheet
+- `/web_ui.js` — shared JavaScript
+
+## GET /config
+
+Returns the settings and quick-action page.
+
+UI controls:
+
+- Pulse WiFi button → GET /pulse
+- Force Reconnect button → GET /pulse
 
 ## GET /api
 
