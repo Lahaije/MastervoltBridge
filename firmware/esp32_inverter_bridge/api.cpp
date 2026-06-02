@@ -23,7 +23,7 @@ const ApiEndpointInfo API_ENDPOINTS[API_ENDPOINT_COUNT] = {
   {"POST", "/wifi/off", "If bridge WiFi is connected, send a single button press to turn inverter WiFi off"},
   {"GET", "/pulse", "Trigger WiFi module recovery: GPIO pulse sequence to wake inverter WiFi"},
   {"POST", "/api/debug", "Enable or disable debug mode: {\"debug\":true} logs HTTP 200 successes; {\"debug\":false} suppresses them"},
-  {"POST", "/api/interval", "Temporarily override current poll interval in ms: {\"interval\":20000} (range 100-300000)"},
+  {"POST", "/api/interval", "Override current poll interval in ms: {\"interval\":20000} (range 100-300000)"},
   {"GET", "/api/mqtt", "Get current MQTT settings and connection status"},
   {"POST", "/api/mqtt", "Update MQTT settings: {\"broker_ip\":\"...\",\"broker_port\":1883,\"enabled\":true,\"topic_prefix\":\"...\"}"}
 };
@@ -110,13 +110,12 @@ void handlePostInterval(EthernetClient& client, const String& body) {
 }
 
 void handleGetInfo(EthernetClient& client) {
-  // Return cached telemetry; yield fields are null until first successful parse.
+  // Return cached telemetry; yield fields stay null until the first successful poll.
   HomeData inverterData = getInverterData();
   sendHttpResponse(client, 200, "application/json", buildInfoJson(inverterData));
 }
 
 void handlePostPower(EthernetClient& client, const String& body) {
-  // Extract power value from JSON body
   String rawPower = getJsonValueByKey(body, "power");
   if (rawPower.length() == 0) {
     sendHttpResponse(client, 400, "application/json", buildErrorJson("body must contain power value"));

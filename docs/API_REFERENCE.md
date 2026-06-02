@@ -95,7 +95,7 @@ Response fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `firmware_version` | string | Firmware version in `<semver>-<YYYYMMDD>-<commit>` format |
+| `firmware_version` | string | Current firmware version string (for example, `1.0.0`) |
 | `inverter_model` | string | e.g. "H500A0103"; empty before first successful poll |
 | `inverter_mac_address` | string | Inverter WiFi MAC; empty before first successful poll |
 | `wifi_ssid` | string | Target inverter WiFi SSID |

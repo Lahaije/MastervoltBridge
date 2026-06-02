@@ -301,7 +301,7 @@ void InverterController::setPollIntervalMs(uint32_t ms) {
   if (ms < 100) ms = 100;
   if (ms > 300000) ms = 300000;
   currentRetryIntervalMs = ms;
-  appLogger.log(String("[INVERTER-CONTROLLER] Temporary poll interval override set to ") + ms + "ms");
+  appLogger.log(String("[INVERTER-CONTROLLER] Poll interval override set to ") + ms + "ms");
 }
 
 void InverterController::updatePollFrequency(InverterLinkState /*from*/,

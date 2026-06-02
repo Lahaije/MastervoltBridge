@@ -73,3 +73,18 @@ curl http://192.168.1.48:8080/web_ui.js
 | /pulse returns `reconnected: false` at night | Inverter WiFi unavailable | Rerun daytime |
 | /api/info fields are empty after boot | First poll not yet complete | Wait 20-30 s and retry |
 | Connection timeouts in logs | Inverter WiFi module asleep | Bridge will auto-pulse on next attempt |
+
+## Log Analysis
+
+Use the log-analysis scripts to compare dwell and auto reconnect performance over long runs:
+
+```powershell
+# One-pass: session summary + connection analysis + power plot
+.venv\Scripts\python skills/log-analysis/analyze_and_plot.py
+
+# Analysis only
+.venv\Scripts\python skills/log-analysis/analyze_bridge_logs.py
+
+# Power chart only (saved to output/powerplot.png)
+.venv\Scripts\python skills/log-analysis/plot_power.py
+```

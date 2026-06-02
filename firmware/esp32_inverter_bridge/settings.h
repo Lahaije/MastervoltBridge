@@ -14,8 +14,6 @@ extern const char* INVERTER_WIFI_PASSWORD;
 extern const char* INVERTER_HOST;
 
 // Optional AP hint to speed up WiFi association.
-// When enabled, the bridge attempts directed association to known channels+BSSID
-// (rotating through the list) before falling back to normal SSID scanning behavior.
 extern const bool INVERTER_WIFI_AP_HINT_ENABLED;
 extern const uint8_t INVERTER_WIFI_AP_HINT_CHANNELS[];
 extern const uint8_t INVERTER_WIFI_AP_HINT_CHANNEL_COUNT;
@@ -42,16 +40,16 @@ extern const bool     AUTO_USE_HINT_FALLBACK;      // Use AP hint fallback in au
 // =============================================================================
 // Polling & Link-State FSM
 // =============================================================================
-extern const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS;    // Default poll interval after boot and degraded-state recovery
-extern const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS;     // HTTP request timeout per inverter call
+extern const uint32_t WIFI_BRIDGE_POLL_INTERVAL_MS;    // Default poll interval.
+extern const uint16_t WIFI_BRIDGE_HTTP_TIMEOUT_MS;     // HTTP timeout per inverter call.
 
-// Failure-streak thresholds that trigger FSM state transitions
-extern const uint32_t LINK_RETRYING_TO_BACKOFF_MS;     // Streak duration to enter BACKOFF (5 min)
-extern const uint32_t LINK_BACKOFF_TO_DORMANT_MS;      // Streak duration to enter DORMANT (20 min)
+// Failure streak thresholds.
+extern const uint32_t LINK_RETRYING_TO_BACKOFF_MS;     // Enter BACKOFF.
+extern const uint32_t LINK_BACKOFF_TO_DORMANT_MS;      // Enter DORMANT.
 
-// Per-state polling intervals (override base when in BACKOFF/DORMANT)
-extern const uint32_t LINK_BACKOFF_INTERVAL_MS;        // Poll interval during BACKOFF (1 min)
-extern const uint32_t LINK_DORMANT_INTERVAL_MS;        // Poll interval during DORMANT (10 min)
+// Per-state polling intervals.
+extern const uint32_t LINK_BACKOFF_INTERVAL_MS;        // BACKOFF interval.
+extern const uint32_t LINK_DORMANT_INTERVAL_MS;        // DORMANT interval.
 
 // Mutex timeout for InverterController data access
 extern const uint32_t DATA_MUTEX_TIMEOUT_MS;
@@ -65,15 +63,13 @@ extern const uint16_t ETHERNET_TASK_STACK_SIZE;
 // =============================================================================
 // Hardware Pins
 // =============================================================================
-// ENC28J60 SPI pin mapping
+// ENC28J60 SPI pin mapping.
 extern const uint8_t PIN_ETH_SCK;
 extern const uint8_t PIN_ETH_MISO;
 extern const uint8_t PIN_ETH_MOSI;
 extern const uint8_t PIN_ETH_CS;
 
-// Inverter WiFi wake pin: idles HIGH; driven LOW for each button-press pulse.
-// PULSE_HIGH_MS is the duration of the active-LOW pulse (i.e. how long the
-// pin is held LOW per press). PULSE_GAP_MS is the inter-press gap.
+// Inverter WiFi wake pin. Active LOW during each pulse.
 extern const uint8_t PIN_INVERTER_WIFI_WAKE;
 extern const uint16_t PULSE_HIGH_MS;
 extern const uint16_t PULSE_GAP_MS;
@@ -103,7 +99,7 @@ extern int lastInverterStatusCode;
 // When true, HTTP 200 inverter responses are written to the log buffer.
 extern bool debugMode;
 
-// Firmware version
+// Firmware version.
 extern const char* FIRMWARE_VERSION;
 
 #endif // SETTINGS_H

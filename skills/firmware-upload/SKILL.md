@@ -5,37 +5,24 @@ description: Compile and upload ESP32 inverter bridge firmware. Use when flashin
 
 <objective>
 Compile and upload the inverter bridge firmware to the ESP32-S3 over USB serial.
-
-Enforce release traceability by requiring firmware version strings that include semantic version, date, and git short commit hash before flashing. This guarantees that every flashed binary can be mapped back to an exact repository state.
-
 Use the upload helper script to detect the target device, compile, and flash while preserving the project's canonical Python invocation style.
 </objective>
 
 <quick_start>
-From the repository root, run this release-safe sequence:
+From the repository root, run the upload helper script:
 
 ```powershell
-git add -A
-git commit -m "Describe firmware change"
-$commit = (git rev-parse --short=7 HEAD).Trim()
-$date = Get-Date -Format "yyyyMMdd"
-# Update firmware/esp32_inverter_bridge/settings.cpp:
-# const char* FIRMWARE_VERSION = "0.1.0-$date-$commit";
 .venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py
 ```
-
-Expected version format: `<semver>-<YYYYMMDD>-<commit_short_hash>`.
 </quick_start>
 
 <process>
-1. Stage and commit firmware-related changes so the release has a stable source snapshot.
-2. Generate `date` and `commit` values and update `FIRMWARE_VERSION` in `firmware/esp32_inverter_bridge/settings.cpp`.
-3. Run `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py`.
-4. If needed, use script variants:
+1. Run `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py`.
+2. If needed, use script variants:
    - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-upload`
    - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --skip-compile`
    - `.venv\Scripts\python.exe skills/firmware-upload/upload_firmware.py --port COM5`
-5. Confirm upload completion and runtime visibility of the flashed version.
+3. Confirm upload completion and runtime visibility of the flashed version.
 </process>
 
 <context>
@@ -66,15 +53,15 @@ Expected version format: `<semver>-<YYYYMMDD>-<commit_short_hash>`.
 </troubleshooting>
 
 <validation>
-- `settings.cpp` contains `FIRMWARE_VERSION` in `<semver>-<YYYYMMDD>-<commit_short_hash>` format.
+- `settings.cpp` contains `FIRMWARE_VERSION` matching the current release label.
 - Upload output includes completion text and board reset.
 - `/api/info` returns `firmware_version` matching `settings.cpp`.
 - Web UI header shows the same flashed firmware version.
 </validation>
 
 <anti_patterns>
-- Flashing without committing code first.
-- Keeping `FIRMWARE_VERSION` as a static label (for example `0.1.0-alpha1`) after code changes.
+- Flashing without verifying the version string.
+- Leaving `FIRMWARE_VERSION` out of sync with the firmware release.
 - Using bare `python` instead of the canonical `.venv\Scripts\python.exe` invocation.
 </anti_patterns>
 
