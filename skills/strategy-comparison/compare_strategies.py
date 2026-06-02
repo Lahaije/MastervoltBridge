@@ -7,7 +7,7 @@ comparison of the two alternating connect strategies.
 
 Usage (from repo root):
     .venv/Scripts/python skills/strategy-comparison/compare_strategies.py
-    .venv/Scripts/python skills/strategy-comparison/compare_strategies.py --base-url http://192.168.1.48:8080
+    .venv/Scripts/python skills/strategy-comparison/compare_strategies.py --base-url http://<bridge-ip>:8080
     .venv/Scripts/python skills/strategy-comparison/compare_strategies.py --save-json results/comparison.json
     .venv/Scripts/python skills/strategy-comparison/compare_strategies.py --min-samples 20
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
@@ -331,16 +332,22 @@ def build_json_result(dwell: PathStats, auto: PathStats) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare dwell vs auto WiFi connect strategies")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080")
+    parser.add_argument("--base-url", default=None,
+                        help="Bridge base URL (for example: http://<bridge-ip>:8080)")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--save-json", default=None, help="Save comparison result to JSON file")
     parser.add_argument("--min-samples", type=int, default=DEFAULT_MIN_SAMPLES,
                         help=f"Minimum attempts per path for a reliable verdict (default {DEFAULT_MIN_SAMPLES})")
     args = parser.parse_args()
 
-    print(f"Fetching logs from {args.base_url} ...")
+    base_url = (args.base_url or os.environ.get("MASTERVOLT_BRIDGE_BASE_URL", "")).rstrip("/")
+    if not base_url:
+        print("ERROR: missing bridge URL. Provide --base-url or set MASTERVOLT_BRIDGE_BASE_URL.")
+        return 2
+
+    print(f"Fetching logs from {base_url} ...")
     try:
-        entries = fetch_logs(args.base_url, args.timeout)
+        entries = fetch_logs(base_url, args.timeout)
     except Exception as ex:
         print(f"ERROR: could not fetch logs: {ex}")
         return 1

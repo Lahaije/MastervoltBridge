@@ -39,6 +39,12 @@ bool parseStrictInt(const String& raw, int& out) {
   return true;
 }
 
+void logMqttInfo(const String& message) {
+  if (debugMode) {
+    appLogger.log(String("[MQTT] ") + message);
+  }
+}
+
 // Publish a single HA discovery config message (retained).
 void publishSensorDiscovery(PubSubClient& client, const String& prefix,
                             const String& sensorId, const String& name,
@@ -155,7 +161,7 @@ void MqttClient::initialize() {
   settings_ = loadMqttSettings();
 
   if (!settings_.enabled) {
-    appLogger.log("[MQTT] Disabled in settings");
+    logMqttInfo("Disabled in settings");
     initialized_ = true;
     return;
   }
@@ -177,7 +183,7 @@ void MqttClient::initialize() {
   mqttPubSub.setSocketTimeout(1);  // 1 second max for MQTT protocol operations
 
   initialized_ = true;
-  appLogger.log("[MQTT] Initialized. Broker: " + settings_.brokerIp + ":" + String(settings_.brokerPort));
+  logMqttInfo("Initialized. Broker: " + settings_.brokerIp + ":" + String(settings_.brokerPort));
 }
 
 void MqttClient::loop() {
@@ -214,7 +220,7 @@ void MqttClient::connect() {
   String clientId = "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
   String willTopic = settings_.topicPrefix + "/status";
 
-  appLogger.log("[MQTT] Connecting to " + settings_.brokerIp + ":" + String(settings_.brokerPort) + "...");
+  logMqttInfo("Connecting to " + settings_.brokerIp + ":" + String(settings_.brokerPort) + "...");
 
   bool connected;
   if (settings_.username.length() > 0) {
@@ -238,17 +244,17 @@ void MqttClient::connect() {
   }
 
   if (connected) {
-    appLogger.log("[MQTT] Connected");
+    logMqttInfo("Connected");
     publishAvailability(true);
     publishDiscovery();
 
     // Subscribe to command topics
     String cmdTopicPower = settings_.topicPrefix + "/number/power_limit/set";
     mqttPubSub.subscribe(cmdTopicPower.c_str());
-    appLogger.log("[MQTT] Subscribed to " + cmdTopicPower);
+    logMqttInfo("Subscribed to " + cmdTopicPower);
     String cmdTopicPoll = settings_.topicPrefix + "/number/poll_interval/set";
     mqttPubSub.subscribe(cmdTopicPoll.c_str());
-    appLogger.log("[MQTT] Subscribed to " + cmdTopicPoll);
+    logMqttInfo("Subscribed to " + cmdTopicPoll);
   } else {
     appLogger.log("[MQTT] Connection failed, rc=" + String(mqttPubSub.state()));
   }
@@ -276,7 +282,7 @@ void MqttClient::publishDiscovery() {
   // Range: 1s to 300s, step 1s
   publishNumberDiscovery(mqttPubSub, prefix, "poll_interval", "Poll Interval", "s", 1, 300, 1, "poll_interval_s");
 
-  appLogger.log("[MQTT] Discovery published");
+  logMqttInfo("Discovery published");
 }
 
 void MqttClient::publishAvailability(bool online) {
@@ -349,7 +355,7 @@ void MqttClient::applySettings(const MqttSettings& settings) {
   lastConnectAttemptMs_ = 0;
 
   if (!settings_.enabled) {
-    appLogger.log("[MQTT] Disabled");
+    logMqttInfo("Disabled");
     return;
   }
 
@@ -360,7 +366,7 @@ void MqttClient::applySettings(const MqttSettings& settings) {
   }
 
   mqttPubSub.setServer(brokerIp, settings_.brokerPort);
-  appLogger.log("[MQTT] Settings updated. Broker: " + settings_.brokerIp + ":" + String(settings_.brokerPort));
+  logMqttInfo("Settings updated. Broker: " + settings_.brokerIp + ":" + String(settings_.brokerPort));
 }
 
 bool MqttClient::isConnected() {
@@ -394,14 +400,14 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
       appLogger.log("[MQTT] Power limit command out of range: " + value);
       return;
     }
-    appLogger.log("[MQTT] Power limit command received: " + String(watts) + "W");
+    logMqttInfo("Power limit command received: " + String(watts) + "W");
     String responseBody;
     String errorMsg;
     int httpCode = 0;
     InverterController::SetResult result = InverterController::getInstance().setPower(
         watts, responseBody, httpCode, errorMsg);
     if (result == InverterController::SetResult::Applied) {
-      appLogger.log("[MQTT] Power limit applied: " + String(watts) + "W");
+      logMqttInfo("Power limit applied: " + String(watts) + "W");
       HomeData latestData;
       bool hasLatestData = InverterController::getInstance().getLatestHomeData(latestData);
       uint32_t pollIntervalMs = InverterController::getInstance().getRetryIntervalMs();
@@ -412,7 +418,7 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
                                pollIntervalMs,
                                powerLimitKnown, powerLimitW);
     } else if (result == InverterController::SetResult::Deferred) {
-      appLogger.log("[MQTT] Power limit deferred: " + String(watts) + "W");
+      logMqttInfo("Power limit deferred: " + String(watts) + "W");
     } else {
       appLogger.log("[MQTT] Power limit rejected: " + errorMsg);
     }
@@ -431,7 +437,7 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
       return;
     }
     uint32_t intervalMs = seconds * 1000;
-    appLogger.log("[MQTT] Poll interval command received: " + String(seconds) + "s");
+    logMqttInfo("Poll interval command received: " + String(seconds) + "s");
     InverterController::getInstance().setPollIntervalMs(intervalMs);
     HomeData latestData;
     bool hasLatestData = InverterController::getInstance().getLatestHomeData(latestData);

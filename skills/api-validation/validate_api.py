@@ -2,20 +2,21 @@
 """
 API Validation Script — ESP32 Inverter Bridge
 
-Calls every GET endpoint on the live bridge, validates that:
-  - HTTP status codes match documentation
-  - Response bodies contain the expected JSON keys
-    - The discovery endpoint (GET /api) lists all documented endpoints
+Calls every documented GET endpoint on the live bridge and checks that:
+    - HTTP status codes match the API reference
+    - Response bodies contain the expected JSON keys
+    - The discovery endpoint (GET /api) lists the documented endpoints
 
 Usage (from repo root):
     .venv/Scripts/python skills/api-validation/validate_api.py
-    .venv/Scripts/python skills/api-validation/validate_api.py --base-url http://192.168.1.48:8080
+    .venv/Scripts/python skills/api-validation/validate_api.py --base-url http://<bridge-ip>:8080
     .venv/Scripts/python skills/api-validation/validate_api.py --verbose
 
 Exit code: 0 = all checks passed, 1 = one or more checks failed.
 """
 
 import argparse
+import os
 import sys
 from typing import Any
 
@@ -32,6 +33,7 @@ except ImportError:
 # Every endpoint the documentation promises exists, with its HTTP method.
 DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET",  "/"),
+    ("GET",  "/config"),
     ("GET",  "/api"),
     ("GET",  "/api/device"),
     ("GET",  "/api/health"),
@@ -66,14 +68,31 @@ GET_CHECKS: list[dict[str, Any]] = [
     {
         "path": "/api/device",
         "description": "Device identity",
-        "required_keys": ["firmware_version", "inverter_model", "ethernet_ip", "wifi_ssid", "inverter_host"],
+        "required_keys": [
+            "firmware_version",
+            "inverter_model",
+            "inverter_mac_address",
+            "wifi_ssid",
+            "wifi_ip",
+            "ethernet_ip",
+            "inverter_host",
+        ],
         "allow_502": False,
         "kind": "json",
     },
     {
         "path": "/api/health",
         "description": "Bridge health",
-        "required_keys": ["wifi_connected", "inverter_link_state", "operating_status", "debug_mode"],
+        "required_keys": [
+            "operating_status",
+            "operating_mode",
+            "error_alarm_code",
+            "wifi_connected",
+            "inverter_link_state",
+            "last_update_ms",
+            "last_inverter_status",
+            "debug_mode",
+        ],
         "allow_502": False,
         "kind": "json",
     },
@@ -87,7 +106,15 @@ GET_CHECKS: list[dict[str, Any]] = [
     {
         "path": "/api/info",
         "description": "Inverter telemetry cache",
-        "required_keys": ["power", "total_yield", "daily_yield", "failure_streak_s", "poll_interval_ms"],
+        "required_keys": [
+            "power",
+            "failure_streak_s",
+            "poll_interval_ms",
+            "power_limit_watts",
+            "shadow_enabled",
+            "total_yield",
+            "daily_yield",
+        ],
         "allow_502": False,
         "kind": "json",
     },
@@ -100,7 +127,7 @@ GET_CHECKS: list[dict[str, Any]] = [
     },
     {
         "path": "/config",
-        "description": "Settings / quick-action page",
+        "description": "Settings page",
         "kind": "html",
     },
     {
@@ -210,7 +237,7 @@ def check_discovery(base_url: str, verbose: bool) -> tuple[bool, list[tuple[str,
     for method, path in live:
         documented = (method, path) in DOCUMENTED_ENDPOINTS
         ok = check(f"  Firmware {method} {path} present in documentation", documented,
-                   "" if documented else "NOT IN docs/API_REFERENCE.md — update documentation")
+                   "" if documented else "NOT IN docs/API_REFERENCE.md")
         all_ok = all_ok and ok
 
     return all_ok, live
@@ -300,7 +327,7 @@ def print_summary(results: dict[str, bool]) -> bool:
         print("  - If a firmware endpoint is missing from docs: update docs/API_REFERENCE.md")
         print("  - If a documented endpoint is missing from firmware: update api.cpp and re-upload")
         print("    (use: .venv\\Scripts\\python skills/firmware-upload/upload_firmware.py)")
-        print("  - If a response key is missing: check api_helper.cpp and update docs if firmware changed")
+        print("  - If a response key is missing: check api_helper.cpp and docs/API_REFERENCE.md")
     print()
     return all_passed
 
@@ -311,13 +338,16 @@ def print_summary(results: dict[str, bool]) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate ESP32 bridge API against documentation")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080",
-                        help="Base URL of the bridge (default: http://192.168.1.48:8080)")
+    parser.add_argument("--base-url", default=None,
+                        help="Base URL of the bridge (for example: http://<bridge-ip>:8080)")
     parser.add_argument("--verbose", action="store_true",
                         help="Print response keys and firmware endpoint list")
     args = parser.parse_args()
 
-    base_url = args.base_url.rstrip("/")
+    base_url = (args.base_url or os.environ.get("MASTERVOLT_BRIDGE_BASE_URL", "")).rstrip("/")
+    if not base_url:
+        print("Missing bridge URL. Provide --base-url or set MASTERVOLT_BRIDGE_BASE_URL.")
+        return 2
     print(f"ESP32 Bridge API Validation")
     print(f"Target: {base_url}")
     print(f"Documented endpoints: {len(DOCUMENTED_ENDPOINTS)}")

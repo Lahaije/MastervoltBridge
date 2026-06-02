@@ -1,6 +1,6 @@
 ---
 name: create-agent-skills
-description: Expert guidance for creating, writing, building, and refining Claude Code Skills. Use when working with SKILL.md files, authoring new skills, improving existing skills, or understanding skill structure and best practices.
+description: Expert guidance for creating, writing, building, and refining Copilot skills. Use when working with SKILL.md files, authoring new skills, improving existing skills, or understanding skill structure and best practices.
 ---
 
 <essential_principles>
@@ -11,14 +11,14 @@ Skills are modular, filesystem-based capabilities that provide domain expertise 
 <principle id="1">
 <title>Skills Are Prompts</title>
 <description>
-All prompting best practices apply. Be clear, be direct, use XML structure. Assume Claude is smart - only add context Claude doesn't have.
+All prompting best practices apply. Be clear, be direct, use XML structure. Assume Copilot is capable and only add context it does not already have.
 </description>
 </principle>
 
 <principle id="2">
 <title>SKILL.md Is Always Loaded</title>
 <description>
-When a skill is invoked, Claude reads SKILL.md. Use this guarantee:
+When a skill is invoked, Copilot reads SKILL.md. Use this guarantee:
 - Essential principles go in SKILL.md (can't be skipped)
 - Workflow-specific content goes in workflows/
 - Reusable knowledge goes in references/
@@ -41,10 +41,10 @@ skill-name/
 ```
 
 **When to use each folder:**
-- **workflows/** - Multi-step procedures Claude follows
-- **references/** - Domain knowledge Claude reads for context
-- **templates/** - Consistent output structures Claude copies and fills (plans, specs, configs)
-- **scripts/** - Executable code Claude runs as-is (deploy, setup, API calls)
+- **workflows/** - Multi-step procedures Copilot follows
+- **references/** - Domain knowledge Copilot reads for context
+- **templates/** - Consistent output structures Copilot copies and fills (plans, specs, configs)
+- **scripts/** - Executable code Copilot runs as-is (deploy, setup, API calls)
 </description>
 </principle>
 
@@ -145,11 +145,11 @@ references/:
   Domain knowledge, patterns, examples
 
 templates/:
-  Output structures Claude copies and fills
+  Output structures Copilot copies and fills
   (plans, specs, configs, documents)
 
 scripts/:
-  Executable code Claude runs as-is
+  Executable code Copilot runs as-is
   (deploy, setup, API calls, data processing)
 ```
 </complex_skill_template>

@@ -9,6 +9,7 @@ plot generation from plot_power.py.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -32,7 +33,7 @@ from plot_power import build_plot  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fast one-pass log analysis + power plot")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080", help="Bridge base URL")
+    parser.add_argument("--base-url", default=None, help="Bridge base URL (for example: http://<bridge-ip>:8080)")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds")
     parser.add_argument("--since-ms", type=int, default=None, help="Only include entries at/after timestamp_ms")
     parser.add_argument("--limit", type=int, default=None, help="Only include last N entries")
@@ -50,8 +51,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    base_url = (args.base_url or os.environ.get("MASTERVOLT_BRIDGE_BASE_URL", "")).rstrip("/")
+    if not base_url:
+        print("Missing bridge URL. Provide --base-url or set MASTERVOLT_BRIDGE_BASE_URL.")
+        return 2
+
     try:
-        payload = fetch_logs(args.base_url, args.timeout)
+        payload = fetch_logs(base_url, args.timeout)
     except Exception as ex:
         print(f"Failed to fetch logs: {ex}")
         return 1

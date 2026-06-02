@@ -76,7 +76,7 @@ Before flashing, review `firmware/esp32_inverter_bridge/settings.cpp` and confir
 | Setting | Default | Description |
 |---|---|---|
 | `INVERTER_WIFI_SSID` | `"mastervolt-soladin-0103"` | WiFi network broadcast by the inverter |
-| `INVERTER_HOST` | `"10.0.0.1"` | Inverter IP on its own WiFi network |
+| `INVERTER_HOST` | `"<inverter-host>"` | Inverter IP on its own WiFi network |
 | `PIN_INVERTER_WIFI_WAKE` | `36` | GPIO connected to inverter button |
 | `API_PORT` | `8080` | Ethernet API port |
 
@@ -117,13 +117,13 @@ For full options see [`skills/firmware-upload/SKILL.md`](../skills/firmware-uplo
 After flashing, with the Ethernet cable plugged in:
 
 ```powershell
-curl http://192.168.1.48:8080/api/health
+curl http://<bridge-ip>:8080/api/health
 ```
 
 Expected response:
 
 ```json
-{"wifi_connected": false, "ethernet_ip": "192.168.1.48", ...}
+{"wifi_connected": false, "ethernet_ip": "<bridge-ip>", ...}
 ```
 
 `wifi_connected` will be `false` until the bridge polls the inverter (~20 s after boot). Wait and call `/api/info` to confirm telemetry is flowing.

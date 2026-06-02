@@ -1,11 +1,10 @@
 ---
 name: firmware-upload
-description: Compile and upload ESP32 inverter bridge firmware. Use when flashing new firmware to the ESP32-S3 over USB serial. Detects whether the device is connected and reports clearly if not found.
+description: Compile and upload the ESP32 bridge firmware over USB serial. Use when flashing the ESP32-S3 or checking whether the board is visible on the expected port.
 ---
 
 <objective>
 Compile and upload the inverter bridge firmware to the ESP32-S3 over USB serial.
-Use the upload helper script to detect the target device, compile, and flash while preserving the project's canonical Python invocation style.
 </objective>
 
 <quick_start>

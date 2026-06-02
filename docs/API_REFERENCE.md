@@ -6,7 +6,7 @@ http://<bridge-ethernet-ip>:8080
 
 Example:
 
-http://192.168.1.48:8080
+http://<bridge-ip>:8080
 
 ## Endpoint Summary
 

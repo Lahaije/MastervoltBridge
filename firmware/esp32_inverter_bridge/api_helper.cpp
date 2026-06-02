@@ -292,6 +292,8 @@ void sendLogsResponse(EthernetClient& client) {
   if (!aborted) {
     append("]}", 2);
     flush();
+  } else {
+    appLogger.log("[ETH] Dropped /api/logs response: client disconnected during stream");
   }
 }
 
@@ -332,7 +334,10 @@ void sendFlashHtmlResponse(EthernetClient& client, const char* flashData, size_t
   char buf[CHUNK];
   size_t offset = 0;
   while (offset < len) {
-    if (!client.connected()) return;  // abort cleanly on disconnect
+    if (!client.connected()) {
+      appLogger.log("[ETH] Dropped HTML response: client disconnected during stream");
+      return;
+    }
     size_t remaining = len - offset;
     size_t n = (remaining < CHUNK) ? remaining : CHUNK;
     memcpy_P(buf, flashData + offset, n);

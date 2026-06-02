@@ -7,13 +7,14 @@ total yield, then prints a summary.
 
 Usage (from repository root):
     .venv\\Scripts\\python skills/log-analysis/fetch_yield.py
-    .venv\\Scripts\\python skills/log-analysis/fetch_yield.py --base-url http://192.168.1.48:8080
+    .venv\\Scripts\\python skills/log-analysis/fetch_yield.py --base-url http://<bridge-ip>:8080
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.request
 
@@ -76,10 +77,14 @@ def fetch_yield(base_url: str, timeout: float) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fetch inverter daily/lifetime yield")
-    parser.add_argument("--base-url", default="http://192.168.1.48:8080", help="Bridge base URL")
+    parser.add_argument("--base-url", default=None, help="Bridge base URL (for example: http://<bridge-ip>:8080)")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds")
     args = parser.parse_args()
-    return fetch_yield(args.base_url, args.timeout)
+    base_url = (args.base_url or os.environ.get("MASTERVOLT_BRIDGE_BASE_URL", "")).rstrip("/")
+    if not base_url:
+        print("Missing bridge URL. Provide --base-url or set MASTERVOLT_BRIDGE_BASE_URL.")
+        return 2
+    return fetch_yield(base_url, args.timeout)
 
 
 if __name__ == "__main__":

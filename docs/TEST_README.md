@@ -49,19 +49,19 @@ If inverter is off or unavailable (e.g. after sunset), 502 responses are expecte
 ## Endpoint Verification After Flash
 
 ```
-curl http://192.168.1.48:8080/
-curl http://192.168.1.48:8080/api
-curl http://192.168.1.48:8080/api/device
-curl http://192.168.1.48:8080/api/health
-curl http://192.168.1.48:8080/api/info
-curl http://192.168.1.48:8080/api/logs
-curl -X POST http://192.168.1.48:8080/wifi/off
-curl http://192.168.1.48:8080/pulse
-curl -X POST -H "Content-Type: application/json" -d '{"interval":20000}' http://192.168.1.48:8080/api/interval
-curl http://192.168.1.48:8080/api/mqtt
-curl http://192.168.1.48:8080/config
-curl http://192.168.1.48:8080/web_ui.css
-curl http://192.168.1.48:8080/web_ui.js
+curl http://<bridge-ip>:8080/
+curl http://<bridge-ip>:8080/api
+curl http://<bridge-ip>:8080/api/device
+curl http://<bridge-ip>:8080/api/health
+curl http://<bridge-ip>:8080/api/info
+curl http://<bridge-ip>:8080/api/logs
+curl -X POST http://<bridge-ip>:8080/wifi/off
+curl http://<bridge-ip>:8080/pulse
+curl -X POST -H "Content-Type: application/json" -d '{"interval":20000}' http://<bridge-ip>:8080/api/interval
+curl http://<bridge-ip>:8080/api/mqtt
+curl http://<bridge-ip>:8080/config
+curl http://<bridge-ip>:8080/web_ui.css
+curl http://<bridge-ip>:8080/web_ui.js
 ```
 
 ## Troubleshooting

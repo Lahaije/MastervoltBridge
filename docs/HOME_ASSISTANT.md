@@ -9,7 +9,7 @@ The Mastervolt Bridge publishes inverter telemetry to Home Assistant via MQTT au
 
 ## Bridge Configuration
 
-Configure the MQTT broker address via the bridge web UI at `http://192.168.1.48:8080` → **MQTT Settings** section:
+Configure the MQTT broker address via the bridge web UI at `http://<bridge-ip>:8080` → **MQTT Settings** section:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -24,10 +24,10 @@ You can also configure via the REST API:
 
 ```bash
 # Read current MQTT settings
-curl http://192.168.1.48:8080/api/mqtt
+curl http://<bridge-ip>:8080/api/mqtt
 
 # Update MQTT settings
-curl -X POST http://192.168.1.48:8080/api/mqtt \
+curl -X POST http://<bridge-ip>:8080/api/mqtt \
   -H "Content-Type: application/json" \
   -d '{"broker_ip":"192.168.1.23","broker_port":1883,"enabled":true,"topic_prefix":"mastervolt_bridge"}'
 ```
@@ -153,4 +153,4 @@ All entities show as "unavailable" in HA when the bridge is offline.
 | Power limit slider unresponsive | Bridge offline or inverter unreachable | Command is queued (deferred) and applied on next successful connection |
 | "Unavailable" in HA | Bridge Ethernet disconnected or powered off | Check physical connection |
 
-Check bridge logs at `http://192.168.1.48:8080/api/logs` for MQTT-related messages (prefixed with `[MQTT]`).
+Check bridge logs at `http://<bridge-ip>:8080/api/logs` for MQTT-related messages (prefixed with `[MQTT]`).

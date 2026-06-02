@@ -365,7 +365,9 @@ void handleApiClient(EthernetClient& client) {
   String method = requestLine.substring(0, firstSpace);
   String path = requestLine.substring(firstSpace + 1, secondSpace);
 
-  appLogger.log("[API] " + method + " " + path);
+  if (debugMode) {
+    appLogger.log("[API] " + method + " " + path);
+  }
 
   // Parse HTTP headers to extract Content-Length
   int contentLength = 0;

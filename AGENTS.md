@@ -32,8 +32,8 @@ The current firmware release is `1.0.0`.
 **What**: Bridge firmware connecting WiFi-only inverters (Mastervolt SOLADIN 1500) to Home Assistant via Ethernet.
 
 **Hardware**: ESP32-S3 + ENC28J60 Ethernet adapter
-- WiFi: Station mode → inverter SSID `mastervolt-soladin-0103` / `10.0.0.1`
-- Ethernet: DHCP client on home LAN → `192.168.1.48:8080`
+- WiFi: Station mode → inverter SSID `mastervolt-soladin-0103` / `<inverter-host>`
+- Ethernet: DHCP client on home LAN → `<bridge-ip>:8080`
 - GPIO 36: inverter WiFi wake pulse (idle HIGH, active-LOW pulse)
 
 ## Architecture

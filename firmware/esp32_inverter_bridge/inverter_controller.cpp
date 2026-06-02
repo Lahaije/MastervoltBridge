@@ -161,7 +161,9 @@ void InverterController::runPollingTask() {
     bool iterationOk = false;
 
     if (!WifiConnectionManager::getInstance().ensureConnected()) {
-      appLogger.log("[INVERTER-CONTROLLER] No WiFi connection; skipping poll iteration");
+      if (debugMode) {
+        appLogger.log("[INVERTER-CONTROLLER] No WiFi connection; skipping poll iteration");
+      }
     } else {
       String rawResponse;
       String errorMessage;
@@ -187,11 +189,15 @@ void InverterController::runPollingTask() {
           iterationOk = true;
         } else {
           incrementCounterLocked(failedPolls);
-          appLogger.log("[INVERTER-CONTROLLER] Failed to parse /home response");
+          if (debugMode) {
+            appLogger.log("[INVERTER-CONTROLLER] Failed to parse /home response");
+          }
         }
       } else {
         incrementCounterLocked(failedPolls);
-        appLogger.log(String("[INVERTER-CONTROLLER] Failed to fetch /home: ") + errorMessage);
+        if (debugMode) {
+          appLogger.log(String("[INVERTER-CONTROLLER] Failed to fetch /home: ") + errorMessage);
+        }
       }
     }
 
@@ -239,12 +245,16 @@ void InverterController::runPollingTask() {
 
 bool InverterController::getLatestHomeData(HomeData& dataOut) {
   if (dataMutex == nullptr) {
-    appLogger.log("[INVERTER-CONTROLLER] Inverter controller not initialized");
+    if (debugMode) {
+      appLogger.log("[INVERTER-CONTROLLER] Inverter controller not initialized");
+    }
     return false;
   }
 
   if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(DATA_MUTEX_TIMEOUT_MS)) != pdTRUE) {
-    appLogger.log("[INVERTER-CONTROLLER] Failed to acquire data mutex");
+    if (debugMode) {
+      appLogger.log("[INVERTER-CONTROLLER] Failed to acquire data mutex");
+    }
     return false;
   }
 
@@ -301,7 +311,9 @@ void InverterController::setPollIntervalMs(uint32_t ms) {
   if (ms < 100) ms = 100;
   if (ms > 300000) ms = 300000;
   currentRetryIntervalMs = ms;
-  appLogger.log(String("[INVERTER-CONTROLLER] Poll interval override set to ") + ms + "ms");
+  if (debugMode) {
+    appLogger.log(String("[INVERTER-CONTROLLER] Poll interval override set to ") + ms + "ms");
+  }
 }
 
 void InverterController::updatePollFrequency(InverterLinkState /*from*/,
@@ -313,7 +325,9 @@ void InverterController::updatePollFrequency(InverterLinkState /*from*/,
 // Transition hook: first-ever ONLINE after boot.
 void InverterController::loadSettingsOnBoot(InverterLinkState /*from*/,
                                          InverterLinkState /*to*/) {
-  appLogger.log("[INVERTER-CONTROLLER] First connection; invalidating shadow + power limit cache");
+  if (debugMode) {
+    appLogger.log("[INVERTER-CONTROLLER] First connection; invalidating shadow + power limit cache");
+  }
   getInstance().shadowKnown_ = false;
   getInstance().powerLimitKnown_ = false;
 }
@@ -321,8 +335,10 @@ void InverterController::loadSettingsOnBoot(InverterLinkState /*from*/,
 // Transition hook: ONLINE recovery after prolonged outage.
 void InverterController::updateAllInverterParam(InverterLinkState from,
                                              InverterLinkState /*to*/) {
-  appLogger.log(String("[INVERTER-CONTROLLER] Recovered from ") + toString(from) +
-                "; invalidating shadow + power limit cache");
+  if (debugMode) {
+    appLogger.log(String("[INVERTER-CONTROLLER] Recovered from ") + toString(from) +
+                  "; invalidating shadow + power limit cache");
+  }
   getInstance().shadowKnown_ = false;
   getInstance().powerLimitKnown_ = false;
 }
@@ -336,9 +352,13 @@ void InverterController::fetchAndCacheShadow() {
     bool enabled = body.length() > 0 && body[0] == '1';
     shadowOn_ = enabled;
     shadowKnown_ = true;
-    appLogger.log(String("[INVERTER-CONTROLLER] Shadow read: ") + (enabled ? "ON" : "OFF"));
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] Shadow read: ") + (enabled ? "ON" : "OFF"));
+    }
   } else {
-    appLogger.log(String("[INVERTER-CONTROLLER] Failed to read shadow: ") + err);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] Failed to read shadow: ") + err);
+    }
   }
 }
 
@@ -353,12 +373,18 @@ void InverterController::fetchAndCachePowerLimit() {
       uint16_t w = static_cast<uint16_t>(watts);
       powerLimitW_ = w;
       powerLimitKnown_ = true;
-      appLogger.log(String("[INVERTER-CONTROLLER] Power limit read: ") + watts + "W");
+      if (debugMode) {
+        appLogger.log(String("[INVERTER-CONTROLLER] Power limit read: ") + watts + "W");
+      }
     } else {
-      appLogger.log(String("[INVERTER-CONTROLLER] Invalid /power response: '") + body + "'");
+      if (debugMode) {
+        appLogger.log(String("[INVERTER-CONTROLLER] Invalid /power response: '") + body + "'");
+      }
     }
   } else {
-    appLogger.log(String("[INVERTER-CONTROLLER] Failed to read power limit: ") + err);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] Failed to read power limit: ") + err);
+    }
   }
 }
 
@@ -386,7 +412,9 @@ InverterController::SetResult InverterController::setPower(int watts, String& re
     errorMessage = String("Invalid power value: ") + watts +
                    String("W. Must satisfy 0 <= power <= ") + INVERTER_MAX_POWER_WATTS + "W";
     httpCode = 0;
-    appLogger.log(String("[INVERTER-CONTROLLER] ") + errorMessage);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] ") + errorMessage);
+    }
     return SetResult::Rejected;
   }
 
@@ -394,7 +422,9 @@ InverterController::SetResult InverterController::setPower(int watts, String& re
   String payload = String("enable_mxpower=on\nmaxpower=") + watts;
   if (!postOptions(payload, responseBody, httpCode, errorMessage)) {
     queuePowerLimitDesired(static_cast<uint16_t>(watts));
-    appLogger.log(String("[INVERTER-CONTROLLER] setPower POST failed, deferred: ") + errorMessage);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] setPower POST failed, deferred: ") + errorMessage);
+    }
     return SetResult::Deferred;
   }
 
@@ -411,7 +441,9 @@ InverterController::SetResult InverterController::setShadow(bool enabled, String
   String payload = String("enShadow=") + (enabled ? "on" : "off");
   if (!postOptions(payload, responseBody, httpCode, errorMessage)) {
     queueShadowDesired(enabled);
-    appLogger.log(String("[INVERTER-CONTROLLER] setShadow POST failed, deferred: ") + errorMessage);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] setShadow POST failed, deferred: ") + errorMessage);
+    }
     return SetResult::Deferred;
   }
 
@@ -433,13 +465,17 @@ bool InverterController::postOptions(const String& payload, String& responseBody
 void InverterController::queueShadowDesired(bool enabled) {
   shadowDesired_ = enabled;
   shadowDesiredPending_ = true;
-  appLogger.log(String("[INVERTER-CONTROLLER] Queued desired shadow=") + (enabled ? "ON" : "OFF"));
+  if (debugMode) {
+    appLogger.log(String("[INVERTER-CONTROLLER] Queued desired shadow=") + (enabled ? "ON" : "OFF"));
+  }
 }
 
 void InverterController::queuePowerLimitDesired(uint16_t watts) {
   powerLimitDesired_ = watts;
   powerLimitDesiredPending_ = true;
-  appLogger.log(String("[INVERTER-CONTROLLER] Queued desired power_limit=") + watts + "W");
+  if (debugMode) {
+    appLogger.log(String("[INVERTER-CONTROLLER] Queued desired power_limit=") + watts + "W");
+  }
 }
 
 bool InverterController::hasPendingSettings() {
@@ -463,16 +499,22 @@ void InverterController::applyPendingPowerLimit() {
   String resp, err;
   int code = 0;
   String payload = String("enable_mxpower=on\nmaxpower=") + powerLimitDesired_;
-  appLogger.log(String("[INVERTER-CONTROLLER] applyPendingPowerLimit: posting power=") + powerLimitDesired_ + "W");
+  if (debugMode) {
+    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingPowerLimit: posting power=") + powerLimitDesired_ + "W");
+  }
   if (!postOptions(payload, resp, code, err)) {
-    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingPowerLimit POST failed: ") + err);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] applyPendingPowerLimit POST failed: ") + err);
+    }
     return;
   }
 
   powerLimitDesiredPending_ = false;
   powerLimitKnown_ = false;
   fetchAndCachePowerLimit();
-  appLogger.log("[INVERTER-CONTROLLER] applyPendingPowerLimit: applied, readback attempted");
+  if (debugMode) {
+    appLogger.log("[INVERTER-CONTROLLER] applyPendingPowerLimit: applied, readback attempted");
+  }
 }
 
 void InverterController::applyPendingShadow() {
@@ -483,17 +525,23 @@ void InverterController::applyPendingShadow() {
   String resp, err;
   int code = 0;
   String payload = String("enShadow=") + (shadowDesired_ ? "on" : "off");
-  appLogger.log(String("[INVERTER-CONTROLLER] applyPendingShadow: posting shadow=") +
-                (shadowDesired_ ? "ON" : "OFF"));
+  if (debugMode) {
+    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingShadow: posting shadow=") +
+                  (shadowDesired_ ? "ON" : "OFF"));
+  }
   if (!postOptions(payload, resp, code, err)) {
-    appLogger.log(String("[INVERTER-CONTROLLER] applyPendingShadow POST failed: ") + err);
+    if (debugMode) {
+      appLogger.log(String("[INVERTER-CONTROLLER] applyPendingShadow POST failed: ") + err);
+    }
     return;
   }
 
   shadowDesiredPending_ = false;
   shadowKnown_ = false;
   fetchAndCacheShadow();
-  appLogger.log("[INVERTER-CONTROLLER] applyPendingShadow: applied, readback attempted");
+  if (debugMode) {
+    appLogger.log("[INVERTER-CONTROLLER] applyPendingShadow: applied, readback attempted");
+  }
 }
 
 bool InverterController::fetchPath(const String& path, String& responseBody, int& httpCode, String& errorMessage) {
