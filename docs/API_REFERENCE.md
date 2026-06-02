@@ -86,6 +86,7 @@ Returns discovery JSON listing all available endpoints.
 
 - Stable machine-readable endpoint for automation and tooling.
 - GET / serves HTML; GET /api remains JSON.
+- GET /config is a UI route and may be intentionally omitted from discovery while still being a supported endpoint.
 
 ## GET /api/device
 

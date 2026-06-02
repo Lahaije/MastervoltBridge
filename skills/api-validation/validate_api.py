@@ -50,6 +50,12 @@ DOCUMENTED_ENDPOINTS: list[tuple[str, str]] = [
     ("POST", "/api/mqtt"),
 ]
 
+# Endpoints intentionally not exposed by GET /api discovery.
+# They are still validated directly in GET/POST runtime checks.
+DISCOVERY_EXCLUDED_ENDPOINTS: set[tuple[str, str]] = {
+    ("GET", "/config"),
+}
+
 # For GET endpoints: required top-level JSON keys expected in 200 responses.
 # Endpoints that may return 502 (inverter offline) are marked with allow_502=True.
 GET_CHECKS: list[dict[str, Any]] = [
@@ -227,15 +233,19 @@ def check_discovery(base_url: str, verbose: bool) -> tuple[bool, list[tuple[str,
 
     all_ok = True
 
-    # Every documented endpoint must appear in the firmware response
-    for method, path in DOCUMENTED_ENDPOINTS:
+    documented_discovery = [
+        ep for ep in DOCUMENTED_ENDPOINTS if ep not in DISCOVERY_EXCLUDED_ENDPOINTS
+    ]
+
+    # Every discovery-documented endpoint must appear in the firmware response
+    for method, path in documented_discovery:
         found = (method, path) in live
         ok = check(f"  Documented {method} {path} present in firmware discovery", found)
         all_ok = all_ok and ok
 
     # Every firmware endpoint must be in the docs (catches undocumented additions)
     for method, path in live:
-        documented = (method, path) in DOCUMENTED_ENDPOINTS
+        documented = (method, path) in documented_discovery
         ok = check(f"  Firmware {method} {path} present in documentation", documented,
                    "" if documented else "NOT IN docs/API_REFERENCE.md")
         all_ok = all_ok and ok
