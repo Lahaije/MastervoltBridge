@@ -144,7 +144,7 @@ void MqttClient::initialize() {
 
   mqttPubSub.setServer(brokerIp, settings_.brokerPort);
   mqttPubSub.setCallback(mqttCallback);
-  mqttPubSub.setBufferSize(512);
+  mqttPubSub.setBufferSize(1024);
 
   // Set very short socket timeout to prevent blocking the ethernet service loop.
   // UIPEthernet's connect() uses this for TCP handshake timeout.
