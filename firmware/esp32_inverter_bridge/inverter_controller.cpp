@@ -216,13 +216,20 @@ void InverterController::runPollingTask() {
     }
 
     // Publish one telemetry message every loop iteration.
-    // On failed polls, we queue an empty snapshot so MQTT updates still flow
-    // and sensor fields become null in the combined JSON payload.
+    // On failed polls, reuse the latest cached snapshot for stable fields
+    // (yield totals, etc.) but clear instantaneous power because current watts
+    // are unknown without a fresh /home read.
     {
       HomeData mqttData;
-      if (iterationOk) {
-        (void)getLatestHomeData(mqttData);
+      bool hasCached = getLatestHomeData(mqttData);
+      if (!hasCached) {
+        mqttData.clear();
       }
+
+      if (!iterationOk) {
+        mqttData.hasPower = false;
+      }
+
       MqttClient::getInstance().publishTelemetry(mqttData);
     }
 
