@@ -208,18 +208,22 @@ void InverterController::runPollingTask() {
       // Backfill any unknown cached settings.
       refreshUnknownSettingsAfterPoll();
 
-      // Publish telemetry to MQTT after successful poll.
-      {
-        HomeData mqttData;
-        if (getLatestHomeData(mqttData)) {
-          MqttClient::getInstance().publishTelemetry(mqttData);
-        }
-      }
     } else {
       // Poll failed — accumulate streak and check thresholds.
       if (failureStartMs == 0) failureStartMs = millis();
       uint32_t streakMs = millis() - failureStartMs;
       linkStateFromStreak(streakMs);
+    }
+
+    // Publish one telemetry message every loop iteration.
+    // On failed polls, we queue an empty snapshot so MQTT updates still flow
+    // and sensor fields become null in the combined JSON payload.
+    {
+      HomeData mqttData;
+      if (iterationOk) {
+        (void)getLatestHomeData(mqttData);
+      }
+      MqttClient::getInstance().publishTelemetry(mqttData);
     }
 
     vTaskDelay(pdMS_TO_TICKS(currentRetryIntervalMs));

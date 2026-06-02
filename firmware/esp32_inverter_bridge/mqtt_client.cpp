@@ -331,7 +331,7 @@ void MqttClient::flushPendingTelemetry() {
   bool currentPowerLimitKnown = InverterController::getInstance().getPowerLimit(currentPowerLimitW);
 
   publishCombinedTelemetry(mqttPubSub, settings_.topicPrefix,
-                           snapshotData, true,
+                           snapshotData, snapshotData.isValid(),
                            currentPollIntervalMs,
                            currentPowerLimitKnown, currentPowerLimitW);
 }
