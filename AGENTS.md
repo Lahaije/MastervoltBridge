@@ -76,15 +76,17 @@ inverter_controller.cpp/h (business logic)
   ├── Hook callbacks: applyIntervalForState, loadSettingsOnBoot, updateAllInverterParam
   ├── SetResult enum (Applied, Deferred, Rejected) for setPower/setShadow
   ├── caches HomeData + cached shadow/power_limit (invalidated on recovery; backfilled by polling loop)
-  └── exposes getLatestHomeData(), setPower(), setShadow(), fetchPath(), getShadow(), getPowerLimit()
+  └── exposes getLatestHomeData(), setPower(), setShadow(), fetchPath(), getShadow(), getPowerLimit(), getRetryIntervalMs(), setPollIntervalMs()
 
 ethernet_bridge.cpp/h (network layer)
   └── ENC28J60 init + HTTP API server on port 8080
 
 mqtt_client.cpp/h (MQTT integration)
   ├── MqttClient singleton — connects to broker, publishes HA auto-discovery + telemetry
-  ├── publishTelemetry() — thread-safe queue (called from inverter polling task)
+  ├── publishTelemetry(HomeData) — thread-safe queue (called from inverter polling task)
   ├── loop() — flushes pending telemetry; must only be called from ethernet task
+  ├── reads poll interval / power limit from InverterController at publish time
+  ├── command handlers call InverterController setters (same path used by REST API)
   └── deps: mqtt_settings, inverter_data, PubSubClient, UIPEthernet
 
 mqtt_settings.cpp/h (MQTT configuration)
@@ -135,12 +137,17 @@ Both emit `[WIFI-CONNECT] start/complete path=... duration_ms=... result=...` lo
 
 **All MQTT network I/O must happen in the ethernet task. Never call PubSubClient or UIPEthernet from any other task.**
 
+**MqttClient is transport-only. It must not own inverter state.**
+- Source of truth for poll interval, power limit, and shadow is InverterController.
+- MQTT publishes HomeData snapshots and reads current control values from InverterController when flushing.
+- MQTT command topics must call the same InverterController setter functions used by API endpoints.
+
 ```cpp
 class MqttClient {
   static MqttClient& getInstance();
   void initialize();                    // called once after Ethernet is up
   void loop();                          // call from ethernet task only — flushes pending telemetry
-  void publishTelemetry(...);           // thread-safe — queues data, does NOT do network I/O
+  void publishTelemetry(const HomeData&); // thread-safe — queues data, does NOT do network I/O
   void applySettings(const MqttSettings&);
   bool isConnected();
 };
@@ -161,7 +168,8 @@ struct HomeData {
   String operatingMode;       // "1" = production
   String inverterModel;       // "H500A0103"
   String inverterMacAddress;
-  String instantaneousPower;  // watts, e.g. "674.547"
+  float instantaneousPowerW;  // watts, e.g. 674.547
+  bool hasPower;
   float lifetimeEnergyKwh;    // kWh,   e.g. 8566.628
   float dailySessionEnergyKwh;// kWh,   e.g. 12.811
   bool hasLifetimeEnergy;
@@ -190,8 +198,7 @@ bool fetchPath(const String& path, String& responseBody, int& httpCode, String& 
 InverterLinkState getLinkState();
 uint32_t getFailureStreakMs();
 uint32_t getRetryIntervalMs();
-uint32_t getBasePollIntervalMs();
-void setBasePollIntervalMs(uint32_t ms);
+void setPollIntervalMs(uint32_t ms);
 bool getShadow(bool& enabledOut);       // cached shadow function state
 bool getPowerLimit(uint16_t& wattsOut); // cached inverter power limit
 bool hasPendingSettings();              // true if deferred values are queued
@@ -245,6 +252,7 @@ Read `settings.h` directly for current values. Do not duplicate constant values 
 7. **ENC28J60 crash on dead TCP write**: Writing to a disconnected `EthernetClient` via UIPEthernet crashes the device. Always check `client.connected()` before `client.write()` in streaming responses (see `sendLogsResponse()` abort guard).
 8. **CDCOnBoot=cdc resets on serial open**: Opening COM9 with DTR=true resets the ESP32. Use `dsrdtr=False, dtr=False` in pyserial to monitor without reset.
 9. **Changing FQBN flags triggers full rebuild**: Adding/removing flags like `CDCOnBoot=cdc` causes a ~5 min full core recompile. Same flags = fast incremental build (~20s).
+10. **No duplicate setting logic in MQTT**: MQTT command handlers must route to InverterController setters (`setPower`, `setPollIntervalMs`) and must not maintain independent setting state.
 
 ## Performance
 

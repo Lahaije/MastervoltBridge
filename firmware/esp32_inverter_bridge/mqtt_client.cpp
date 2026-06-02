@@ -251,7 +251,6 @@ void MqttClient::publishDiscovery() {
   // Range: 5s to 300s, step 1s
   publishNumberDiscovery(mqttPubSub, prefix, "poll_interval", "Poll Interval", "s", 5, 300, 1);
 
-  discoveryPublished_ = true;
   appLogger.log("[MQTT] Discovery published");
 }
 
@@ -260,8 +259,7 @@ void MqttClient::publishAvailability(bool online) {
   mqttPubSub.publish(topic.c_str(), online ? "online" : "offline", true);
 }
 
-void MqttClient::publishTelemetry(const HomeData& data, uint32_t pollIntervalMs,
-                                   uint16_t powerLimitW, bool powerLimitKnown) {
+void MqttClient::publishTelemetry(const HomeData& data) {
   if (!initialized_ || !settings_.enabled) return;
   if (telemetryMutex == nullptr) return;
 
@@ -274,9 +272,6 @@ void MqttClient::publishTelemetry(const HomeData& data, uint32_t pollIntervalMs,
     return;
   }
   pendingData_ = data;
-  pendingPollIntervalMs_ = pollIntervalMs;
-  pendingPowerLimitW_ = powerLimitW;
-  pendingPowerLimitKnown_ = powerLimitKnown;
   pendingTelemetry_ = true;
   xSemaphoreGive(telemetryMutex);
 }
@@ -287,9 +282,6 @@ void MqttClient::flushPendingTelemetry() {
   if (telemetryMutex == nullptr) return;
 
   HomeData snapshotData;
-  uint32_t snapshotPollMs = 0;
-  uint16_t snapshotPowerLimitW = 0;
-  bool snapshotPowerLimitKnown = false;
 
   if (xSemaphoreTake(telemetryMutex, pdMS_TO_TICKS(5)) != pdTRUE) {
     if (debugMode) {
@@ -304,11 +296,14 @@ void MqttClient::flushPendingTelemetry() {
   }
 
   snapshotData = pendingData_;
-  snapshotPollMs = pendingPollIntervalMs_;
-  snapshotPowerLimitW = pendingPowerLimitW_;
-  snapshotPowerLimitKnown = pendingPowerLimitKnown_;
   pendingTelemetry_ = false;
   xSemaphoreGive(telemetryMutex);
+
+  // Read current control/state values from the single source of truth.
+  // MQTT transports data; InverterController owns these values.
+  uint32_t currentPollIntervalMs = InverterController::getInstance().getRetryIntervalMs();
+  uint16_t currentPowerLimitW = 0;
+  bool currentPowerLimitKnown = InverterController::getInstance().getPowerLimit(currentPowerLimitW);
 
   String prefix = settings_.topicPrefix;
 
@@ -333,19 +328,19 @@ void MqttClient::flushPendingTelemetry() {
   // Poll interval (seconds)
   {
     String topic = prefix + "/sensor/poll_interval/state";
-    mqttPubSub.publish(topic.c_str(), String(snapshotPollMs / 1000).c_str());
+    mqttPubSub.publish(topic.c_str(), String(currentPollIntervalMs / 1000).c_str());
   }
 
   // Poll interval number state (keeps HA number entity in sync)
   {
     String topic = prefix + "/number/poll_interval/state";
-    mqttPubSub.publish(topic.c_str(), String(snapshotPollMs / 1000).c_str());
+    mqttPubSub.publish(topic.c_str(), String(currentPollIntervalMs / 1000).c_str());
   }
 
   // Power limit
-  if (snapshotPowerLimitKnown) {
+  if (currentPowerLimitKnown) {
     String topic = prefix + "/number/power_limit/state";
-    mqttPubSub.publish(topic.c_str(), String(snapshotPowerLimitW).c_str());
+    mqttPubSub.publish(topic.c_str(), String(currentPowerLimitW).c_str());
   }
 }
 
@@ -359,7 +354,6 @@ void MqttClient::applySettings(const MqttSettings& settings) {
   }
   mqttEthClient.stop();
 
-  discoveryPublished_ = false;
   lastConnectAttemptMs_ = 0;
 
   if (!settings_.enabled) {
@@ -434,8 +428,10 @@ void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {
       appLogger.log("[MQTT] Poll interval command invalid payload: " + value);
       return;
     }
-    if (seconds < 5) seconds = 5;
-    if (seconds > 300) seconds = 300;
+    if (seconds <= 0) {
+      appLogger.log("[MQTT] Poll interval command must be > 0: " + value);
+      return;
+    }
     uint32_t intervalMs = seconds * 1000;
     appLogger.log("[MQTT] Poll interval command received: " + String(seconds) + "s");
     InverterController::getInstance().setPollIntervalMs(intervalMs);

@@ -368,6 +368,13 @@ After saving, the MQTT client immediately reconnects with the new settings.
 
 The bridge is designed for MQTT-first Home Assistant integration. When MQTT is connected, the firmware publishes retained discovery messages under `homeassistant/.../config` and telemetry/command topics under the configured `topic_prefix`.
 
+Architecture note:
+
+- MQTT is transport-only. It does not own poll interval or power-limit state.
+- InverterController is the single source of truth for poll interval, power limit, and shadow state.
+- MQTT command handlers call the same InverterController setter functions used by REST API endpoints.
+- New MQTT telemetry is published after successful inverter polls (triggered by InverterController).
+
 With default prefix `mastervolt_bridge`, the key entities are:
 
 - Sensor: `power` (`mastervolt_bridge/sensor/power/state`)

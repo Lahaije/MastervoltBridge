@@ -37,7 +37,7 @@ public:
    * Queue telemetry data for publishing on next loop() call.
    * Thread-safe — can be called from any task (e.g. inverter controller).
    */
-  void publishTelemetry(const HomeData& data, uint32_t pollIntervalMs, uint16_t powerLimitW, bool powerLimitKnown);
+  void publishTelemetry(const HomeData& data);
 
   /**
    * Reload settings from NVS and reconnect if changed.
@@ -68,16 +68,12 @@ private:
 
   MqttSettings settings_;
   bool initialized_ = false;
-  bool discoveryPublished_ = false;
   unsigned long lastConnectAttemptMs_ = 0;
   static constexpr unsigned long RECONNECT_INTERVAL_MS = 30000;
 
   // Pending telemetry (set from any task, flushed in ethernet task)
-  volatile bool pendingTelemetry_ = false;
+  bool pendingTelemetry_ = false;
   HomeData pendingData_;
-  uint32_t pendingPollIntervalMs_ = 0;
-  uint16_t pendingPowerLimitW_ = 0;
-  bool pendingPowerLimitKnown_ = false;
 };
 
 #endif // MQTT_CLIENT_H

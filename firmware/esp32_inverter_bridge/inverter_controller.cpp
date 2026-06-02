@@ -212,9 +212,7 @@ void InverterController::runPollingTask() {
       {
         HomeData mqttData;
         if (getLatestHomeData(mqttData)) {
-          uint16_t plW = 0;
-          bool plKnown = getPowerLimit(plW);
-          MqttClient::getInstance().publishTelemetry(mqttData, currentRetryIntervalMs, plW, plKnown);
+          MqttClient::getInstance().publishTelemetry(mqttData);
         }
       }
     } else {

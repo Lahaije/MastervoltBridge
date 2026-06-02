@@ -65,6 +65,8 @@ All network I/O (Ethernet, MQTT) is performed exclusively in the `ethernet_bridg
 
 Home Assistant integration is MQTT-first: the bridge publishes HA discovery entities plus state/command topics. The REST API remains available for diagnostics, local UI, and fallback control.
 
+Control-state ownership: InverterController owns poll interval and inverter setting state; MQTT only transports telemetry and commands. MQTT handlers must route commands through the same controller setters used by REST API.
+
 ---
 
 ## 4. Configuration
