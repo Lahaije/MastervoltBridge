@@ -169,12 +169,10 @@ void startWifiBegin(bool useHintFallback) {
 // fallback). Returns true on success, false on timeout.
 bool runConnectPath(const char* pathName, uint32_t scanDwellMs, bool useHintFallback) {
   unsigned long startMs = millis();
-  logConnect(String("Reconnect attempt path=") + pathName, true);
-  if (debugMode) {
-    logConnect(String("start path=") + pathName +
-               " scan_dwell_ms=" + scanDwellMs +
-               " hint_fallback=" + (useHintFallback ? "1" : "0"));
-  }
+  logConnect(String("start path=") + pathName +
+              " scan_dwell_ms=" + scanDwellMs +
+              " hint_fallback=" + (useHintFallback ? "1" : "0"));
+
 
   // Ensure radio is up for scan/connect. We power it down explicitly on
   // failures and disconnected states elsewhere.
