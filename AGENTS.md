@@ -81,6 +81,15 @@ inverter_controller.cpp/h (business logic)
 ethernet_bridge.cpp/h (network layer)
   └── ENC28J60 init + HTTP API server on port 8080
 
+mqtt_client.cpp/h (MQTT integration)
+  ├── MqttClient singleton — connects to broker, publishes HA auto-discovery + telemetry
+  ├── publishTelemetry() — thread-safe queue (called from inverter polling task)
+  ├── loop() — flushes pending telemetry; must only be called from ethernet task
+  └── deps: mqtt_settings, inverter_data, PubSubClient, UIPEthernet
+
+mqtt_settings.cpp/h (MQTT configuration)
+  └── MqttSettings struct + NVS persistence (broker IP/port, topic prefix, credentials)
+
 api.cpp / api.h (request routing)
   ├── handleApiClient() — routes all REST endpoints
   └── deps: api_helper, InverterController, inverter_data, web_ui
@@ -121,6 +130,26 @@ private:
 - `connectWifiAuto()` — 500 ms scan dwell, pure auto-discovery. ~6.5 s typical.
 
 Both emit `[WIFI-CONNECT] start/complete path=... duration_ms=... result=...` log entries.
+
+### Key Design Pattern: MqttClient — Thread-Safety and Telemetry Queueing
+
+**All MQTT network I/O must happen in the ethernet task. Never call PubSubClient or UIPEthernet from any other task.**
+
+```cpp
+class MqttClient {
+  static MqttClient& getInstance();
+  void initialize();                    // called once after Ethernet is up
+  void loop();                          // call from ethernet task only — flushes pending telemetry
+  void publishTelemetry(...);           // thread-safe — queues data, does NOT do network I/O
+  void applySettings(const MqttSettings&);
+  bool isConnected();
+};
+```
+
+**Telemetry queueing:**
+- `publishTelemetry()` stores data in a pending buffer; actual MQTT writes happen in `loop()`.
+- Only the latest telemetry is kept — if multiple updates arrive before `loop()` runs, earlier ones are overwritten (not a FIFO queue).
+- This guarantees the most recent reading is always delivered when possible, but intermediate updates may be lost if the network is congested or slow.
 
 ## Data Model
 

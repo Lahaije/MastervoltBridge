@@ -89,4 +89,4 @@ bool debugMode = true;
 // Firmware Version
 // =============================================================================
 // Format: <semver>-<YYYYMMDD>-<commit_short_hash>
-const char* FIRMWARE_VERSION = "0.1.0-20260602-71ae85b";
+const char* FIRMWARE_VERSION = "0.1.0-20260602-4d7968f";

@@ -24,6 +24,13 @@
     <i>Link state</i><b id="sLink">-</b>
     <i>Failure streak</i><b id="sStreak">-</b>
   </div></section>
+  <section><h2>Device</h2><div class="grid">
+    <i>Model</i><b id="dModel">-</b>
+    <i>MAC</i><b id="dInvMac">-</b>
+    <i>WiFi SSID</i><b id="dSsid">-</b>
+    <i>WiFi IP</i><b id="dWifiIp">-</b>
+    <i>Ethernet IP</i><b id="dEth">-</b>
+  </div></section>
   <section><h2>Polling</h2>
     <p><label for="iInterval">Interval (s)</label><input type="number" id="iInterval" min=1 max=300 class=n><button id="bInterval">Apply</button></p>
     <p class=msg id="mInterval"></p></section>
@@ -31,10 +38,6 @@
     <p id="rowPowerUnknown"><label>Status</label><span class="unk" id="curPower">unknown</span></p>
     <p id="rowPowerForm" hidden><label for="iPower">Power limit (W)</label><input type="number" id="iPower" min=0 max=1575 class=n><button id="bPower">Apply</button></p>
     <p class=msg id="mPower"></p></section>
-  <section><h2>Shadow Function</h2>
-    <p id="rowShadowUnknown"><label>Status</label><span class="unk" id="curShadow">unknown</span></p>
-    <p id="rowShadowForm" hidden><label for="iShadow">Enabled</label><input type="checkbox" id="iShadow"><button id="bShadow">Apply</button></p>
-    <p class=msg id="mShadow"></p></section>
   <section><h2>Log Viewer</h2>
     <p><a href="/api/logs" target="_blank">Download logs</a></p>
   </section>
@@ -46,31 +49,34 @@
 async function loadDevice(){
   try{var d=await apiGet('/api/device');
     if(d.firmware_version)$("fwVersion").textContent='Firmware: '+d.firmware_version;
-  }catch(e){} }
+    $("dModel").textContent=d.inverter_model||'-';
+    $("dInvMac").textContent=d.inverter_mac_address||'-';
+    $("dSsid").textContent=d.wifi_ssid||'-';
+    $("dWifiIp").textContent=d.wifi_ip||'-';
+    $("dEth").textContent=d.ethernet_ip||'-';
+  }catch(e){}}
 async function refreshHealth(){
   try{var h=await apiGet('/api/health');
     $("sOp").textContent=h.operating_status?(h.operating_status==='1'?'normal':'code '+h.operating_status):'-';
     $("sLink").innerHTML=pill(h.inverter_link_state||'?',h.inverter_link_state==='ONLINE'?'ok':h.inverter_link_state==='DORMANT'?'bad':'warn');
-  }catch(e){} }
+  }catch(e){}}
 async function refreshInfo(){
   try{var i=await apiGet('/api/info');
     $("sPower").textContent=i.power?(i.power+' W'):'-';
     $("sDaily").textContent=formatKwh(i.daily_yield);$("sTotal").textContent=formatKwh(i.total_yield);
     $("sStreak").textContent=(i.failure_streak_s||0)+' s';
     if(!isElementFocused('iInterval'))$("iInterval").value=Math.round(i.poll_interval_ms/1000);
-    syncPowerDisplay(i);syncShadowDisplay(i);
+    syncPowerDisplay(i);
     $("lastFetch").textContent='updated '+new Date().toLocaleTimeString();
   }catch(e){
     $("sPower").innerHTML='<span class="unk">offline</span>';
     $("sDaily").innerHTML=UNKNOWN_HTML;$("sTotal").innerHTML=UNKNOWN_HTML;
     $("sStreak").textContent='-';
-    syncPowerDisplay({});syncShadowDisplay({});
+    syncPowerDisplay({});
     $("lastFetch").textContent='error: '+e.message;
   }}
 $("bPower").onclick=async()=>{var v=parseInt($("iPower").value,10);
   try{var r=await apiPost('/api/power',{power:v});flash($("mPower"),true,r.deferred?'Deferred: '+r.reason:'Power set to '+v+' W');refreshInfo();}catch(e){flash($("mPower"),false,e.message);}};
-$("bShadow").onclick=async()=>{var v=$("iShadow").checked;
-  try{var r=await apiPost('/api/shadow',{enabled:v});flash($("mShadow"),true,r.deferred?'Deferred: '+r.reason:'Shadow '+(v?'enabled':'disabled'));refreshInfo();}catch(e){flash($("mShadow"),false,e.message);}};
 $("bInterval").onclick=async()=>{var v=parseInt($("iInterval").value,10);
   if(isNaN(v)||v<1||v>300){flash($("mInterval"),false,'Enter 1-300 seconds');return;}
   try{var r=await apiPost('/api/interval',{interval:v*1000});flash($("mInterval"),true,'Interval set to '+(r.poll_interval_ms/1000)+' s');refreshInfo();}catch(e){flash($("mInterval"),false,e.message);}};
