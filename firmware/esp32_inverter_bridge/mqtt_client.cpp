@@ -15,8 +15,9 @@ EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
 SemaphoreHandle_t telemetryMutex = nullptr;
 constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = 256;  // PubSubClient default MQTT_MAX_PACKET_SIZE
-constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // PubSubClient reserve for worst-case fixed header bytes
+constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // MQTT fixed header max: 1 control byte + up to 4 remaining-length bytes
 constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;  // MQTT 3.1.1 CONNECT variable header size
+constexpr size_t MQTT_CONNECT_ESTIMATE_SAFETY_MARGIN_BYTES = 1;
 constexpr char MQTT_CONNECT_WILL_MESSAGE[] = "offline";
 
 // Throttle how often we run MQTT loop in the ethernet service task.
@@ -69,6 +70,7 @@ size_t estimateConnectPacketSize(const MqttSettings& settings) {
   packetSize += mqttEncodedStringSize(clientId);
   packetSize += mqttEncodedStringSize(willTopic);
   packetSize += mqttEncodedStringSize(MQTT_CONNECT_WILL_MESSAGE);
+  packetSize += MQTT_CONNECT_ESTIMATE_SAFETY_MARGIN_BYTES;
 
   if (settings.username.length() > 0) {
     packetSize += mqttEncodedStringSize(settings.username);
