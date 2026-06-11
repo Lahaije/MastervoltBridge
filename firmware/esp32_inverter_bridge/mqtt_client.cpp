@@ -14,6 +14,10 @@ namespace {
 EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
 SemaphoreHandle_t telemetryMutex = nullptr;
+constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = 256;
+constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;
+constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;
+constexpr char MQTT_CONNECT_WILL_MESSAGE[] = "offline";
 
 // Throttle how often we run MQTT loop in the ethernet service task.
 // Running every 2ms is too aggressive and starves the API server.
@@ -43,6 +47,27 @@ void logMqttInfo(const String& message) {
   if (debugMode) {
     appLogger.log(String("[MQTT] ") + message);
   }
+}
+
+size_t mqttEncodedStringSize(const String& value) {
+  return 2 + value.length();
+}
+
+size_t estimateConnectPacketSize(const MqttSettings& settings) {
+  String clientId = "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
+  String willTopic = settings.topicPrefix + "/status";
+
+  size_t packetSize = MQTT_MAX_HEADER_SIZE_BYTES + MQTT_CONNECT_VARIABLE_HEADER_BYTES;
+  packetSize += mqttEncodedStringSize(clientId);
+  packetSize += mqttEncodedStringSize(willTopic);
+  packetSize += mqttEncodedStringSize(MQTT_CONNECT_WILL_MESSAGE);
+
+  if (settings.username.length() > 0) {
+    packetSize += mqttEncodedStringSize(settings.username);
+    packetSize += mqttEncodedStringSize(settings.password);
+  }
+
+  return packetSize;
 }
 
 // Publish a single HA discovery config message (retained).
@@ -375,6 +400,16 @@ bool MqttClient::isConnected() {
 
 MqttSettings MqttClient::getSettings() {
   return settings_;
+}
+
+bool MqttClient::validateConnectPacketSize(const MqttSettings& settings, String& errorMessage) {
+  size_t packetSize = estimateConnectPacketSize(settings);
+  if (packetSize > MQTT_CONNECT_PACKET_MAX_BYTES) {
+    errorMessage = "MQTT CONNECT packet too large (" + String((unsigned int)packetSize)
+      + " bytes; max " + String((unsigned int)MQTT_CONNECT_PACKET_MAX_BYTES) + ")";
+    return false;
+  }
+  return true;
 }
 
 void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {

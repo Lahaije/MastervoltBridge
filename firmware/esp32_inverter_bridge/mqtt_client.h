@@ -54,6 +54,11 @@ public:
    */
   MqttSettings getSettings();
 
+  /**
+   * Validate whether MQTT CONNECT packet size fits PubSubClient default buffer.
+   */
+  static bool validateConnectPacketSize(const MqttSettings& settings, String& errorMessage);
+
 private:
   MqttClient();
   ~MqttClient() = default;
