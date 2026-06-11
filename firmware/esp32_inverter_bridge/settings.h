@@ -81,6 +81,7 @@ extern const uint16_t API_PORT;
 extern const uint16_t API_CLIENT_TIMEOUT_MS;
 extern const uint32_t ETHERNET_INIT_RETRY_MS;
 extern const uint32_t ETHERNET_SERVICE_INTERVAL_MS;
+extern const char* MQTT_CLIENT_ID_PREFIX;
 extern byte ETH_MAC[6];
 
 // =============================================================================

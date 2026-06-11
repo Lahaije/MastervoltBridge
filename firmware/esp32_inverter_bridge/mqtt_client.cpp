@@ -55,7 +55,7 @@ size_t mqttEncodedStringSize(const String& value) {
 }
 
 String buildMqttClientId() {
-  return "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
+  return String(MQTT_CLIENT_ID_PREFIX) + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
 }
 
 String buildMqttWillTopic(const MqttSettings& settings) {
@@ -421,6 +421,7 @@ bool MqttClient::validateConnectPacketSize(const MqttSettings& settings, String&
   if (packetSize > MQTT_CONNECT_PACKET_MAX_BYTES) {
     errorMessage = "MQTT CONNECT packet too large (" + String((unsigned int)packetSize)
       + " bytes; max " + String((unsigned int)MQTT_CONNECT_PACKET_MAX_BYTES) + ")";
+    appLogger.log("[MQTT] " + errorMessage);
     return false;
   }
   return true;
