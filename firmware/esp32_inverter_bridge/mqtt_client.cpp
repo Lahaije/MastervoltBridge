@@ -14,7 +14,7 @@ namespace {
 EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
 SemaphoreHandle_t telemetryMutex = nullptr;
-constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = 256;  // PubSubClient default MQTT_MAX_PACKET_SIZE
+constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = MQTT_MAX_PACKET_SIZE;  // PubSubClient configured packet buffer size
 constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // MQTT fixed header max: 1 control byte + up to 4 remaining-length bytes
 constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;  // MQTT 3.1.1 CONNECT variable header size
 constexpr size_t MQTT_CONNECT_SAFETY_MARGIN_BYTES = 1;
@@ -55,7 +55,13 @@ size_t mqttEncodedStringSize(const String& value) {
 }
 
 String buildMqttClientId() {
-  return String(MQTT_CLIENT_ID_PREFIX) + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
+  String suffixA = String(ETH_MAC[4], HEX);
+  String suffixB = String(ETH_MAC[5], HEX);
+  suffixA.toLowerCase();
+  suffixB.toLowerCase();
+  if (suffixA.length() < 2) suffixA = "0" + suffixA;
+  if (suffixB.length() < 2) suffixB = "0" + suffixB;
+  return String(MQTT_CLIENT_ID_PREFIX) + suffixA + suffixB;
 }
 
 String buildMqttWillTopic(const MqttSettings& settings) {
