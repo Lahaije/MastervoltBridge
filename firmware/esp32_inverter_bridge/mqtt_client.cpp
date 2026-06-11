@@ -14,6 +14,7 @@ namespace {
 EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
 SemaphoreHandle_t telemetryMutex = nullptr;
+constexpr size_t MQTT_RUNTIME_BUFFER_SIZE = 1024;          // Must match setBufferSize() call in initialize()
 constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = MQTT_MAX_PACKET_SIZE;  // PubSubClient configured packet buffer size
 constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // MQTT fixed header max: 1 control byte + up to 4 remaining-length bytes
 constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;  // MQTT 3.1.1 CONNECT variable header size
@@ -90,6 +91,22 @@ size_t estimateConnectPacketSize(const MqttSettings& settings) {
   return packetSize;
 }
 
+size_t estimatePublishPacketSize(const char* topic, const char* payload) {
+  // MQTT PUBLISH (QoS 0) packet: fixed header + 2-byte topic length field + topic + payload.
+  // Using MQTT_MAX_HEADER_SIZE_BYTES as a conservative upper bound for the fixed header.
+  return MQTT_MAX_HEADER_SIZE_BYTES + 2 + strlen(topic) + strlen(payload);
+}
+
+bool safePublish(PubSubClient& client, const char* topic, const char* payload, bool retained = false) {
+  size_t packetSize = estimatePublishPacketSize(topic, payload);
+  if (packetSize > MQTT_RUNTIME_BUFFER_SIZE) {
+    appLogger.log(String("[MQTT] Publish packet too large (") + String((unsigned int)packetSize)
+      + " bytes; max " + String((unsigned int)MQTT_RUNTIME_BUFFER_SIZE) + ") for topic: " + topic);
+    return false;
+  }
+  return client.publish(topic, payload, retained);
+}
+
 // Publish a single HA discovery config message (retained).
 void publishSensorDiscovery(PubSubClient& client, const String& prefix,
                             const String& sensorId, const String& name,
@@ -130,7 +147,7 @@ void publishSensorDiscovery(PubSubClient& client, const String& prefix,
   payload += "\"}";
   payload += "}";
 
-  client.publish(topic.c_str(), payload.c_str(), true);
+  safePublish(client, topic.c_str(), payload.c_str(), true);
 }
 
 void publishNumberDiscovery(PubSubClient& client, const String& prefix,
@@ -168,7 +185,7 @@ void publishNumberDiscovery(PubSubClient& client, const String& prefix,
   payload += "\"}";
   payload += "}";
 
-  client.publish(topic.c_str(), payload.c_str(), true);
+  safePublish(client, topic.c_str(), payload.c_str(), true);
 }
 
 void publishCombinedTelemetry(PubSubClient& client, const String& prefix,
@@ -189,7 +206,7 @@ void publishCombinedTelemetry(PubSubClient& client, const String& prefix,
   payload += powerLimitKnown ? String(powerLimitW) : "null";
   payload += "}";
 
-  client.publish(topic.c_str(), payload.c_str());
+  safePublish(client, topic.c_str(), payload.c_str());
 }
 }  // namespace
 
@@ -220,7 +237,7 @@ void MqttClient::initialize() {
 
   mqttPubSub.setServer(brokerIp, settings_.brokerPort);
   mqttPubSub.setCallback(mqttCallback);
-  mqttPubSub.setBufferSize(1024);
+  mqttPubSub.setBufferSize(MQTT_RUNTIME_BUFFER_SIZE);
 
   // Set very short socket timeout to prevent blocking the ethernet service loop.
   // UIPEthernet's connect() uses this for TCP handshake timeout.
@@ -332,7 +349,7 @@ void MqttClient::publishDiscovery() {
 
 void MqttClient::publishAvailability(bool online) {
   String topic = settings_.topicPrefix + "/status";
-  mqttPubSub.publish(topic.c_str(), online ? "online" : "offline", true);
+  safePublish(mqttPubSub, topic.c_str(), online ? "online" : "offline", true);
 }
 
 void MqttClient::publishTelemetry(const HomeData& data) {
