@@ -97,7 +97,7 @@ size_t estimatePublishPacketSize(const char* topic, const char* payload) {
   return MQTT_MAX_HEADER_SIZE_BYTES + 2 + strlen(topic) + strlen(payload);
 }
 
-bool safePublish(PubSubClient& client, const char* topic, const char* payload, bool retained = false) {
+bool safePublish(PubSubClient& client, const char* topic, const char* payload, bool retained) {
   size_t packetSize = estimatePublishPacketSize(topic, payload);
   if (packetSize > MQTT_RUNTIME_BUFFER_SIZE) {
     appLogger.log(String("[MQTT] Publish packet too large (") + String((unsigned int)packetSize)
@@ -206,7 +206,7 @@ void publishCombinedTelemetry(PubSubClient& client, const String& prefix,
   payload += powerLimitKnown ? String(powerLimitW) : "null";
   payload += "}";
 
-  safePublish(client, topic.c_str(), payload.c_str());
+  safePublish(client, topic.c_str(), payload.c_str(), false);
 }
 }  // namespace
 
