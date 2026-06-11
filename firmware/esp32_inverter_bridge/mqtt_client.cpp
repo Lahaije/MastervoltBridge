@@ -14,9 +14,9 @@ namespace {
 EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
 SemaphoreHandle_t telemetryMutex = nullptr;
-constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = 256;
-constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;
-constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;
+constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = 256;  // PubSubClient default MQTT_MAX_PACKET_SIZE
+constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // PubSubClient reserve for worst-case fixed header bytes
+constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;  // MQTT 3.1.1 CONNECT variable header size
 constexpr char MQTT_CONNECT_WILL_MESSAGE[] = "offline";
 
 // Throttle how often we run MQTT loop in the ethernet service task.
@@ -53,9 +53,17 @@ size_t mqttEncodedStringSize(const String& value) {
   return 2 + value.length();
 }
 
+String buildMqttClientId() {
+  return "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
+}
+
+String buildMqttWillTopic(const MqttSettings& settings) {
+  return settings.topicPrefix + "/status";
+}
+
 size_t estimateConnectPacketSize(const MqttSettings& settings) {
-  String clientId = "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
-  String willTopic = settings.topicPrefix + "/status";
+  String clientId = buildMqttClientId();
+  String willTopic = buildMqttWillTopic(settings);
 
   size_t packetSize = MQTT_MAX_HEADER_SIZE_BYTES + MQTT_CONNECT_VARIABLE_HEADER_BYTES;
   packetSize += mqttEncodedStringSize(clientId);
@@ -242,8 +250,8 @@ void MqttClient::connect() {
   // Stop any lingering connection before reconnecting
   mqttEthClient.stop();
 
-  String clientId = "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
-  String willTopic = settings_.topicPrefix + "/status";
+  String clientId = buildMqttClientId();
+  String willTopic = buildMqttWillTopic(settings_);
 
   logMqttInfo("Connecting to " + settings_.brokerIp + ":" + String(settings_.brokerPort) + "...");
 
