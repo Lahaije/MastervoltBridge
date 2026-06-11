@@ -17,8 +17,8 @@ SemaphoreHandle_t telemetryMutex = nullptr;
 constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = 256;  // PubSubClient default MQTT_MAX_PACKET_SIZE
 constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // MQTT fixed header max: 1 control byte + up to 4 remaining-length bytes
 constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;  // MQTT 3.1.1 CONNECT variable header size
-constexpr size_t MQTT_CONNECT_ESTIMATE_SAFETY_MARGIN_BYTES = 1;
-constexpr char MQTT_CONNECT_WILL_MESSAGE[] = "offline";
+constexpr size_t MQTT_CONNECT_SAFETY_MARGIN_BYTES = 1;
+constexpr char MQTT_CONNECT_WILL_MESSAGE[] = "offline";  // Must match connect() LWT payload
 
 // Throttle how often we run MQTT loop in the ethernet service task.
 // Running every 2ms is too aggressive and starves the API server.
@@ -66,11 +66,15 @@ size_t estimateConnectPacketSize(const MqttSettings& settings) {
   String clientId = buildMqttClientId();
   String willTopic = buildMqttWillTopic(settings);
 
+  // Estimate bytes used by PubSubClient CONNECT packet:
+  // fixed header reserve + CONNECT variable header + encoded payload strings
+  // (client ID, will topic/message, optional username/password), plus a small
+  // safety margin to avoid edge-case underestimation.
   size_t packetSize = MQTT_MAX_HEADER_SIZE_BYTES + MQTT_CONNECT_VARIABLE_HEADER_BYTES;
   packetSize += mqttEncodedStringSize(clientId);
   packetSize += mqttEncodedStringSize(willTopic);
   packetSize += mqttEncodedStringSize(MQTT_CONNECT_WILL_MESSAGE);
-  packetSize += MQTT_CONNECT_ESTIMATE_SAFETY_MARGIN_BYTES;
+  packetSize += MQTT_CONNECT_SAFETY_MARGIN_BYTES;
 
   if (settings.username.length() > 0) {
     packetSize += mqttEncodedStringSize(settings.username);
