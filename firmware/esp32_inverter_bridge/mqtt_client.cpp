@@ -19,6 +19,10 @@ constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = MQTT_MAX_PACKET_SIZE;  // PubSu
 constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // MQTT fixed header max: 1 control byte + up to 4 remaining-length bytes
 constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;  // MQTT 3.1.1 CONNECT variable header size
 constexpr size_t MQTT_CONNECT_SAFETY_MARGIN_BYTES = 1;
+constexpr size_t MQTT_CONNECT_FIXED_OVERHEAD_BYTES =       // Fixed bytes in every CONNECT packet
+  MQTT_MAX_HEADER_SIZE_BYTES + MQTT_CONNECT_VARIABLE_HEADER_BYTES + MQTT_CONNECT_SAFETY_MARGIN_BYTES;
+constexpr size_t MQTT_PUBLISH_FIXED_OVERHEAD_BYTES =       // Fixed bytes in every PUBLISH (QoS 0) packet:
+  MQTT_MAX_HEADER_SIZE_BYTES + 2;                          //   fixed header + 2-byte topic length field
 constexpr char MQTT_CONNECT_WILL_MESSAGE[] = "offline";  // Must match connect() LWT payload
 
 // Throttle how often we run MQTT loop in the ethernet service task.
@@ -74,14 +78,12 @@ size_t estimateConnectPacketSize(const MqttSettings& settings) {
   String willTopic = buildMqttWillTopic(settings);
 
   // Estimate bytes used by PubSubClient CONNECT packet:
-  // fixed header reserve + CONNECT variable header + encoded payload strings
-  // (client ID, will topic/message, optional username/password), plus a small
-  // safety margin to avoid edge-case underestimation.
-  size_t packetSize = MQTT_MAX_HEADER_SIZE_BYTES + MQTT_CONNECT_VARIABLE_HEADER_BYTES;
+  // fixed overhead (header + variable header + safety margin) + encoded payload strings
+  // (client ID, will topic/message, optional username/password).
+  size_t packetSize = MQTT_CONNECT_FIXED_OVERHEAD_BYTES;
   packetSize += mqttEncodedStringSize(clientId);
   packetSize += mqttEncodedStringSize(willTopic);
   packetSize += mqttEncodedStringSize(MQTT_CONNECT_WILL_MESSAGE);
-  packetSize += MQTT_CONNECT_SAFETY_MARGIN_BYTES;
 
   if (settings.username.length() > 0) {
     packetSize += mqttEncodedStringSize(settings.username);
@@ -92,9 +94,8 @@ size_t estimateConnectPacketSize(const MqttSettings& settings) {
 }
 
 size_t estimatePublishPacketSize(const char* topic, const char* payload) {
-  // MQTT PUBLISH (QoS 0) packet: fixed header + 2-byte topic length field + topic + payload.
-  // Using MQTT_MAX_HEADER_SIZE_BYTES as a conservative upper bound for the fixed header.
-  return MQTT_MAX_HEADER_SIZE_BYTES + 2 + strlen(topic) + strlen(payload);
+  // MQTT PUBLISH (QoS 0) packet: fixed overhead (header + topic length field) + topic + payload.
+  return MQTT_PUBLISH_FIXED_OVERHEAD_BYTES + strlen(topic) + strlen(payload);
 }
 
 bool safePublish(PubSubClient& client, const char* topic, const char* payload, bool retained) {
