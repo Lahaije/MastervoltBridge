@@ -322,6 +322,12 @@ void handlePostMqttSettings(EthernetClient& client, const String& body) {
     ms.password = rawPassword;
   }
 
+  String mqttSizeError;
+  if (!MqttClient::validateConnectPacketSize(ms, mqttSizeError)) {
+    sendHttpResponse(client, 400, "application/json", buildErrorJson(mqttSizeError));
+    return;
+  }
+
   // Save to NVS
   if (!saveMqttSettings(ms)) {
     sendHttpResponse(client, 500, "application/json", buildErrorJson("failed to save MQTT settings to flash"));

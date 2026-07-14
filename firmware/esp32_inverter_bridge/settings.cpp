@@ -69,6 +69,7 @@ const uint16_t API_PORT = 8080;
 const uint16_t API_CLIENT_TIMEOUT_MS = 250;
 const uint32_t ETHERNET_INIT_RETRY_MS = 5000;
 const uint32_t ETHERNET_SERVICE_INTERVAL_MS = 2;
+const char* MQTT_CLIENT_ID_PREFIX = "mv-bridge-";
 byte ETH_MAC[6] = {0x02, 0xA1, 0x82, 0x32, 0x10, 0x42};
 
 // =============================================================================

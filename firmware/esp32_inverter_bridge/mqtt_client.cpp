@@ -14,6 +14,16 @@ namespace {
 EthernetClient mqttEthClient;
 PubSubClient mqttPubSub(mqttEthClient);
 SemaphoreHandle_t telemetryMutex = nullptr;
+constexpr size_t MQTT_RUNTIME_BUFFER_SIZE = 1024;          // Must match setBufferSize() call in initialize()
+constexpr size_t MQTT_CONNECT_PACKET_MAX_BYTES = MQTT_MAX_PACKET_SIZE;  // PubSubClient configured packet buffer size
+constexpr size_t MQTT_MAX_HEADER_SIZE_BYTES = 5;       // MQTT fixed header max: 1 control byte + up to 4 remaining-length bytes
+constexpr size_t MQTT_CONNECT_VARIABLE_HEADER_BYTES = 10;  // MQTT 3.1.1 CONNECT variable header size
+constexpr size_t MQTT_CONNECT_SAFETY_MARGIN_BYTES = 1;
+constexpr size_t MQTT_CONNECT_FIXED_OVERHEAD_BYTES =       // Fixed bytes in every CONNECT packet
+  MQTT_MAX_HEADER_SIZE_BYTES + MQTT_CONNECT_VARIABLE_HEADER_BYTES + MQTT_CONNECT_SAFETY_MARGIN_BYTES;
+constexpr size_t MQTT_PUBLISH_FIXED_OVERHEAD_BYTES =       // Fixed bytes in every PUBLISH (QoS 0) packet:
+  MQTT_MAX_HEADER_SIZE_BYTES + 2;                          //   fixed header + 2-byte topic length field
+constexpr char MQTT_CONNECT_WILL_MESSAGE[] = "offline";  // Must match connect() LWT payload
 
 // Throttle how often we run MQTT loop in the ethernet service task.
 // Running every 2ms is too aggressive and starves the API server.
@@ -43,6 +53,59 @@ void logMqttInfo(const String& message) {
   if (debugMode) {
     appLogger.log(String("[MQTT] ") + message);
   }
+}
+
+size_t mqttEncodedStringSize(const String& value) {
+  return 2 + value.length();
+}
+
+String buildMqttClientId() {
+  String suffixA = String(ETH_MAC[4], HEX);
+  String suffixB = String(ETH_MAC[5], HEX);
+  suffixA.toLowerCase();
+  suffixB.toLowerCase();
+  if (suffixA.length() < 2) suffixA = "0" + suffixA;
+  if (suffixB.length() < 2) suffixB = "0" + suffixB;
+  return String(MQTT_CLIENT_ID_PREFIX) + suffixA + suffixB;
+}
+
+String buildMqttWillTopic(const MqttSettings& settings) {
+  return settings.topicPrefix + "/status";
+}
+
+size_t estimateConnectPacketSize(const MqttSettings& settings) {
+  String clientId = buildMqttClientId();
+  String willTopic = buildMqttWillTopic(settings);
+
+  // Estimate bytes used by PubSubClient CONNECT packet:
+  // fixed overhead (header + variable header + safety margin) + encoded payload strings
+  // (client ID, will topic/message, optional username/password).
+  size_t packetSize = MQTT_CONNECT_FIXED_OVERHEAD_BYTES;
+  packetSize += mqttEncodedStringSize(clientId);
+  packetSize += mqttEncodedStringSize(willTopic);
+  packetSize += mqttEncodedStringSize(MQTT_CONNECT_WILL_MESSAGE);
+
+  if (settings.username.length() > 0) {
+    packetSize += mqttEncodedStringSize(settings.username);
+    packetSize += mqttEncodedStringSize(settings.password);
+  }
+
+  return packetSize;
+}
+
+size_t estimatePublishPacketSize(const char* topic, const char* payload) {
+  // MQTT PUBLISH (QoS 0) packet: fixed overhead (header + topic length field) + topic + payload.
+  return MQTT_PUBLISH_FIXED_OVERHEAD_BYTES + strlen(topic) + strlen(payload);
+}
+
+bool safePublish(PubSubClient& client, const char* topic, const char* payload, bool retained) {
+  size_t packetSize = estimatePublishPacketSize(topic, payload);
+  if (packetSize > MQTT_RUNTIME_BUFFER_SIZE) {
+    appLogger.log(String("[MQTT] Publish packet too large (") + String((unsigned int)packetSize)
+      + " bytes; max " + String((unsigned int)MQTT_RUNTIME_BUFFER_SIZE) + ") for topic: " + topic);
+    return false;
+  }
+  return client.publish(topic, payload, retained);
 }
 
 // Publish a single HA discovery config message (retained).
@@ -85,7 +148,7 @@ void publishSensorDiscovery(PubSubClient& client, const String& prefix,
   payload += "\"}";
   payload += "}";
 
-  client.publish(topic.c_str(), payload.c_str(), true);
+  safePublish(client, topic.c_str(), payload.c_str(), true);
 }
 
 void publishNumberDiscovery(PubSubClient& client, const String& prefix,
@@ -123,7 +186,7 @@ void publishNumberDiscovery(PubSubClient& client, const String& prefix,
   payload += "\"}";
   payload += "}";
 
-  client.publish(topic.c_str(), payload.c_str(), true);
+  safePublish(client, topic.c_str(), payload.c_str(), true);
 }
 
 void publishCombinedTelemetry(PubSubClient& client, const String& prefix,
@@ -144,7 +207,7 @@ void publishCombinedTelemetry(PubSubClient& client, const String& prefix,
   payload += powerLimitKnown ? String(powerLimitW) : "null";
   payload += "}";
 
-  client.publish(topic.c_str(), payload.c_str());
+  safePublish(client, topic.c_str(), payload.c_str(), false);
 }
 }  // namespace
 
@@ -175,7 +238,7 @@ void MqttClient::initialize() {
 
   mqttPubSub.setServer(brokerIp, settings_.brokerPort);
   mqttPubSub.setCallback(mqttCallback);
-  mqttPubSub.setBufferSize(1024);
+  mqttPubSub.setBufferSize(MQTT_RUNTIME_BUFFER_SIZE);
 
   // Set very short socket timeout to prevent blocking the ethernet service loop.
   // UIPEthernet's connect() uses this for TCP handshake timeout.
@@ -217,8 +280,8 @@ void MqttClient::connect() {
   // Stop any lingering connection before reconnecting
   mqttEthClient.stop();
 
-  String clientId = "mv-bridge-" + String(ETH_MAC[4], HEX) + String(ETH_MAC[5], HEX);
-  String willTopic = settings_.topicPrefix + "/status";
+  String clientId = buildMqttClientId();
+  String willTopic = buildMqttWillTopic(settings_);
 
   logMqttInfo("Connecting to " + settings_.brokerIp + ":" + String(settings_.brokerPort) + "...");
 
@@ -287,7 +350,7 @@ void MqttClient::publishDiscovery() {
 
 void MqttClient::publishAvailability(bool online) {
   String topic = settings_.topicPrefix + "/status";
-  mqttPubSub.publish(topic.c_str(), online ? "online" : "offline", true);
+  safePublish(mqttPubSub, topic.c_str(), online ? "online" : "offline", true);
 }
 
 void MqttClient::publishTelemetry(const HomeData& data) {
@@ -375,6 +438,17 @@ bool MqttClient::isConnected() {
 
 MqttSettings MqttClient::getSettings() {
   return settings_;
+}
+
+bool MqttClient::validateConnectPacketSize(const MqttSettings& settings, String& errorMessage) {
+  size_t packetSize = estimateConnectPacketSize(settings);
+  if (packetSize > MQTT_CONNECT_PACKET_MAX_BYTES) {
+    errorMessage = "MQTT CONNECT packet too large (" + String((unsigned int)packetSize)
+      + " bytes; max " + String((unsigned int)MQTT_CONNECT_PACKET_MAX_BYTES) + ")";
+    appLogger.log("[MQTT] " + errorMessage);
+    return false;
+  }
+  return true;
 }
 
 void MqttClient::mqttCallback(char* topic, byte* payload, unsigned int length) {

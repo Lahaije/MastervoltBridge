@@ -1,23 +1,18 @@
-# Agent Quick Reference - ESP32 Inverter Bridge
+# Architecture & Development Guide - ESP32 Inverter Bridge
 
-This document provides project context for AI agents working on the ESP32 inverter WiFi-to-Ethernet bridge.
+This document provides essential context for developers and agents working on the ESP32 inverter WiFi-to-Ethernet bridge: module architecture, design patterns, data models, and development gotchas.
 
-## Skills-First Policy
+## Python Environment
 
-**Always use skills for operational tasks.** Skills are in `skills/` and each has a `SKILL.md` with instructions.
+All scripts use explicit `.venv` Python path — **no activation required**:
 
-| Task | Skill |
-|------|-------|
-| Compile + upload firmware | `skills/firmware-upload/` |
-| Analyze logs, plot power | `skills/log-analysis/` |
-| Validate API vs docs | `skills/api-validation/` |
-| Optimize firmware (write → upload → validate loop) | `skills/firmware-optimization-loop/` |
-| Compare WiFi strategies (dwell vs auto) | `skills/strategy-comparison/` |
-| Determine which docs to update after a code change | `skills/documentation-update/` |
-| Create or audit skill definitions | `skills/create-agent-skills/` |
+```powershell
+.venv\Scripts\python.exe .github/skills/<skill>/script.py
+```
 
-**Python venv**: Always activate before running scripts: `& d:\git\MastervoltBridge\.venv\Scripts\Activate.ps1`  
-**Package installs**: Use `uv pip install <pkg>` (not plain pip).
+This works in any shell. For package installs: `uv pip install <pkg>` (not plain pip).
+
+**For skill discovery:** See [copilot-instructions.md](copilot-instructions.md) and [.github/skills/.instructions.md](.github/skills/.instructions.md)
 
 ## Firmware Version
 
@@ -266,5 +261,11 @@ Read `settings.h` directly for current values. Do not duplicate constant values 
 **Documentation** (`docs/`):
 `API_REFERENCE.md`, `SETUP_README.md`, `WIRING_README.md`, `ESP32_UPLOAD_README.md`, `TEST_README.md`
 
-**Skills** (`skills/`):
+**Skills** (`.github/skills/`):
 `firmware-upload/`, `firmware-optimization-loop/`, `log-analysis/`, `api-validation/`, `documentation-update/`, `strategy-comparison/`, `create-agent-skills/`
+
+**Configuration & Guides:**
+- `copilot-instructions.md` — Agent entry point and quick reference
+- `.github/skills/.instructions.md` — Skills overview and common workflows
+- `README.md` — Project overview
+- `AGENTS.md` — This file; architecture and development guide
